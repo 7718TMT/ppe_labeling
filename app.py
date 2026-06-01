@@ -25,9 +25,11 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".PNG"}
 # Ensure folders exist
 IMAGE_FOLDER.mkdir(exist_ok=True)
 LABEL_FOLDER.mkdir(exist_ok=True)
+Path("./labeled_images").mkdir(exist_ok=True)
 
 # Mount images for static serving
 app.mount("/images", StaticFiles(directory="images"), name="images")
+app.mount("/labeled_images", StaticFiles(directory="labeled_images"), name="labeled_images")
 
 class BBox(BaseModel):
     class_id: int
@@ -59,8 +61,27 @@ async def process_images():
 
 @app.get("/api/images")
 async def get_images():
-    images = [f.name for f in IMAGE_FOLDER.iterdir() if f.suffix in IMAGE_EXTENSIONS]
+    images = []
+    for f in IMAGE_FOLDER.iterdir():
+        if f.suffix in IMAGE_EXTENSIONS:
+            label_path = LABEL_FOLDER / f.with_suffix(".txt").name
+            images.append({
+                "name": f.name,
+                "has_label": label_path.exists()
+            })
+    # Sort images by name
+    images.sort(key=lambda x: x["name"])
     return images
+
+@app.post("/api/visualize")
+async def visualize_labels():
+    try:
+        process = subprocess.run(["python", "visualize_label.py"], capture_output=True, text=True)
+        if process.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"visualize_label.py failed: {process.stderr}")
+        return {"status": "success", "message": "Visualization completed successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/labels/{filename}")
 async def get_labels(filename: str):
@@ -115,6 +136,25 @@ async def reset_image(filename: str):
             raise HTTPException(status_code=500, detail=f"labelling.py reset failed: {process.stderr}")
             
         return {"status": "success", "message": f"Reset completed for {filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/images/{filename}")
+async def delete_image(filename: str):
+    try:
+        img_path = IMAGE_FOLDER / filename
+        if img_path.exists():
+            img_path.unlink()
+        
+        label_path = LABEL_FOLDER / Path(filename).with_suffix(".txt").name
+        if label_path.exists():
+            label_path.unlink()
+            
+        viz_path = Path("./labeled_images") / f"verified_{Path(filename).stem}.jpg"
+        if viz_path.exists():
+            viz_path.unlink()
+            
+        return {"status": "success", "message": f"Deleted {filename}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
