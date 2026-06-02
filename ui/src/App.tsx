@@ -158,12 +158,38 @@ const App: React.FC = () => {
   useEffect(() => {
     if (selectedIndices.length > 0 && transformerRef.current) {
       const nodes = selectedIndices.map(index => stageRef.current.findOne('.box-' + index)).filter(Boolean);
-      transformerRef.current.nodes(nodes);
-      transformerRef.current.getLayer().batchDraw();
+      const tr = transformerRef.current;
+      tr.nodes(nodes);
+
+      // Custom hit area for edge resizing
+      // This makes the entire edge a hit area for the center anchors
+      const hitSize = 20 / scale;
+      ['top-left', 'top-center', 'top-right', 'middle-right', 'bottom-right', 'bottom-center', 'bottom-left', 'middle-left'].forEach(name => {
+        const anchor = tr.findOne('.' + name);
+        if (anchor) {
+          anchor.hitFunc((context: any, shape: any) => {
+            const trNode = shape.getParent();
+            const width = trNode.width();
+            const height = trNode.height();
+            
+            context.beginPath();
+            if (name === 'top-center' || name === 'bottom-center') {
+              context.rect(-width / 2, -hitSize / 2, width, hitSize);
+            } else if (name === 'middle-left' || name === 'middle-right') {
+              context.rect(-hitSize / 2, -height / 2, hitSize, height);
+            } else {
+              context.rect(-hitSize / 2, -hitSize / 2, hitSize, hitSize);
+            }
+            context.fillShape(shape);
+          });
+        }
+      });
+
+      tr.getLayer().batchDraw();
     } else if (transformerRef.current) {
       transformerRef.current.nodes([]);
     }
-  }, [selectedIndices, labels]);
+  }, [selectedIndices, labels, scale]);
 
   useEffect(() => {
     if (selectedImage) {
@@ -467,8 +493,8 @@ const App: React.FC = () => {
     const stageX = stageRef.current.x();
     const stageY = stageRef.current.y();
     
-    const x = (pos.x - stageX) / stageScale;
-    const y = (pos.y - stageY) / stageScale;
+    const x = Math.max(0, Math.min(imageSize.width, (pos.x - stageX) / stageScale));
+    const y = Math.max(0, Math.min(imageSize.height, (pos.y - stageY) / stageScale));
     
     setSelectionRect({ x1: x, y1: y, x2: x, y2: y });
     if (drawingClass === null) {
@@ -489,8 +515,8 @@ const App: React.FC = () => {
     const stageX = stageRef.current.x();
     const stageY = stageRef.current.y();
     
-    const x = (pos.x - stageX) / stageScale;
-    const y = (pos.y - stageY) / stageScale;
+    const x = Math.max(0, Math.min(imageSize.width, (pos.x - stageX) / stageScale));
+    const y = Math.max(0, Math.min(imageSize.height, (pos.y - stageY) / stageScale));
     
     setSelectionRect({ ...selectionRect, x2: x, y2: y });
   };
@@ -827,8 +853,13 @@ const App: React.FC = () => {
                     ref={transformerRef}
                     rotateEnabled={false}
                     keepRatio={false}
+                    borderStroke="#00a1ff"
                     borderStrokeWidth={1 / scale}
-                    anchorSize={8 / scale}
+                    anchorSize={6 / scale}
+                    anchorFill="white"
+                    anchorStroke="#00a1ff"
+                    anchorStrokeWidth={1 / scale}
+                    anchorCornerRadius={3 / scale}
                     listening={!isSpacePressed && interactionMode === 'select'}
                     onDragStart={(e) => { e.cancelBubble = true; }}
                     onDragMove={(e) => { e.cancelBubble = true; }}
@@ -838,7 +869,20 @@ const App: React.FC = () => {
                     onTransformEnd={(e) => { e.cancelBubble = true; }}
                     boundBoxFunc={(oldBox, newBox) => {
                       if (newBox.width < 2 || newBox.height < 2) return oldBox;
-                      return newBox;
+                      
+                      // Clamp to image boundaries
+                      const x = Math.max(0, newBox.x);
+                      const y = Math.max(0, newBox.y);
+                      const w = Math.min(imageSize.width - x, newBox.width);
+                      const h = Math.min(imageSize.height - y, newBox.height);
+                      
+                      return {
+                        ...newBox,
+                        x,
+                        y,
+                        width: w,
+                        height: h
+                      };
                     }}
                   />
                 )}
