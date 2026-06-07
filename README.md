@@ -1,76 +1,178 @@
-# PPE Auto-Labeling with Interactive UI
+# PPE Labeling Tool
 
-This project is an automated and interactive labeling tool for object detection datasets, specifically focusing on Personal Protective Equipment (PPE). It detects three classes:
-- **0: Human**
-- **1: Helmet**
-- **2: Vest**
+This project is a local annotation tool for smart factory safety monitoring datasets. It helps review and edit YOLO-format object detection labels for:
 
-The system combines automated deep learning detection (YOLOv8) with a hard-coded color thresholding method for vest detection, all managed through a modern, responsive web interface.
+- `0`: Human
+- `1`: Helmet
+- `2`: Vest
 
-## Features
-- **Automated Labeling**: One-click processing to detect humans, helmets, and vests using a hybrid AI/Color-logic approach.
-- **Interactive Editor**: 
-  - View labels overlaid on original images.
-  - **Multi-Selection**: Use `Shift + Click` to toggle selections or **Marquee Select** (drag mouse) to select groups of boxes.
-  - **Edit & Adjust**: Drag to move or resize bounding boxes with sub-pixel precision.
-  - **Keyboard Shortcuts**: 
-    - `Delete` / `Backspace`: Remove selected boxes.
-    - `Ctrl + Z`: Undo any change (moving, resizing, deleting, etc.).
-  - **Zoom & Pan**: Smooth mouse-wheel zoom for detailed labeling on high-resolution images.
-- **Real-time Sync**: Manual adjustments in the UI are saved directly back to YOLO-formatted `.txt` files.
+The backend can auto-label images with a YOLO model and a vest color detector, while the frontend provides an interactive canvas for editing bounding boxes.
 
 ## Project Structure
-- `app.py`: FastAPI backend that manages files and triggers labeling scripts.
-- `labelling.py`: Core logic for AI detection and vest color thresholding.
-- `visualize_label.py`: Utility to generate static images with drawn-on boxes.
-- `ui/`: React frontend source code.
-- `images/`: Put your raw images here.
-- `labels/`: Output folder for YOLO `.txt` annotations.
-- `labeled_images/`: Output folder for static visualization images.
 
-## How to Use
+```text
+backend/                 FastAPI backend
+  app/api/               API controllers
+  app/core/              Runtime configuration
+  app/ml/                YOLO inference and vest fallback code
+  app/models/            Application request/response schemas
+  app/services/          Label, image, visualization, and orchestration services
+frontend/                React + Vite annotation UI
+data/images/             Local input images, ignored by Git
+data/labels/             Local YOLO labels, ignored by Git
+data/labeled_images/     Local visualization output, ignored by Git
+weights/                 Local deep learning model weights, ignored by Git
+```
 
-### 1. Installation
-Ensure you have Python 3.8+ and Node.js installed.
-```bash
-# Install Python dependencies
-pip install fastapi uvicorn python-multipart ultralytics opencv-python numpy
+Generated dependencies, datasets, labels, visualization outputs, `.env`, and model weights are intentionally ignored by Git.
 
-# Install Frontend dependencies
-cd ui
+## Prerequisites
+
+- `uv`
+- Node.js LTS
+- Git
+
+Install `uv` on Windows PowerShell if needed:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+## Backend Setup
+
+Run these commands from the repository root.
+
+### 1. Install Python 3.12
+
+This repo pins Python to `3.12` in `.python-version` and `pyproject.toml`.
+
+```powershell
+uv python install 3.12
+```
+
+### 2. Sync Python packages
+
+Use uv's normal project workflow. This creates and manages the project environment automatically.
+
+```powershell
+uv sync
+```
+
+Do not activate `.venv` manually. Run backend commands through `uv run`.
+
+### 3. Configure environment variables
+
+Copy the example environment file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Edit `.env` if needed:
+
+```text
+MODEL_PATH=weights/best.pt
+IMAGE_DIR=data/images
+LABEL_DIR=data/labels
+VISUALIZATION_DIR=data/labeled_images
+CORS_ORIGINS=http://localhost:5173
+YOLO_IMG_SIZE=640
+YOLO_CONF=0.25
+YOLO_IOU=0.7
+USE_COLOR_VEST_FALLBACK=false
+```
+
+Place your deep learning model weights at the configured `MODEL_PATH`, for example:
+
+```text
+weights/best.pt
+```
+
+Place images to annotate in:
+
+```text
+data/images/
+```
+
+Inference settings:
+
+- `YOLO_IMG_SIZE` should match the image size you used during model validation when you want similar boxes.
+- `YOLO_CONF` controls minimum detection confidence.
+- `YOLO_IOU` controls non-maximum suppression overlap.
+- `USE_COLOR_VEST_FALLBACK=false` means vest boxes come from YOLO class `2`. Set it to `true` only if you want the old HSV color fallback when YOLO finds no vest.
+
+## Frontend Setup
+
+Run these commands from the repository root:
+
+```powershell
+cd frontend
 npm install
-cd ..
 ```
 
-### 2. Prepare Data
-Put your images (JPG, PNG) into the `images/` folder.
+## Run The Application
 
-### 3. Run the Application
-You need to run two separate servers:
+Start the backend from the repository root:
 
-**Terminal 1: Backend**
-```bash
-python app.py
+```powershell
+uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Terminal 2: Frontend**
-```bash
-cd ui
+Start the frontend in a second terminal:
+
+```powershell
+cd frontend
 npm run dev
 ```
 
-### 4. Labeling Workflow
-1. Open your browser to `http://localhost:5173`.
-2. Click **"Process All"** to run the automatic labeling pipeline.
-3. Select an image from the sidebar to review.
-4. Use the mouse wheel to zoom.
-5. Adjust boxes as needed:
-   - Click to select.
-   - Drag to move.
-   - Use handles to resize.
-   - `Shift + Click` or Drag-select for multiple boxes.
-6. Click **"Save Changes"** to update the label files.
+Open:
 
-## Logic Overview
-- **AI Detection**: Uses `best.pt` (YOLOv8) to identify Humans and Helmets.
-- **Vest Logic**: Crops the human ROI, masks out helmet areas to avoid color interference, and applies HSV thresholding for Green and Orange. If sufficient pixels match, a Vest label is generated.
+```text
+http://localhost:5173
+```
+
+## API
+
+The frontend uses these backend endpoints:
+
+- `GET /api/v1/images`
+- `DELETE /api/v1/images/{filename}`
+- `GET /api/v1/images/{filename}/labels`
+- `PUT /api/v1/images/{filename}/labels`
+- `POST /api/v1/images/{filename}/auto-label`
+- `POST /api/v1/auto-label`
+- `POST /api/v1/visualizations`
+
+Images are served from `/media/images/{filename}`.
+Generated visualization images are served from `/media/visualizations/{filename}`.
+
+## Development Checks
+
+Backend smoke check:
+
+```powershell
+uv run pytest
+```
+
+Frontend build check:
+
+```powershell
+cd frontend
+npm run build
+```
+
+Git hygiene check:
+
+```powershell
+git ls-files | Select-String "node_modules|\\.pt$|^data/images/|^data/labels/|^data/labeled_images/"
+```
+
+The command should not show generated dependencies, model weights, or dataset files.
+
+## Troubleshooting
+
+- Missing model file: make sure `.env` points to an existing `.pt` file.
+- Frontend cannot reach backend: confirm the backend is running on port `8000` and the frontend is running on port `5173`.
+- No images show up: put `.jpg`, `.jpeg`, or `.png` files in `data/images/`.
+- Python version mismatch: run `uv python install 3.12` and `uv sync`.
+- Python package errors: rerun `uv sync`.

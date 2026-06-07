@@ -1,5 +1,5 @@
 {
-  "name": "ppe-labeler-ui",
+  "name": "ppe-labeler-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
