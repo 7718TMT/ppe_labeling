@@ -9,9 +9,9 @@ node_modules/
 dist/
 .vite/
 
-weights/*.pt
-weights/*.onnx
-weights/*.engine
+# weights/**/*.pt
+weights/**/*.onnx
+weights/**/*.engine
 
 data/ppe/images/*
 data/ppe/labels/*

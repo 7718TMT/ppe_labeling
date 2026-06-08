@@ -22,7 +22,6 @@ class TaskProfile(BaseModel):
     class_names: dict[int, str]
     detector_type: Literal["ppe", "safety_signs"]
     temporary_class_id: int | None = None
-    yolo_world_prompts: list[str] = []
     use_color_vest_fallback: bool = False
     agnostic_nms: bool = False
 
@@ -49,16 +48,7 @@ class Settings(BaseSettings):
     safety_sign_conf: float = 0.15
     safety_sign_img_size: int = 640
     safety_sign_iou: float = 0.7
-    safety_sign_agnostic_nms: bool = True
-    safety_sign_prompts: str = (
-        "safety sign|"
-        "factory safety sign|"
-        "warning sign|"
-        "mandatory sign|"
-        "prohibition sign|"
-        "hazard sign|"
-        "industrial safety sign"
-    )
+    safety_sign_agnostic_nms: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -96,11 +86,8 @@ class Settings(BaseSettings):
                     1: "M015 Wear high-visibility clothing",
                     2: "P004 No thoroughfare",
                     3: "W011 Slippery surface",
-                    4: "Unreviewed safety sign",
                 },
                 detector_type="safety_signs",
-                temporary_class_id=4,
-                yolo_world_prompts=[prompt.strip() for prompt in self.safety_sign_prompts.split("|") if prompt.strip()],
                 agnostic_nms=self.safety_sign_agnostic_nms,
             ),
         }

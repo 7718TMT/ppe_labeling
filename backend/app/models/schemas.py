@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class BoundingBox(BaseModel):
-    class_id: int = Field(ge=0, le=4)
+    class_id: int = Field(ge=0, le=3)
     x_center: float = Field(ge=0, le=1)
     y_center: float = Field(ge=0, le=1)
     w: float = Field(gt=0, le=1)

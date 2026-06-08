@@ -32,7 +32,7 @@ weights/ppe.pt
 
 ### Safety Signs
 
-The safety-sign task is for annotating selected ISO 7010 factory safety signs. YOLO-World is used only to propose generic sign boxes; final ISO class assignment is done manually in the UI.
+The safety-sign task is for annotating selected ISO 7010 factory safety signs. The configured sign detector should be a trained YOLO model whose class IDs match the final ISO class mapping below.
 
 Final reviewed classes:
 
@@ -41,11 +41,7 @@ Final reviewed classes:
 - `2`: P004 No thoroughfare
 - `3`: W011 Slippery surface
 
-Temporary review class:
-
-- `4`: Unreviewed safety sign
-
-YOLO-World detections are saved as class `4` first. Use the UI dropdown to convert selected boxes to final classes `0-3`.
+Auto-label detections are saved directly as classes `0-3`. Manual boxes added with `Add Sign` start as class `0`; use the UI dropdown to reassign them when needed.
 
 Expected local data:
 
@@ -128,7 +124,7 @@ SAFETY_SIGN_VISUALIZATION_DIR=data/safety_signs/labeled_images
 SAFETY_SIGN_CONF=0.15
 SAFETY_SIGN_IMG_SIZE=640
 SAFETY_SIGN_IOU=0.7
-SAFETY_SIGN_AGNOSTIC_NMS=true
+SAFETY_SIGN_AGNOSTIC_NMS=false
 ```
 
 ## Frontend Setup
@@ -209,7 +205,7 @@ The command should not show generated dependencies, model weights, or dataset fi
 ## Troubleshooting
 
 - Missing model file: check the task-specific model path in `.env`.
-- YOLO-World prompt error: make sure `SAFETY_SIGN_MODEL_PATH` points to the sign detector weight file, for example `weights/sign.pt`.
+- Sign detector class mismatch: make sure `SAFETY_SIGN_MODEL_PATH` points to a trained sign detector whose class IDs are `0-3`.
 - No images show up: put images in the selected task image folder.
 - Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
 - Frontend cannot reach backend: confirm backend port `8000`, frontend port `5173`, and `CORS_ORIGINS`.

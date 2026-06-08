@@ -10,19 +10,17 @@ class SafetySignDetector:
     def __init__(
         self,
         model_path: Path,
-        prompts: list[str],
+        allowed_class_ids: set[int],
         image_size: int = 640,
         confidence: float = 0.15,
         iou: float = 0.7,
-        temporary_class_id: int = 4,
-        agnostic_nms: bool = True,
+        agnostic_nms: bool = False,
     ) -> None:
         self.model_path = model_path
-        self.prompts = prompts
+        self.allowed_class_ids = allowed_class_ids
         self.image_size = image_size
         self.confidence = confidence
         self.iou = iou
-        self.temporary_class_id = temporary_class_id
         self.agnostic_nms = agnostic_nms
         self._model = None
 
@@ -33,14 +31,7 @@ class SafetySignDetector:
         if self._model is None:
             if not self.model_path.exists():
                 raise HTTPException(status_code=500, detail=f"Model file not found: {self.model_path}")
-            model = YOLO(str(self.model_path))
-            if not hasattr(model, "set_classes"):
-                raise HTTPException(
-                    status_code=500,
-                    detail="Loaded model does not support YOLO-World text prompts. Use a *-world*.pt model.",
-                )
-            model.set_classes(self.prompts)
-            self._model = model
+            self._model = YOLO(str(self.model_path))
         return self._model
 
     def detect(self, image_path: Path) -> list[BoundingBox]:
@@ -61,11 +52,15 @@ class SafetySignDetector:
 
         boxes: list[BoundingBox] = []
         for result in results:
-            for x_center, y_center, width, height in result.boxes.xywhn.tolist():
+            class_ids = result.boxes.cls.tolist()
+            for class_id_value, (x_center, y_center, width, height) in zip(class_ids, result.boxes.xywhn.tolist(), strict=True):
+                class_id = int(class_id_value)
+                if class_id not in self.allowed_class_ids:
+                    continue
                 boxes.append(
                     clamp_box(
                         BoundingBox(
-                            class_id=self.temporary_class_id,
+                            class_id=class_id,
                             x_center=x_center,
                             y_center=y_center,
                             w=width,

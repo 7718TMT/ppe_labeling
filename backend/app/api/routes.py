@@ -37,20 +37,18 @@ def get_ppe_detector(
 @lru_cache
 def get_safety_sign_detector(
     model_path: str,
-    prompts: tuple[str, ...],
+    allowed_class_ids: tuple[int, ...],
     image_size: int,
     confidence: float,
     iou: float,
-    temporary_class_id: int,
     agnostic_nms: bool,
 ) -> SafetySignDetector:
     return SafetySignDetector(
         model_path=Path(model_path),
-        prompts=list(prompts),
+        allowed_class_ids=set(allowed_class_ids),
         image_size=image_size,
         confidence=confidence,
         iou=iou,
-        temporary_class_id=temporary_class_id,
         agnostic_nms=agnostic_nms,
     )
 
@@ -63,11 +61,10 @@ def detector_for_profile(profile: TaskProfile):
     if profile.detector_type == "safety_signs":
         return get_safety_sign_detector(
             str(profile.model_path),
-            tuple(profile.yolo_world_prompts),
+            tuple(profile.class_names.keys()),
             profile.yolo_img_size,
             profile.yolo_conf,
             profile.yolo_iou,
-            profile.temporary_class_id if profile.temporary_class_id is not None else 4,
             profile.agnostic_nms,
         )
 

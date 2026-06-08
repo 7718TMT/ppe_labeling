@@ -19,6 +19,5 @@ export const FALLBACK_CLASS_NAMES: Record<string, Record<number, string>> = {
     1: 'M015 Wear high-visibility clothing',
     2: 'P004 No thoroughfare',
     3: 'W011 Slippery surface',
-    4: 'Unreviewed safety sign',
   },
 };

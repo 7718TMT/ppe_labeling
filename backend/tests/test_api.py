@@ -35,10 +35,10 @@ def test_tasks_endpoint_lists_safety_sign_profile(monkeypatch, tmp_path: Path) -
     assert response.status_code == 200
     tasks = response.json()
     safety_task = next(task for task in tasks if task["id"] == "safety_signs")
-    assert safety_task["temporary_class_id"] == 4
+    assert safety_task["temporary_class_id"] is None
     assert safety_task["class_names"]["0"].startswith("M014")
     assert safety_task["class_names"]["3"].startswith("W011")
-    assert safety_task["class_names"]["4"] == "Unreviewed safety sign"
+    assert "4" not in safety_task["class_names"]
 
 
 def test_task_image_list_uses_scoped_media_urls(monkeypatch, tmp_path: Path) -> None:
