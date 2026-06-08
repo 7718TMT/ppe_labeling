@@ -17,6 +17,7 @@ interface AnnotationCanvasProps {
   selectionRect: SelectionRect | null;
   drawingClass: number | null;
   interactionMode: InteractionMode;
+  overlayVisible: boolean;
   isPanning: boolean;
   isSpacePressed: boolean;
   scale: number;
@@ -43,6 +44,7 @@ export function AnnotationCanvas({
   selectionRect,
   drawingClass,
   interactionMode,
+  overlayVisible,
   isPanning,
   isSpacePressed,
   scale,
@@ -86,7 +88,7 @@ export function AnnotationCanvas({
         >
           <Layer>
             <KonvaImage image={imageObj} />
-            {labels
+            {overlayVisible && labels
               .map((box, index) => ({ box, index }))
               .sort((a, b) => {
                 const order: Record<number, number> = { 0: 0, 2: 1, 1: 2 };
@@ -109,8 +111,8 @@ export function AnnotationCanvas({
                     fill={CLASS_COLORS[box.class_id]}
                     stroke={selectedIndices.includes(index) ? 'white' : 'transparent'}
                     strokeWidth={2 / scale}
-                    draggable={drawingClass === null && !isSpacePressed && interactionMode === 'select'}
-                    listening={drawingClass === null && !isSpacePressed && interactionMode === 'select'}
+                    draggable={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
+                    listening={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
                     onClick={(event) => {
                       if (drawingClass !== null) return;
                       event.cancelBubble = true;
@@ -133,7 +135,7 @@ export function AnnotationCanvas({
                   />
                 );
               })}
-            {selectionRect && (
+            {overlayVisible && selectionRect && (
               <Rect
                 x={Math.min(selectionRect.x1, selectionRect.x2)}
                 y={Math.min(selectionRect.y1, selectionRect.y2)}
@@ -145,7 +147,7 @@ export function AnnotationCanvas({
                 listening={false}
               />
             )}
-            {selectedIndices.length > 0 && (
+            {overlayVisible && selectedIndices.length > 0 && (
               <Transformer
                 ref={transformerRef}
                 rotateEnabled={false}

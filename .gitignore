@@ -13,12 +13,18 @@ weights/*.pt
 weights/*.onnx
 weights/*.engine
 
-data/images/*
-data/labels/*
-data/labeled_images/*
-!data/images/.gitkeep
-!data/labels/.gitkeep
-!data/labeled_images/.gitkeep
+data/ppe/images/*
+data/ppe/labels/*
+data/ppe/labeled_images/*
+data/safety_signs/images/*
+data/safety_signs/labels/*
+data/safety_signs/labeled_images/*
+!data/ppe/images/.gitkeep
+!data/ppe/labels/.gitkeep
+!data/ppe/labeled_images/.gitkeep
+!data/safety_signs/images/.gitkeep
+!data/safety_signs/labels/.gitkeep
+!data/safety_signs/labeled_images/.gitkeep
 !weights/.gitkeep
 
 orange_range_preview.jpg

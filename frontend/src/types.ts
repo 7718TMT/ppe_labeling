@@ -13,6 +13,13 @@ export interface ImageData {
   visualization_url?: string | null;
 }
 
+export interface TaskInfo {
+  id: string;
+  name: string;
+  class_names: Record<string, string>;
+  temporary_class_id?: number | null;
+}
+
 export type InteractionMode = 'pan' | 'select';
 
 export interface SelectionRect {

@@ -7,15 +7,19 @@ import {
   generateVisualizations,
   getImages,
   getLabels,
+  getTasks,
   imageUrl,
   saveLabels,
 } from './api/client';
 import { AnnotationCanvas } from './components/AnnotationCanvas';
 import { ImageSidebar } from './components/ImageSidebar';
 import { Toolbar } from './components/Toolbar';
-import type { BBox, ImageData, InteractionMode, SelectionRect } from './types';
+import { DEFAULT_TASK_ID, FALLBACK_CLASS_NAMES } from './constants';
+import type { BBox, ImageData, InteractionMode, SelectionRect, TaskInfo } from './types';
 
 const App = () => {
+  const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState(DEFAULT_TASK_ID);
   const [images, setImages] = useState<ImageData[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [labels, setLabels] = useState<BBox[]>([]);
@@ -36,6 +40,7 @@ const App = () => {
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('select');
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
   const [drawingClass, setDrawingClass] = useState<number | null>(null);
+  const [overlayVisible, setOverlayVisible] = useState(true);
   const [isDirty, setIsDirty] = useState(false);
 
   const isSpacePressedRef = useRef(false);
@@ -44,12 +49,31 @@ const App = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId);
+  const classNames: Record<number, string> = Object.fromEntries(
+    Object.entries(selectedTask?.class_names ?? FALLBACK_CLASS_NAMES[selectedTaskId] ?? {}).map(([id, name]) => [Number(id), name]),
+  );
+  const temporaryClassId = selectedTask?.temporary_class_id ?? null;
+  const addClassIds = temporaryClassId !== null && temporaryClassId !== undefined ? [temporaryClassId] : Object.keys(classNames).map(Number);
+  const selectedClassIds = [...new Set(selectedIndices.map((index) => labels[index]?.class_id).filter((classId) => classId !== undefined))];
+  const selectedClassId = selectedClassIds.length === 1 ? selectedClassIds[0] : null;
+
   useEffect(() => {
-    void refreshImages();
+    void refreshTasks();
     updateContainerSize();
     window.addEventListener('resize', updateContainerSize);
     return () => window.removeEventListener('resize', updateContainerSize);
   }, []);
+
+  useEffect(() => {
+    void refreshImages(selectedTaskId);
+    setSelectedImage(null);
+    setLabels([]);
+    setHistory([]);
+    setSelectedIndices([]);
+    setDrawingClass(null);
+    setIsDirty(false);
+  }, [selectedTaskId]);
 
   useEffect(() => {
     if (!selectedImage || !isDirty) return;
@@ -62,7 +86,7 @@ const App = () => {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, [labels, isDirty, selectedImage]);
+  }, [labels, isDirty, selectedImage, selectedTaskId]);
 
   useEffect(() => {
     if (selectedIndices.length > 0 && transformerRef.current) {
@@ -108,7 +132,7 @@ const App = () => {
 
     void loadLabels(selectedImage);
     const image = new Image();
-    image.src = imageUrl(selectedImage);
+    image.src = imageUrl(selectedTaskId, selectedImage);
     image.onload = () => {
       setImageObj(image);
       setImageSize({ width: image.width, height: image.height });
@@ -128,7 +152,7 @@ const App = () => {
       setSelectedIndices([]);
       setDrawingClass(null);
     };
-  }, [selectedImage, containerSize.width, containerSize.height]);
+  }, [selectedImage, selectedTaskId, containerSize.width, containerSize.height]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -221,9 +245,21 @@ const App = () => {
     });
   };
 
-  const refreshImages = async () => {
+  const refreshTasks = async () => {
     try {
-      const imageList = await getImages();
+      const taskList = await getTasks();
+      setTasks(taskList);
+      if (!taskList.some((task) => task.id === selectedTaskId)) {
+        setSelectedTaskId(taskList.find((task) => task.id === DEFAULT_TASK_ID)?.id ?? taskList[0]?.id ?? DEFAULT_TASK_ID);
+      }
+    } catch (error) {
+      console.error('Error fetching tasks:', error);
+    }
+  };
+
+  const refreshImages = async (taskId = selectedTaskId) => {
+    try {
+      const imageList = await getImages(taskId);
       setImages(imageList);
       setSelectedImage((current) => current ?? imageList[0]?.name ?? null);
     } catch (error) {
@@ -234,7 +270,7 @@ const App = () => {
   const loadLabels = async (filename: string) => {
     setLoading(true);
     try {
-      setLabels(await getLabels(filename));
+      setLabels(await getLabels(selectedTaskId, filename));
       setHistory([]);
       setIsDirty(false);
     } catch (error) {
@@ -248,9 +284,9 @@ const App = () => {
     if (!selectedImage) return;
     setIsSaving(true);
     try {
-      await saveLabels(selectedImage, labels);
+      await saveLabels(selectedTaskId, selectedImage, labels);
       setIsDirty(false);
-      await refreshImages();
+      await refreshImages(selectedTaskId);
     } catch (error) {
       console.error('Error auto-saving labels:', error);
     } finally {
@@ -261,8 +297,8 @@ const App = () => {
   const handleProcess = async () => {
     setProcessing(true);
     try {
-      await autoLabelAll();
-      await refreshImages();
+      await autoLabelAll(selectedTaskId);
+      await refreshImages(selectedTaskId);
       if (selectedImage) await loadLabels(selectedImage);
       alert('Processing completed!');
     } catch (error) {
@@ -276,8 +312,8 @@ const App = () => {
   const handleVisualize = async () => {
     setProcessing(true);
     try {
-      await generateVisualizations();
-      await refreshImages();
+      await generateVisualizations(selectedTaskId);
+      await refreshImages(selectedTaskId);
       alert('Visualization completed! Check data/labeled_images.');
     } catch (error) {
       console.error('Visualization failed:', error);
@@ -293,9 +329,9 @@ const App = () => {
 
     setIsResetting(true);
     try {
-      await autoLabelImage(selectedImage);
+      await autoLabelImage(selectedTaskId, selectedImage);
       await loadLabels(selectedImage);
-      await refreshImages();
+      await refreshImages(selectedTaskId);
     } catch (error) {
       console.error('Reset failed:', error);
       alert('Reset failed. Check console.');
@@ -309,14 +345,14 @@ const App = () => {
     if (!confirm(`Are you sure you want to delete ${filename}? This cannot be undone.`)) return;
 
     try {
-      await deleteImage(filename);
+      await deleteImage(selectedTaskId, filename);
       if (selectedImage === filename) {
         setSelectedImage(null);
         setLabels([]);
         setImageObj(null);
         setIsDirty(false);
       }
-      await refreshImages();
+      await refreshImages(selectedTaskId);
     } catch (error) {
       console.error('Error deleting image:', error);
       alert('Failed to delete image.');
@@ -385,6 +421,7 @@ const App = () => {
       setIsPanning(true);
       return;
     }
+    if (!overlayVisible) return;
 
     const isStage = event.target === event.target.getStage();
     const isImage = event.target.className === 'Image';
@@ -513,6 +550,13 @@ const App = () => {
     }
   };
 
+  const handleSelectedClassChange = (classId: number) => {
+    if (selectedIndices.length === 0) return;
+    pushToHistory(
+      labels.map((box, index) => (selectedIndices.includes(index) ? { ...box, class_id: classId } : box)),
+    );
+  };
+
   const handleBoxDragEnd = (index: number, event: any) => {
     event.cancelBubble = true;
     if (selectedIndices.length > 1 && selectedIndices.includes(index)) {
@@ -587,13 +631,23 @@ const App = () => {
 
       <div className="flex-1 flex flex-col">
         <Toolbar
+          tasks={tasks}
+          selectedTaskId={selectedTaskId}
+          classNames={classNames}
+          addClassIds={addClassIds}
+          assignClassIds={Object.keys(classNames).map(Number).filter((classId) => classId !== temporaryClassId)}
           drawingClass={drawingClass}
           interactionMode={interactionMode}
           selectedCount={selectedIndices.length}
+          selectedClassId={selectedClassId}
+          overlayVisible={overlayVisible}
           isResetting={isResetting}
           isSaving={isSaving}
           selectedImage={selectedImage}
+          onTaskChange={setSelectedTaskId}
           onToggleAddMode={toggleAddMode}
+          onSelectedClassChange={handleSelectedClassChange}
+          onOverlayVisibleChange={setOverlayVisible}
           onInteractionModeChange={setInteractionMode}
           onDeleteSelected={handleDelete}
           onReset={handleReset}
@@ -614,6 +668,7 @@ const App = () => {
           selectionRect={selectionRect}
           drawingClass={drawingClass}
           interactionMode={interactionMode}
+          overlayVisible={overlayVisible}
           isPanning={isPanning}
           isSpacePressed={isSpacePressed}
           scale={scale}

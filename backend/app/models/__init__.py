@@ -4,6 +4,7 @@ from backend.app.models.schemas import (
     LabelPayload,
     LabelResponse,
     OperationResponse,
+    TaskInfo,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "LabelPayload",
     "LabelResponse",
     "OperationResponse",
+    "TaskInfo",
 ]

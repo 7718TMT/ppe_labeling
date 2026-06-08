@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from backend.app.api.routes import router
+from backend.app.api.routes import media_router, router
 from backend.app.core.config import get_settings
 
 
@@ -19,13 +18,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
-    app.mount("/media/images", StaticFiles(directory=settings.image_dir), name="images")
-    app.mount(
-        "/media/visualizations",
-        StaticFiles(directory=settings.visualization_dir),
-        name="visualizations",
-    )
-
+    app.include_router(media_router)
     return app
 
 

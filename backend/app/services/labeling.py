@@ -2,12 +2,11 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from backend.app.ml.yolo_detector import PpeDetector
 from backend.app.services import storage
 
 
 class LabelingService:
-    def __init__(self, image_dir: Path, label_dir: Path, detector: PpeDetector) -> None:
+    def __init__(self, image_dir: Path, label_dir: Path, detector) -> None:
         self.image_dir = image_dir
         self.label_dir = label_dir
         self.detector = detector

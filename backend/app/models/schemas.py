@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class BoundingBox(BaseModel):
-    class_id: int = Field(ge=0, le=2)
+    class_id: int = Field(ge=0, le=4)
     x_center: float = Field(ge=0, le=1)
     y_center: float = Field(ge=0, le=1)
     w: float = Field(gt=0, le=1)
@@ -28,3 +28,10 @@ class ImageItem(BaseModel):
 class OperationResponse(BaseModel):
     status: str = "success"
     message: str
+
+
+class TaskInfo(BaseModel):
+    id: str
+    name: str
+    class_names: dict[int, str]
+    temporary_class_id: int | None = None

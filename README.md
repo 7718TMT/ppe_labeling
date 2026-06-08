@@ -1,35 +1,92 @@
-# PPE Labeling Tool
+# Smart Factory Annotation Tool
 
-This project is a local annotation tool for smart factory safety monitoring datasets. It helps review and edit YOLO-format object detection labels for:
+This repository contains a local image annotation tool for smart factory safety monitoring datasets. It combines a FastAPI backend, a React/Vite frontend, task-specific auto-labeling, and manual review/editing of YOLO-format bounding boxes.
 
-- `0`: Human
+The app is organized around annotation tasks. Each task has its own images, labels, visualization output, model settings, and class mapping so datasets do not overlap.
+
+## Supported Tasks
+
+### PPE
+
+The PPE task is for annotating worker safety equipment.
+
+Classes:
+
+- `0`: Person
 - `1`: Helmet
 - `2`: Vest
 
-The backend can auto-label images with a YOLO model and a vest color detector, while the frontend provides an interactive canvas for editing bounding boxes.
+Expected local data:
+
+```text
+data/ppe/images/
+data/ppe/labels/
+data/ppe/labeled_images/
+```
+
+Expected local weights:
+
+```text
+weights/ppe.pt
+```
+
+### Safety Signs
+
+The safety-sign task is for annotating selected ISO 7010 factory safety signs. YOLO-World is used only to propose generic sign boxes; final ISO class assignment is done manually in the UI.
+
+Final reviewed classes:
+
+- `0`: M014 Wear head protection
+- `1`: M015 Wear high-visibility clothing
+- `2`: P004 No thoroughfare
+- `3`: W011 Slippery surface
+
+Temporary review class:
+
+- `4`: Unreviewed safety sign
+
+YOLO-World detections are saved as class `4` first. Use the UI dropdown to convert selected boxes to final classes `0-3`.
+
+Expected local data:
+
+```text
+data/safety_signs/images/
+data/safety_signs/labels/
+data/safety_signs/labeled_images/
+```
+
+Expected local weights:
+
+```text
+weights/sign.pt
+```
 
 ## Project Structure
 
 ```text
-backend/                 FastAPI backend
-  app/api/               API controllers
-  app/core/              Runtime configuration
-  app/ml/                YOLO inference and vest fallback code
-  app/models/            Application request/response schemas
-  app/services/          Label, image, visualization, and orchestration services
-frontend/                React + Vite annotation UI
-data/images/             Local input images, ignored by Git
-data/labels/             Local YOLO labels, ignored by Git
-data/labeled_images/     Local visualization output, ignored by Git
-weights/                 Local deep learning model weights, ignored by Git
+backend/                          FastAPI backend
+  app/api/                        API and media routes
+  app/core/                       Settings and task profiles
+  app/ml/                         Auto-labeling model integrations
+  app/models/                     Request/response schemas
+  app/services/                   Label, image, visualization, and orchestration logic
+  tests/                          Backend tests
+frontend/                         React + Vite annotation UI
+  src/api/                        Frontend API client
+  src/components/                 Canvas, toolbar, and sidebar components
+data/                             Local task data, ignored by Git except .gitkeep files
+weights/                          Local model weights, ignored by Git except .gitkeep
+pyproject.toml                    Python project and dependency definition
+uv.lock                           Locked Python dependency graph
 ```
 
 Generated dependencies, datasets, labels, visualization outputs, `.env`, and model weights are intentionally ignored by Git.
 
-## Prerequisites
+## Backend Setup
+
+Prerequisites:
 
 - `uv`
-- Node.js LTS
 - Git
 
 Install `uv` on Windows PowerShell if needed:
@@ -38,79 +95,56 @@ Install `uv` on Windows PowerShell if needed:
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-## Backend Setup
-
-Run these commands from the repository root.
-
-### 1. Install Python 3.12
-
-This repo pins Python to `3.12` in `.python-version` and `pyproject.toml`.
+From the repository root:
 
 ```powershell
 uv python install 3.12
-```
-
-### 2. Sync Python packages
-
-Use uv's normal project workflow. This creates and manages the project environment automatically.
-
-```powershell
 uv sync
 ```
 
-Do not activate `.venv` manually. Run backend commands through `uv run`.
+This repo pins Python to `3.12`. Use `uv run ...` for backend commands; manual `.venv` activation is not required.
 
-### 3. Configure environment variables
-
-Copy the example environment file:
+Create your local environment file:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Edit `.env` if needed:
+Important settings:
 
 ```text
-MODEL_PATH=weights/best.pt
-IMAGE_DIR=data/images
-LABEL_DIR=data/labels
-VISUALIZATION_DIR=data/labeled_images
+ACTIVE_TASK=safety_signs
 CORS_ORIGINS=http://localhost:5173
-YOLO_IMG_SIZE=640
-YOLO_CONF=0.25
-YOLO_IOU=0.7
-USE_COLOR_VEST_FALLBACK=false
+
+PPE_MODEL_PATH=weights/ppe.pt
+PPE_IMAGE_DIR=data/ppe/images
+PPE_LABEL_DIR=data/ppe/labels
+PPE_VISUALIZATION_DIR=data/ppe/labeled_images
+
+SAFETY_SIGN_MODEL_PATH=weights/sign.pt
+SAFETY_SIGN_IMAGE_DIR=data/safety_signs/images
+SAFETY_SIGN_LABEL_DIR=data/safety_signs/labels
+SAFETY_SIGN_VISUALIZATION_DIR=data/safety_signs/labeled_images
+SAFETY_SIGN_CONF=0.15
+SAFETY_SIGN_IMG_SIZE=640
+SAFETY_SIGN_IOU=0.7
+SAFETY_SIGN_AGNOSTIC_NMS=true
 ```
-
-Place your deep learning model weights at the configured `MODEL_PATH`, for example:
-
-```text
-weights/best.pt
-```
-
-Place images to annotate in:
-
-```text
-data/images/
-```
-
-Inference settings:
-
-- `YOLO_IMG_SIZE` should match the image size you used during model validation when you want similar boxes.
-- `YOLO_CONF` controls minimum detection confidence.
-- `YOLO_IOU` controls non-maximum suppression overlap.
-- `USE_COLOR_VEST_FALLBACK=false` means vest boxes come from YOLO class `2`. Set it to `true` only if you want the old HSV color fallback when YOLO finds no vest.
 
 ## Frontend Setup
 
-Run these commands from the repository root:
+Prerequisites:
+
+- Node.js LTS
+
+From the repository root:
 
 ```powershell
 cd frontend
 npm install
 ```
 
-## Run The Application
+## Run The App
 
 Start the backend from the repository root:
 
@@ -131,30 +165,33 @@ Open:
 http://localhost:5173
 ```
 
-## API
+## API Overview
 
-The frontend uses these backend endpoints:
+Task-scoped endpoints:
 
-- `GET /api/v1/images`
-- `DELETE /api/v1/images/{filename}`
-- `GET /api/v1/images/{filename}/labels`
-- `PUT /api/v1/images/{filename}/labels`
-- `POST /api/v1/images/{filename}/auto-label`
-- `POST /api/v1/auto-label`
-- `POST /api/v1/visualizations`
+- `GET /api/v1/tasks`
+- `GET /api/v1/tasks/{task}/images`
+- `DELETE /api/v1/tasks/{task}/images/{filename}`
+- `GET /api/v1/tasks/{task}/images/{filename}/labels`
+- `PUT /api/v1/tasks/{task}/images/{filename}/labels`
+- `POST /api/v1/tasks/{task}/images/{filename}/auto-label`
+- `POST /api/v1/tasks/{task}/auto-label`
+- `POST /api/v1/tasks/{task}/visualizations`
 
-Images are served from `/media/images/{filename}`.
-Generated visualization images are served from `/media/visualizations/{filename}`.
+Media routes:
+
+- `/media/{task}/images/{filename}`
+- `/media/{task}/visualizations/{filename}`
 
 ## Development Checks
 
-Backend smoke check:
+Backend tests:
 
 ```powershell
 uv run pytest
 ```
 
-Frontend build check:
+Frontend build:
 
 ```powershell
 cd frontend
@@ -164,15 +201,17 @@ npm run build
 Git hygiene check:
 
 ```powershell
-git ls-files | Select-String "node_modules|\\.pt$|^data/images/|^data/labels/|^data/labeled_images/"
+git ls-files | Select-String "node_modules|\\.pt$|^data/ppe/images/|^data/ppe/labels/|^data/ppe/labeled_images/|^data/safety_signs/images/|^data/safety_signs/labels/|^data/safety_signs/labeled_images/"
 ```
 
-The command should not show generated dependencies, model weights, or dataset files.
+The command should not show generated dependencies, model weights, or dataset files except `.gitkeep` placeholders.
 
 ## Troubleshooting
 
-- Missing model file: make sure `.env` points to an existing `.pt` file.
-- Frontend cannot reach backend: confirm the backend is running on port `8000` and the frontend is running on port `5173`.
-- No images show up: put `.jpg`, `.jpeg`, or `.png` files in `data/images/`.
+- Missing model file: check the task-specific model path in `.env`.
+- YOLO-World prompt error: make sure `SAFETY_SIGN_MODEL_PATH` points to the sign detector weight file, for example `weights/sign.pt`.
+- No images show up: put images in the selected task image folder.
+- Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
+- Frontend cannot reach backend: confirm backend port `8000`, frontend port `5173`, and `CORS_ORIGINS`.
 - Python version mismatch: run `uv python install 3.12` and `uv sync`.
 - Python package errors: rerun `uv sync`.

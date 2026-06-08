@@ -1,16 +1,25 @@
-import { Hand, Loader2, MousePointer2, Play, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Hand, Loader2, MousePointer2, Play, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
 
-import { CLASS_NAMES } from '../constants';
-import type { InteractionMode } from '../types';
+import type { InteractionMode, TaskInfo } from '../types';
 
 interface ToolbarProps {
+  tasks: TaskInfo[];
+  selectedTaskId: string;
+  classNames: Record<number, string>;
+  addClassIds: number[];
+  assignClassIds: number[];
   drawingClass: number | null;
   interactionMode: InteractionMode;
   selectedCount: number;
+  selectedClassId: number | null;
+  overlayVisible: boolean;
   isResetting: boolean;
   isSaving: boolean;
   selectedImage: string | null;
+  onTaskChange: (taskId: string) => void;
   onToggleAddMode: (classId: number) => void;
+  onSelectedClassChange: (classId: number) => void;
+  onOverlayVisibleChange: (visible: boolean) => void;
   onInteractionModeChange: (mode: InteractionMode) => void;
   onDeleteSelected: () => void;
   onReset: () => void;
@@ -19,13 +28,23 @@ interface ToolbarProps {
 }
 
 export function Toolbar({
+  tasks,
+  selectedTaskId,
+  classNames,
+  addClassIds,
+  assignClassIds,
   drawingClass,
   interactionMode,
   selectedCount,
+  selectedClassId,
+  overlayVisible,
   isResetting,
   isSaving,
   selectedImage,
+  onTaskChange,
   onToggleAddMode,
+  onSelectedClassChange,
+  onOverlayVisibleChange,
   onInteractionModeChange,
   onDeleteSelected,
   onReset,
@@ -34,22 +53,30 @@ export function Toolbar({
 }: ToolbarProps) {
   return (
     <div className="h-14 border-b border-gray-700 flex items-center px-4 gap-4 bg-gray-800 cursor-default">
+      <select
+        value={selectedTaskId}
+        onChange={(event) => onTaskChange(event.target.value)}
+        className="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white"
+        title="Annotation task"
+      >
+        {tasks.map((task) => (
+          <option key={task.id} value={task.id}>
+            {task.name}
+          </option>
+        ))}
+      </select>
+      <div className="h-6 w-px bg-gray-600 mx-2" />
       <div className="flex gap-2">
-        {[0, 1, 2].map((id) => {
-          const colors = [
-            { active: 'bg-red-600 text-white shadow-lg shadow-red-500/50', hover: 'bg-gray-700 hover:bg-red-900/40 text-red-200' },
-            { active: 'bg-blue-600 text-white shadow-lg shadow-blue-500/50', hover: 'bg-gray-700 hover:bg-blue-900/40 text-blue-200' },
-            { active: 'bg-green-600 text-white shadow-lg shadow-green-500/50', hover: 'bg-gray-700 hover:bg-green-900/40 text-green-200' },
-          ];
+        {addClassIds.map((id) => {
           return (
             <button
               key={id}
               onClick={() => onToggleAddMode(id)}
               className={`flex items-center gap-1 px-3 py-1 rounded text-sm transition font-medium ${
-                drawingClass === id ? colors[id].active : colors[id].hover
+                drawingClass === id ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50' : 'bg-gray-700 hover:bg-blue-900/40 text-blue-200'
               }`}
             >
-              <Plus size={14} /> {drawingClass === id ? `Drawing ${CLASS_NAMES[id]}...` : `Add ${CLASS_NAMES[id]}`}
+              <Plus size={14} /> {drawingClass === id ? 'Drawing Sign...' : classNames[id] === 'Unreviewed safety sign' ? 'Add Sign' : `Add ${classNames[id]}`}
             </button>
           );
         })}
@@ -71,6 +98,31 @@ export function Toolbar({
           <Hand size={18} />
         </button>
       </div>
+      <div className="h-6 w-px bg-gray-600 mx-2" />
+      <button
+        onClick={() => onOverlayVisibleChange(!overlayVisible)}
+        className="p-1 hover:bg-gray-700 rounded transition text-gray-300"
+        title={overlayVisible ? 'Hide boxes' : 'Show boxes'}
+      >
+        {overlayVisible ? <Eye size={18} /> : <EyeOff size={18} />}
+      </button>
+      <div className="h-6 w-px bg-gray-600 mx-2" />
+      <select
+        value={selectedClassId ?? ''}
+        onChange={(event) => onSelectedClassChange(Number(event.target.value))}
+        disabled={selectedCount === 0}
+        className="max-w-72 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white disabled:opacity-50"
+        title="Assign selected box class"
+      >
+        <option value="" disabled>
+          Assign class
+        </option>
+        {assignClassIds.map((id) => (
+          <option key={id} value={id}>
+            {id}: {classNames[id]}
+          </option>
+        ))}
+      </select>
       <div className="h-6 w-px bg-gray-600 mx-2" />
       <button
         onClick={onDeleteSelected}

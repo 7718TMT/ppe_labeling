@@ -36,7 +36,7 @@ def visualization_path_for(visualization_dir: Path, filename: str) -> Path:
     return visualization_dir / f"verified_{Path(filename).stem}.jpg"
 
 
-def list_images(image_dir: Path, label_dir: Path, visualization_dir: Path) -> list[ImageItem]:
+def list_images(image_dir: Path, label_dir: Path, visualization_dir: Path, media_prefix: str = "/media") -> list[ImageItem]:
     items: list[ImageItem] = []
     for path in image_paths(image_dir):
         label_path = label_path_for(label_dir, path.name)
@@ -45,8 +45,8 @@ def list_images(image_dir: Path, label_dir: Path, visualization_dir: Path) -> li
             ImageItem(
                 name=path.name,
                 has_label=label_path.exists(),
-                image_url=f"/media/images/{path.name}",
-                visualization_url=f"/media/visualizations/{visualization_path.name}"
+                image_url=f"{media_prefix}/images/{path.name}",
+                visualization_url=f"{media_prefix}/visualizations/{visualization_path.name}"
                 if visualization_path.exists()
                 else None,
             )
