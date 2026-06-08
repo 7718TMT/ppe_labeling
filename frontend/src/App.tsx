@@ -55,8 +55,10 @@ const App = () => {
   );
   const temporaryClassId = selectedTask?.temporary_class_id ?? null;
   const addClassIds = temporaryClassId !== null && temporaryClassId !== undefined ? [temporaryClassId] : Object.keys(classNames).map(Number);
+  const assignClassIds = Object.keys(classNames).map(Number).filter((classId) => classId !== temporaryClassId);
   const selectedClassIds = [...new Set(selectedIndices.map((index) => labels[index]?.class_id).filter((classId) => classId !== undefined))];
   const selectedClassId = selectedClassIds.length === 1 ? selectedClassIds[0] : null;
+  const selectedAssignableClassId = selectedClassId !== null && assignClassIds.includes(selectedClassId) ? selectedClassId : null;
 
   useEffect(() => {
     void refreshTasks();
@@ -280,18 +282,33 @@ const App = () => {
     }
   };
 
-  const autoSaveLabels = async () => {
+  const persistLabels = async (nextLabels = labels, options: { refresh?: boolean } = {}) => {
     if (!selectedImage) return;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
     setIsSaving(true);
     try {
-      await saveLabels(selectedTaskId, selectedImage, labels);
+      await saveLabels(selectedTaskId, selectedImage, nextLabels);
       setIsDirty(false);
-      await refreshImages(selectedTaskId);
+      if (options.refresh ?? true) {
+        await refreshImages(selectedTaskId);
+      }
     } catch (error) {
-      console.error('Error auto-saving labels:', error);
+      console.error('Error saving labels:', error);
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const flushPendingLabels = async () => {
+    if (!selectedImage || !isDirty) return;
+    await persistLabels(labels, { refresh: false });
+  };
+
+  const autoSaveLabels = async () => {
+    await persistLabels(labels);
   };
 
   const handleProcess = async () => {
@@ -312,6 +329,7 @@ const App = () => {
   const handleVisualize = async () => {
     setProcessing(true);
     try {
+      await flushPendingLabels();
       await generateVisualizations(selectedTaskId);
       await refreshImages(selectedTaskId);
       alert('Visualization completed! Check data/labeled_images.');
@@ -379,18 +397,25 @@ const App = () => {
     setSelectedIndices([]);
   };
 
-  const goToNext = () => {
+  const handleSelectImage = async (filename: string) => {
+    await flushPendingLabels();
+    setSelectedImage(filename);
+  };
+
+  const goToNext = async () => {
     if (!selectedImage || images.length === 0) return;
     const currentIndex = images.findIndex((image) => image.name === selectedImage);
     if (currentIndex < images.length - 1) {
+      await flushPendingLabels();
       setSelectedImage(images[currentIndex + 1].name);
     }
   };
 
-  const goToPrev = () => {
+  const goToPrev = async () => {
     if (!selectedImage || images.length === 0) return;
     const currentIndex = images.findIndex((image) => image.name === selectedImage);
     if (currentIndex > 0) {
+      await flushPendingLabels();
       setSelectedImage(images[currentIndex - 1].name);
     }
   };
@@ -552,9 +577,9 @@ const App = () => {
 
   const handleSelectedClassChange = (classId: number) => {
     if (selectedIndices.length === 0) return;
-    pushToHistory(
-      labels.map((box, index) => (selectedIndices.includes(index) ? { ...box, class_id: classId } : box)),
-    );
+    const nextLabels = labels.map((box, index) => (selectedIndices.includes(index) ? { ...box, class_id: classId } : box));
+    pushToHistory(nextLabels);
+    void persistLabels(nextLabels);
   };
 
   const handleBoxDragEnd = (index: number, event: any) => {
@@ -625,7 +650,7 @@ const App = () => {
         processing={processing}
         onProcess={handleProcess}
         onVisualize={handleVisualize}
-        onSelectImage={setSelectedImage}
+        onSelectImage={handleSelectImage}
         onDeleteImage={handleDeleteImage}
       />
 
@@ -635,11 +660,11 @@ const App = () => {
           selectedTaskId={selectedTaskId}
           classNames={classNames}
           addClassIds={addClassIds}
-          assignClassIds={Object.keys(classNames).map(Number).filter((classId) => classId !== temporaryClassId)}
+          assignClassIds={assignClassIds}
           drawingClass={drawingClass}
           interactionMode={interactionMode}
           selectedCount={selectedIndices.length}
-          selectedClassId={selectedClassId}
+          selectedClassId={selectedAssignableClassId}
           overlayVisible={overlayVisible}
           isResetting={isResetting}
           isSaving={isSaving}
