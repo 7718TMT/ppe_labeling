@@ -100,6 +100,16 @@ uv sync
 
 This repo pins Python to `3.12`. Use `uv run ...` for backend commands; manual `.venv` activation is not required.
 
+On Windows and Linux, `uv sync` installs the PyTorch CUDA 13.2 build from the PyTorch wheel index. The app still runs on CPU when CUDA is not available.
+
+Verify PyTorch and CUDA:
+
+```powershell
+uv run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
+```
+
+For GPU inference, this should show a `+cu132` PyTorch build, CUDA `13.2`, and `True` for `torch.cuda.is_available()`.
+
 Create your local environment file:
 
 ```powershell
@@ -111,6 +121,7 @@ Important settings:
 ```text
 ACTIVE_TASK=safety_signs
 CORS_ORIGINS=http://localhost:5173
+INFERENCE_DEVICE=auto
 
 PPE_MODEL_PATH=weights/ppe.pt
 PPE_IMAGE_DIR=data/ppe/images
@@ -126,6 +137,12 @@ SAFETY_SIGN_IMG_SIZE=640
 SAFETY_SIGN_IOU=0.7
 SAFETY_SIGN_AGNOSTIC_NMS=false
 ```
+
+Inference device options:
+
+- `INFERENCE_DEVICE=auto`: use `cuda:0` when PyTorch can access CUDA, otherwise CPU.
+- `INFERENCE_DEVICE=cpu`: force CPU inference.
+- `INFERENCE_DEVICE=cuda`, `cuda:0`, or `0`: request a specific NVIDIA CUDA device.
 
 ## Frontend Setup
 
@@ -208,6 +225,7 @@ The command should not show generated dependencies, model weights, or dataset fi
 - Sign detector class mismatch: make sure `SAFETY_SIGN_MODEL_PATH` points to a trained sign detector whose class IDs are `0-3`.
 - No images show up: put images in the selected task image folder.
 - Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
+- CUDA not used: run the PyTorch verification command above. If `torch.version.cuda` is `None`, rerun `uv sync` and make sure the lockfile is current. If `torch.cuda.is_available()` is `False`, update the NVIDIA driver and confirm the GPU is visible to Windows.
 - Frontend cannot reach backend: confirm backend port `8000`, frontend port `5173`, and `CORS_ORIGINS`.
 - Python version mismatch: run `uv python install 3.12` and `uv sync`.
 - Python package errors: rerun `uv sync`.
