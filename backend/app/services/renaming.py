@@ -61,6 +61,7 @@ def apply_safety_sign_renames(
             storage.label_path_for(label_dir, item.original_name),
             storage.label_path_for(label_dir, item.suggested_name),
         )
+        _ensure_empty_negative_label(label_dir, item)
         _rename_if_exists(
             storage.visualization_path_for(visualization_dir, item.original_name),
             storage.visualization_path_for(visualization_dir, item.suggested_name),
@@ -128,3 +129,15 @@ def _rename_if_exists(source: Path, destination: Path) -> None:
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
     source.replace(destination)
+
+
+def _ensure_empty_negative_label(label_dir: Path, item: RenamePreviewItem) -> None:
+    if not item.suggested_name.upper().startswith(f"{NEGATIVE_PREFIX}_") or item.label_count != 0:
+        return
+
+    label_path = storage.label_path_for(label_dir, item.suggested_name)
+    if label_path.exists():
+        return
+
+    label_path.parent.mkdir(parents=True, exist_ok=True)
+    label_path.write_text("", encoding="utf-8")

@@ -66,6 +66,22 @@ def test_apply_safety_sign_renames_moves_image_label_and_visualization(tmp_path:
     assert not (image_dir / "manual.jpg").exists()
 
 
+def test_apply_safety_sign_renames_creates_empty_negative_label(tmp_path: Path) -> None:
+    image_dir = tmp_path / "images"
+    label_dir = tmp_path / "labels"
+    visualization_dir = tmp_path / "visualizations"
+    image_dir.mkdir()
+    label_dir.mkdir()
+    visualization_dir.mkdir()
+    (image_dir / "no-sign.jpg").write_bytes(b"image")
+
+    renaming.apply_safety_sign_renames(image_dir, label_dir, visualization_dir, CLASS_NAMES)
+
+    assert (image_dir / "NEG_001.jpg").exists()
+    assert (label_dir / "NEG_001.txt").exists()
+    assert (label_dir / "NEG_001.txt").read_text(encoding="utf-8") == ""
+
+
 def test_preview_safety_sign_renames_avoids_existing_name_collisions(tmp_path: Path) -> None:
     image_dir = tmp_path / "images"
     label_dir = tmp_path / "labels"

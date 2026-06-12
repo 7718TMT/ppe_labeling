@@ -28,3 +28,4 @@ data/safety_signs/labeled_images/*
 !weights/.gitkeep
 
 orange_range_preview.jpg
+reports/*
