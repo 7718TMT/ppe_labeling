@@ -30,6 +30,20 @@ class OperationResponse(BaseModel):
     message: str
 
 
+class RenamePreviewItem(BaseModel):
+    original_name: str
+    suggested_name: str
+    reason: str
+    class_ids: list[int]
+    label_count: int
+    will_rename: bool
+
+
+class RenamePreviewResponse(BaseModel):
+    items: list[RenamePreviewItem]
+    rename_count: int
+
+
 class TaskInfo(BaseModel):
     id: str
     name: str

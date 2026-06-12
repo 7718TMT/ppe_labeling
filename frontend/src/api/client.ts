@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-import type { BBox, ImageData, TaskInfo } from '../types';
+import type { BBox, ImageData, RenamePreviewResponse, TaskInfo } from '../types';
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -35,6 +35,16 @@ export async function autoLabelImage(taskId: string, filename: string): Promise<
 
 export async function generateVisualizations(taskId: string): Promise<void> {
   await api.post(`/tasks/${encodeURIComponent(taskId)}/visualizations`);
+}
+
+export async function previewRenames(taskId: string): Promise<RenamePreviewResponse> {
+  const response = await api.get<RenamePreviewResponse>(`/tasks/${encodeURIComponent(taskId)}/renames/preview`);
+  return response.data;
+}
+
+export async function applyRenames(taskId: string): Promise<RenamePreviewResponse> {
+  const response = await api.post<RenamePreviewResponse>(`/tasks/${encodeURIComponent(taskId)}/renames/apply`);
+  return response.data;
 }
 
 export async function deleteImage(taskId: string, filename: string): Promise<void> {

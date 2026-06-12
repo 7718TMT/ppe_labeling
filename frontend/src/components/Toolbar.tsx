@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Hand, Loader2, MousePointer2, Play, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Hand, Loader2, Maximize, MousePointer2, Play, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
 
 import type { InteractionMode, TaskInfo } from '../types';
 
@@ -13,6 +13,7 @@ interface ToolbarProps {
   selectedCount: number;
   selectedClassId: number | null;
   overlayVisible: boolean;
+  canResetView: boolean;
   isResetting: boolean;
   isSaving: boolean;
   selectedImage: string | null;
@@ -21,6 +22,7 @@ interface ToolbarProps {
   onSelectedClassChange: (classId: number) => void;
   onOverlayVisibleChange: (visible: boolean) => void;
   onInteractionModeChange: (mode: InteractionMode) => void;
+  onResetView: () => void;
   onDeleteSelected: () => void;
   onReset: () => void;
   onPrevious: () => void;
@@ -38,6 +40,7 @@ export function Toolbar({
   selectedCount,
   selectedClassId,
   overlayVisible,
+  canResetView,
   isResetting,
   isSaving,
   selectedImage,
@@ -46,6 +49,7 @@ export function Toolbar({
   onSelectedClassChange,
   onOverlayVisibleChange,
   onInteractionModeChange,
+  onResetView,
   onDeleteSelected,
   onReset,
   onPrevious,
@@ -91,13 +95,22 @@ export function Toolbar({
           <MousePointer2 size={18} />
         </button>
         <button
-          onClick={() => onInteractionModeChange('pan')}
+          onClick={() => (interactionMode === 'pan' && canResetView ? onResetView() : onInteractionModeChange('pan'))}
           className={`p-1 rounded transition ${interactionMode === 'pan' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-          title="Pan Mode (H)"
+          title={interactionMode === 'pan' && canResetView ? 'Reset view' : 'Pan Mode (H)'}
         >
           <Hand size={18} />
         </button>
       </div>
+      <div className="h-6 w-px bg-gray-600 mx-2" />
+      <button
+        onClick={onResetView}
+        disabled={!selectedImage || !canResetView}
+        className="p-1 hover:bg-gray-700 rounded transition text-gray-300 disabled:opacity-40"
+        title="Reset image view (0)"
+      >
+        <Maximize size={18} />
+      </button>
       <div className="h-6 w-px bg-gray-600 mx-2" />
       <button
         onClick={() => onOverlayVisibleChange(!overlayVisible)}
@@ -136,9 +149,10 @@ export function Toolbar({
         onClick={onReset}
         disabled={isResetting || !selectedImage}
         className="flex items-center gap-1 bg-orange-900/50 hover:bg-orange-800/50 disabled:opacity-50 px-3 py-1 rounded text-sm text-orange-400 transition"
+        title="Discard manual labels and run AI detection again"
       >
         {isResetting ? <Loader2 className="animate-spin" size={14} /> : <RotateCcw size={14} />}
-        Return to Origin
+        Re-run AI
       </button>
       <div className="h-6 w-px bg-gray-600 mx-2" />
       <div className="flex gap-1">

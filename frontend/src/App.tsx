@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import {
+  applyRenames,
   autoLabelAll,
   autoLabelImage,
   deleteImage,
@@ -9,13 +10,14 @@ import {
   getLabels,
   getTasks,
   imageUrl,
+  previewRenames,
   saveLabels,
 } from './api/client';
 import { AnnotationCanvas } from './components/AnnotationCanvas';
 import { ImageSidebar } from './components/ImageSidebar';
 import { Toolbar } from './components/Toolbar';
 import { DEFAULT_TASK_ID, FALLBACK_CLASS_NAMES } from './constants';
-import type { BBox, ImageData, InteractionMode, SelectionRect, TaskInfo } from './types';
+import type { BBox, ImageData, InteractionMode, RenamePreviewItem, SelectionRect, TaskInfo } from './types';
 
 const App = () => {
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
@@ -42,6 +44,9 @@ const App = () => {
   const [drawingClass, setDrawingClass] = useState<number | null>(null);
   const [overlayVisible, setOverlayVisible] = useState(true);
   const [isDirty, setIsDirty] = useState(false);
+  const [renamePreview, setRenamePreview] = useState<RenamePreviewItem[]>([]);
+  const [renameCount, setRenameCount] = useState(0);
+  const [renaming, setRenaming] = useState(false);
 
   const isSpacePressedRef = useRef(false);
   const stageRef = useRef<any>(null);
@@ -63,6 +68,15 @@ const App = () => {
   const selectedClassIds = [...new Set(selectedIndices.map((index) => labels[index]?.class_id).filter((classId) => classId !== undefined))];
   const selectedClassId = selectedClassIds.length === 1 ? selectedClassIds[0] : null;
   const selectedAssignableClassId = selectedClassId !== null && assignClassIds.includes(selectedClassId) ? selectedClassId : null;
+  const fittedPosition = {
+    x: (containerSize.width - imageSize.width * initialScale) / 2,
+    y: (containerSize.height - imageSize.height * initialScale) / 2,
+  };
+  const canResetView = Boolean(
+    selectedImage
+      && imageObj
+      && (Math.abs(scale - initialScale) > 0.001 || Math.abs(position.x - fittedPosition.x) > 1 || Math.abs(position.y - fittedPosition.y) > 1),
+  );
 
   useEffect(() => {
     void refreshTasks();
@@ -79,6 +93,8 @@ const App = () => {
     setSelectedIndices([]);
     setDrawingClass(null);
     setIsDirty(false);
+    setRenamePreview([]);
+    setRenameCount(0);
   }, [selectedTaskId]);
 
   useEffect(() => {
@@ -201,6 +217,9 @@ const App = () => {
       } else if (event.key.toLowerCase() === 'v') {
         if (document.activeElement?.tagName === 'INPUT') return;
         setInteractionMode('select');
+      } else if (event.key === '0') {
+        if (document.activeElement?.tagName === 'INPUT') return;
+        resetView();
       }
     };
 
@@ -342,6 +361,58 @@ const App = () => {
       alert('Visualization failed.');
     } finally {
       setProcessing(false);
+    }
+  };
+
+  const resetView = () => {
+    if (!imageObj || imageSize.width === 0 || imageSize.height === 0) return;
+    setScale(initialScale);
+    setPosition({
+      x: (containerSize.width - imageSize.width * initialScale) / 2,
+      y: (containerSize.height - imageSize.height * initialScale) / 2,
+    });
+    setSelectionRect(null);
+    setIsPanning(false);
+  };
+
+  const handlePreviewRenames = async () => {
+    setRenaming(true);
+    try {
+      await flushPendingLabels();
+      const preview = await previewRenames(selectedTaskId);
+      setRenamePreview(preview.items);
+      setRenameCount(preview.rename_count);
+    } catch (error) {
+      console.error('Rename preview failed:', error);
+      alert('Rename preview failed. Check console.');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const handleApplyRenames = async () => {
+    if (renameCount === 0) return;
+    const selectedRename = selectedImage ? renamePreview.find((item) => item.original_name === selectedImage && item.will_rename) : undefined;
+    if (!confirm(`Apply ${renameCount} filename rename${renameCount === 1 ? '' : 's'}? Images, labels, and visualizations will be renamed together.`)) return;
+
+    setRenaming(true);
+    try {
+      await flushPendingLabels();
+      await applyRenames(selectedTaskId);
+      setRenamePreview([]);
+      setRenameCount(0);
+      if (selectedRename) {
+        setSelectedImage(selectedRename.suggested_name);
+      }
+      await refreshImages(selectedTaskId);
+      if (selectedRename) {
+        await loadLabels(selectedRename.suggested_name);
+      }
+    } catch (error) {
+      console.error('Rename apply failed:', error);
+      alert('Rename apply failed. Check console.');
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -551,17 +622,27 @@ const App = () => {
   };
 
   const boxFromAttrs = (current: BBox, newAttrs: any): BBox => {
-    const xCenter = (newAttrs.x + newAttrs.width / 2) / imageSize.width;
-    const yCenter = (newAttrs.y + newAttrs.height / 2) / imageSize.height;
-    const width = newAttrs.width / imageSize.width;
-    const height = newAttrs.height / imageSize.height;
+    const rawX1 = Math.min(newAttrs.x, newAttrs.x + newAttrs.width);
+    const rawY1 = Math.min(newAttrs.y, newAttrs.y + newAttrs.height);
+    const rawX2 = Math.max(newAttrs.x, newAttrs.x + newAttrs.width);
+    const rawY2 = Math.max(newAttrs.y, newAttrs.y + newAttrs.height);
+
+    const x1 = Math.max(0, Math.min(imageSize.width, rawX1));
+    const y1 = Math.max(0, Math.min(imageSize.height, rawY1));
+    const x2 = Math.max(0, Math.min(imageSize.width, rawX2));
+    const y2 = Math.max(0, Math.min(imageSize.height, rawY2));
+
+    const width = Math.max(1, x2 - x1);
+    const height = Math.max(1, y2 - y1);
+    const xCenter = x1 + width / 2;
+    const yCenter = y1 + height / 2;
 
     return {
       ...current,
-      x_center: Math.max(0, Math.min(1, xCenter)),
-      y_center: Math.max(0, Math.min(1, yCenter)),
-      w: Math.max(0.001, Math.min(1, width)),
-      h: Math.max(0.001, Math.min(1, height)),
+      x_center: xCenter / imageSize.width,
+      y_center: yCenter / imageSize.height,
+      w: width / imageSize.width,
+      h: height / imageSize.height,
     };
   };
 
@@ -586,63 +667,60 @@ const App = () => {
     void persistLabels(nextLabels);
   };
 
+  const attrsFromBoxNode = (node: any) => {
+    const scaleX = node.scaleX();
+    const scaleY = node.scaleY();
+    const width = node.width() * scaleX;
+    const height = node.height() * scaleY;
+    return {
+      x: node.x(),
+      y: node.y(),
+      width,
+      height,
+    };
+  };
+
+  const resetBoxNodeScale = (node: any) => {
+    node.scaleX(1);
+    node.scaleY(1);
+  };
+
   const handleBoxDragEnd = (index: number, event: any) => {
     event.cancelBubble = true;
     if (selectedIndices.length > 1 && selectedIndices.includes(index)) {
       const changes = selectedIndices.map((selectedIndex) => {
         const node = stageRef.current.findOne(`.box-${selectedIndex}`);
-        return {
-          index: selectedIndex,
-          newAttrs: {
-            x: node.x(),
-            y: node.y(),
-            width: node.width() * node.scaleX(),
-            height: node.height() * node.scaleY(),
-          },
-        };
-      });
-      handleMultiBoxChange(changes);
-    } else {
-      handleBoxChange(index, {
-        x: event.target.x(),
-        y: event.target.y(),
-        width: event.target.width() * event.target.scaleX(),
-        height: event.target.height() * event.target.scaleY(),
-      });
-    }
-    event.target.scaleX(1);
-    event.target.scaleY(1);
-  };
-
-  const handleBoxTransformEnd = (index: number, event: any) => {
-    event.cancelBubble = true;
-    if (selectedIndices.length > 1) {
-      const changes = selectedIndices.map((selectedIndex) => {
-        const node = stageRef.current.findOne(`.box-${selectedIndex}`);
-        const change = {
-          index: selectedIndex,
-          newAttrs: {
-            x: node.x(),
-            y: node.y(),
-            width: node.width() * node.scaleX(),
-            height: node.height() * node.scaleY(),
-          },
-        };
-        node.scaleX(1);
-        node.scaleY(1);
+        const change = { index: selectedIndex, newAttrs: attrsFromBoxNode(node) };
+        resetBoxNodeScale(node);
         return change;
       });
       handleMultiBoxChange(changes);
     } else {
-      const node = event.target;
-      handleBoxChange(index, {
-        x: node.x(),
-        y: node.y(),
-        width: node.width() * node.scaleX(),
-        height: node.height() * node.scaleY(),
-      });
-      node.scaleX(1);
-      node.scaleY(1);
+      const node = stageRef.current.findOne(`.box-${index}`);
+      const newAttrs = attrsFromBoxNode(node);
+      resetBoxNodeScale(node);
+      handleBoxChange(index, newAttrs);
+    }
+  };
+
+  const handleSelectedTransformEnd = (event: any) => {
+    event.cancelBubble = true;
+    if (selectedIndices.length === 0) return;
+
+    const changes = selectedIndices
+      .map((selectedIndex) => {
+        const node = stageRef.current?.findOne(`.box-${selectedIndex}`);
+        if (!node) return null;
+        const change = { index: selectedIndex, newAttrs: attrsFromBoxNode(node) };
+        resetBoxNodeScale(node);
+        return change;
+      })
+      .filter((change): change is { index: number; newAttrs: any } => change !== null);
+
+    if (changes.length === 1) {
+      handleBoxChange(changes[0].index, changes[0].newAttrs);
+    } else if (changes.length > 1) {
+      handleMultiBoxChange(changes);
     }
   };
 
@@ -652,8 +730,14 @@ const App = () => {
         images={images}
         selectedImage={selectedImage}
         processing={processing}
+        renamePreview={renamePreview}
+        renameCount={renameCount}
+        renaming={renaming}
+        canRename={selectedTaskId === 'safety_signs'}
         onProcess={handleProcess}
         onVisualize={handleVisualize}
+        onPreviewRenames={handlePreviewRenames}
+        onApplyRenames={handleApplyRenames}
         onSelectImage={handleSelectImage}
         onDeleteImage={handleDeleteImage}
       />
@@ -670,6 +754,7 @@ const App = () => {
           selectedCount={selectedIndices.length}
           selectedClassId={selectedAssignableClassId}
           overlayVisible={overlayVisible}
+          canResetView={canResetView}
           isResetting={isResetting}
           isSaving={isSaving}
           selectedImage={selectedImage}
@@ -678,6 +763,7 @@ const App = () => {
           onSelectedClassChange={handleSelectedClassChange}
           onOverlayVisibleChange={setOverlayVisible}
           onInteractionModeChange={setInteractionMode}
+          onResetView={resetView}
           onDeleteSelected={handleDelete}
           onReset={handleReset}
           onPrevious={goToPrev}
@@ -708,7 +794,7 @@ const App = () => {
           onMouseUp={handleMouseUp}
           onSelectBox={handleSelectBox}
           onBoxDragEnd={handleBoxDragEnd}
-          onBoxTransformEnd={handleBoxTransformEnd}
+          onSelectedTransformEnd={handleSelectedTransformEnd}
         />
       </div>
     </div>

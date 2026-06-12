@@ -7,8 +7,8 @@ from fastapi.responses import FileResponse
 from backend.app.core.config import Settings, TaskProfile, get_settings
 from backend.app.ml.safety_sign_detector import SafetySignDetector
 from backend.app.ml.yolo_detector import PpeDetector
-from backend.app.models.schemas import ImageItem, LabelPayload, LabelResponse, OperationResponse, TaskInfo
-from backend.app.services import storage
+from backend.app.models.schemas import ImageItem, LabelPayload, LabelResponse, OperationResponse, RenamePreviewResponse, TaskInfo
+from backend.app.services import renaming, storage
 from backend.app.services.labeling import LabelingService
 from backend.app.services.visualization import VisualizationService
 
@@ -159,6 +159,29 @@ def generate_task_visualizations(profile: TaskProfile = Depends(get_task_profile
     service = visualization_service_for_profile(profile)
     generated_count = service.generate_all()
     return OperationResponse(message=f"Generated {generated_count} visualizations")
+
+
+@router.get("/tasks/{task}/renames/preview", response_model=RenamePreviewResponse)
+def preview_task_renames(profile: TaskProfile = Depends(get_task_profile)) -> RenamePreviewResponse:
+    if profile.id != "safety_signs":
+        return RenamePreviewResponse(items=[], rename_count=0)
+
+    items = renaming.preview_safety_sign_renames(profile.image_dir, profile.label_dir, profile.class_names)
+    return RenamePreviewResponse(items=items, rename_count=sum(item.will_rename for item in items))
+
+
+@router.post("/tasks/{task}/renames/apply", response_model=RenamePreviewResponse)
+def apply_task_renames(profile: TaskProfile = Depends(get_task_profile)) -> RenamePreviewResponse:
+    if profile.id != "safety_signs":
+        return RenamePreviewResponse(items=[], rename_count=0)
+
+    items = renaming.apply_safety_sign_renames(
+        profile.image_dir,
+        profile.label_dir,
+        profile.visualization_dir,
+        profile.class_names,
+    )
+    return RenamePreviewResponse(items=items, rename_count=sum(item.will_rename for item in items))
 
 
 @media_router.get("/{task}/images/{filename}", include_in_schema=False)

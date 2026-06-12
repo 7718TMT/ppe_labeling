@@ -69,3 +69,24 @@ def test_put_empty_labels_persists_empty_label_file(monkeypatch, tmp_path: Path)
 
     assert response.status_code == 200
     assert (label_dir / "sample.txt").read_text(encoding="utf-8") == ""
+
+
+def test_task_rename_preview_and_apply(monkeypatch, tmp_path: Path) -> None:
+    image_dir, label_dir, visualization_dir, _ = _configure_safety_task(monkeypatch, tmp_path)
+    (image_dir / "sample.jpg").write_bytes(b"not-real-image")
+    (label_dir / "sample.txt").write_text("3 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+    (visualization_dir / "verified_sample.jpg").write_bytes(b"visual")
+
+    client = TestClient(create_app())
+
+    preview_response = client.get("/api/v1/tasks/safety_signs/renames/preview")
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["rename_count"] == 1
+    assert preview["items"][0]["suggested_name"] == "W011_001.jpg"
+
+    apply_response = client.post("/api/v1/tasks/safety_signs/renames/apply")
+    assert apply_response.status_code == 200
+    assert (image_dir / "W011_001.jpg").exists()
+    assert (label_dir / "W011_001.txt").exists()
+    assert (visualization_dir / "verified_W011_001.jpg").exists()

@@ -28,7 +28,7 @@ interface AnnotationCanvasProps {
   onMouseUp: () => void;
   onSelectBox: (index: number, additive: boolean) => void;
   onBoxDragEnd: (index: number, event: any) => void;
-  onBoxTransformEnd: (index: number, event: any) => void;
+  onSelectedTransformEnd: (event: any) => void;
 }
 
 export function AnnotationCanvas({
@@ -55,7 +55,7 @@ export function AnnotationCanvas({
   onMouseUp,
   onSelectBox,
   onBoxDragEnd,
-  onBoxTransformEnd,
+  onSelectedTransformEnd,
 }: AnnotationCanvasProps) {
   return (
     <div ref={containerRef} className="flex-1 overflow-hidden bg-black flex items-center justify-center relative">
@@ -110,7 +110,8 @@ export function AnnotationCanvas({
                     height={height}
                     fill={CLASS_COLORS[box.class_id]}
                     stroke={selectedIndices.includes(index) ? 'white' : 'transparent'}
-                    strokeWidth={2 / scale}
+                    strokeWidth={2}
+                    strokeScaleEnabled={false}
                     draggable={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
                     listening={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
                     onClick={(event) => {
@@ -131,7 +132,9 @@ export function AnnotationCanvas({
                     onTransform={(event) => {
                       event.cancelBubble = true;
                     }}
-                    onTransformEnd={(event) => onBoxTransformEnd(index, event)}
+                    onTransformEnd={(event) => {
+                      event.cancelBubble = true;
+                    }}
                   />
                 );
               })}
@@ -143,7 +146,8 @@ export function AnnotationCanvas({
                 height={Math.abs(selectionRect.y2 - selectionRect.y1)}
                 fill={drawingClass !== null ? CLASS_COLORS[drawingClass] : 'rgba(0, 161, 255, 0.3)'}
                 stroke={drawingClass !== null ? 'white' : '#00a1ff'}
-                strokeWidth={1 / scale}
+                strokeWidth={1}
+                strokeScaleEnabled={false}
                 listening={false}
               />
             )}
@@ -151,7 +155,9 @@ export function AnnotationCanvas({
               <Transformer
                 ref={transformerRef}
                 rotateEnabled={false}
+                flipEnabled={false}
                 keepRatio={false}
+                ignoreStroke
                 borderStroke="#00a1ff"
                 borderStrokeWidth={1 / scale}
                 anchorSize={6 / scale}
@@ -175,18 +181,10 @@ export function AnnotationCanvas({
                 onTransform={(event) => {
                   event.cancelBubble = true;
                 }}
-                onTransformEnd={(event) => {
-                  event.cancelBubble = true;
-                }}
+                onTransformEnd={onSelectedTransformEnd}
                 boundBoxFunc={(oldBox, newBox) => {
                   if (newBox.width < 2 || newBox.height < 2) return oldBox;
-
-                  const x = Math.max(0, newBox.x);
-                  const y = Math.max(0, newBox.y);
-                  const width = Math.min(imageSize.width - x, newBox.width);
-                  const height = Math.min(imageSize.height - y, newBox.height);
-
-                  return { ...newBox, x, y, width, height };
+                  return newBox;
                 }}
               />
             )}
