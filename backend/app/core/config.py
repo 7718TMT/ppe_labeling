@@ -21,6 +21,7 @@ class TaskProfile(BaseModel):
     yolo_iou: float
     class_names: dict[int, str]
     detector_type: Literal["ppe", "safety_signs"]
+    inference_device: str = "auto"
     temporary_class_id: int | None = None
     use_color_vest_fallback: bool = False
     agnostic_nms: bool = False
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
 
     active_task: TaskId = "safety_signs"
     cors_origins: str = "http://localhost:5173"
+    inference_device: str = "auto"
 
     ppe_model_path: Path = Path("weights/ppe.pt")
     ppe_image_dir: Path = Path("data/ppe/images")
@@ -69,6 +71,7 @@ class Settings(BaseSettings):
                 yolo_iou=self.ppe_yolo_iou,
                 class_names={0: "Person", 1: "Helmet", 2: "Vest"},
                 detector_type="ppe",
+                inference_device=self.inference_device,
                 use_color_vest_fallback=self.ppe_use_color_vest_fallback,
             ),
             "safety_signs": TaskProfile(
@@ -88,6 +91,7 @@ class Settings(BaseSettings):
                     3: "W011 Slippery surface",
                 },
                 detector_type="safety_signs",
+                inference_device=self.inference_device,
                 agnostic_nms=self.safety_sign_agnostic_nms,
             ),
         }

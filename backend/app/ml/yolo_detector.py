@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from backend.app.core.device import resolve_inference_device
 from backend.app.models.schemas import BoundingBox
 from backend.app.services.storage import clamp_box
 
@@ -14,12 +15,14 @@ class PpeDetector:
         confidence: float = 0.25,
         iou: float = 0.7,
         use_color_vest_fallback: bool = False,
+        device: str = "auto",
     ) -> None:
         self.model_path = model_path
         self.image_size = image_size
         self.confidence = confidence
         self.iou = iou
         self.use_color_vest_fallback = use_color_vest_fallback
+        self.device = resolve_inference_device(device)
         self._model = None
 
     @property
@@ -50,6 +53,7 @@ class PpeDetector:
             imgsz=self.image_size,
             conf=self.confidence,
             iou=self.iou,
+            device=self.device,
             verbose=False,
         )
         for result in results:

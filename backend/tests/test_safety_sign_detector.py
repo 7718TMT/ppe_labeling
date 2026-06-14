@@ -28,11 +28,12 @@ class _FakeModel:
     def __init__(self) -> None:
         self.called = False
 
-    def __call__(self, image_path: Path, imgsz: int, conf: float, iou: float, agnostic_nms: bool, verbose: bool):
+    def __call__(self, image_path: Path, imgsz: int, conf: float, iou: float, agnostic_nms: bool, device: str, verbose: bool):
         assert imgsz == 640
         assert conf == 0.15
         assert iou == 0.7
         assert agnostic_nms is False
+        assert device == "cpu"
         assert verbose is False
         self.called = True
         return [_FakeResult()]
@@ -48,6 +49,7 @@ def test_safety_sign_detector_preserves_trained_model_classes(monkeypatch, tmp_p
     detector = SafetySignDetector(
         model_path=tmp_path / "sign.pt",
         allowed_class_ids={0, 1, 2, 3},
+        device="cpu",
     )
     detector._model = fake_model
 

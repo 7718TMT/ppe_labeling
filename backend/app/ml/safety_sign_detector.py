@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from backend.app.core.device import resolve_inference_device
 from backend.app.models.schemas import BoundingBox
 from backend.app.services.storage import clamp_box
 
@@ -15,6 +16,7 @@ class SafetySignDetector:
         confidence: float = 0.15,
         iou: float = 0.7,
         agnostic_nms: bool = False,
+        device: str = "auto",
     ) -> None:
         self.model_path = model_path
         self.allowed_class_ids = allowed_class_ids
@@ -22,6 +24,7 @@ class SafetySignDetector:
         self.confidence = confidence
         self.iou = iou
         self.agnostic_nms = agnostic_nms
+        self.device = resolve_inference_device(device)
         self._model = None
 
     @property
@@ -47,6 +50,7 @@ class SafetySignDetector:
             conf=self.confidence,
             iou=self.iou,
             agnostic_nms=self.agnostic_nms,
+            device=self.device,
             verbose=False,
         )
 

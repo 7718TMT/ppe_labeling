@@ -30,10 +30,11 @@ class _FakeResult:
 
 
 class _FakeModel:
-    def __call__(self, image_path: Path, imgsz: int, conf: float, iou: float, verbose: bool):
+    def __call__(self, image_path: Path, imgsz: int, conf: float, iou: float, device: str, verbose: bool):
         assert imgsz == 960
         assert conf == 0.4
         assert iou == 0.6
+        assert device == "cpu"
         assert verbose is False
         return [_FakeResult()]
 
@@ -50,6 +51,7 @@ def test_detector_uses_yolo_vest_boxes_directly(monkeypatch, tmp_path: Path) -> 
         confidence=0.4,
         iou=0.6,
         use_color_vest_fallback=False,
+        device="cpu",
     )
     detector._model = _FakeModel()
 

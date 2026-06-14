@@ -24,6 +24,7 @@ def get_ppe_detector(
     confidence: float,
     iou: float,
     use_color_vest_fallback: bool,
+    device: str,
 ) -> PpeDetector:
     return PpeDetector(
         model_path=Path(model_path),
@@ -31,6 +32,7 @@ def get_ppe_detector(
         confidence=confidence,
         iou=iou,
         use_color_vest_fallback=use_color_vest_fallback,
+        device=device,
     )
 
 
@@ -42,6 +44,7 @@ def get_safety_sign_detector(
     confidence: float,
     iou: float,
     agnostic_nms: bool,
+    device: str,
 ) -> SafetySignDetector:
     return SafetySignDetector(
         model_path=Path(model_path),
@@ -50,6 +53,7 @@ def get_safety_sign_detector(
         confidence=confidence,
         iou=iou,
         agnostic_nms=agnostic_nms,
+        device=device,
     )
 
 
@@ -66,6 +70,7 @@ def detector_for_profile(profile: TaskProfile):
             profile.yolo_conf,
             profile.yolo_iou,
             profile.agnostic_nms,
+            profile.inference_device,
         )
 
     return get_ppe_detector(
@@ -74,6 +79,7 @@ def detector_for_profile(profile: TaskProfile):
         profile.yolo_conf,
         profile.yolo_iou,
         profile.use_color_vest_fallback,
+        profile.inference_device,
     )
 
 
