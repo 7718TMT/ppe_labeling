@@ -76,7 +76,7 @@ export function Toolbar({
                 drawingClass === id ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/50' : 'bg-gray-700 hover:bg-blue-900/40 text-blue-200'
               }`}
             >
-              <Plus size={14} /> {drawingClass === id ? 'Drawing Sign...' : selectedTaskId === 'safety_signs' ? 'Add Sign' : `Add ${classNames[id]}`}
+              <Plus size={14} /> {drawingClass === id ? 'Drawing...' : selectedTaskId === 'safety_signs' ? 'Add Sign' : `Add ${classNames[id]}`}
             </button>
           );
         })}

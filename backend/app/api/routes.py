@@ -20,6 +20,7 @@ media_router = APIRouter(prefix="/media")
 @lru_cache
 def get_ppe_detector(
     model_path: str,
+    allowed_class_ids: tuple[int, ...],
     image_size: int,
     confidence: float,
     iou: float,
@@ -31,6 +32,7 @@ def get_ppe_detector(
         image_size=image_size,
         confidence=confidence,
         iou=iou,
+        allowed_class_ids=set(allowed_class_ids),
         use_color_vest_fallback=use_color_vest_fallback,
         device=device,
     )
@@ -75,6 +77,7 @@ def detector_for_profile(profile: TaskProfile):
 
     return get_ppe_detector(
         str(profile.model_path),
+        tuple(profile.class_names.keys()),
         profile.yolo_img_size,
         profile.yolo_conf,
         profile.yolo_iou,
@@ -96,6 +99,7 @@ def visualization_service_for_profile(profile: TaskProfile) -> VisualizationServ
         image_dir=profile.image_dir,
         label_dir=profile.label_dir,
         visualization_dir=profile.visualization_dir,
+        class_names=profile.class_names,
     )
 
 
@@ -139,6 +143,7 @@ def update_task_labels(
     payload: LabelPayload,
     profile: TaskProfile = Depends(get_task_profile),
 ) -> OperationResponse:
+    storage.validate_label_classes(payload.boxes, set(profile.class_names))
     storage.save_labels(profile.label_dir, filename, payload.boxes)
     return OperationResponse(message=f"Labels updated for {filename}")
 
@@ -205,6 +210,7 @@ def get_labels(filename: str, settings: Settings = Depends(get_settings)) -> Lab
 @router.put("/images/{filename}/labels", response_model=OperationResponse)
 def update_labels(filename: str, payload: LabelPayload, settings: Settings = Depends(get_settings)) -> OperationResponse:
     profile = active_profile(settings)
+    storage.validate_label_classes(payload.boxes, set(profile.class_names))
     storage.save_labels(profile.label_dir, filename, payload.boxes)
     return OperationResponse(message=f"Labels updated for {filename}")
 

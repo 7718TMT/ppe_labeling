@@ -94,6 +94,14 @@ def save_labels(label_dir: Path, filename: str, boxes: list[BoundingBox]) -> Non
     path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
 
 
+def validate_label_classes(boxes: list[BoundingBox], allowed_class_ids: set[int]) -> None:
+    invalid_class_ids = sorted({box.class_id for box in boxes if box.class_id not in allowed_class_ids})
+    if invalid_class_ids:
+        allowed = ", ".join(str(class_id) for class_id in sorted(allowed_class_ids))
+        invalid = ", ".join(str(class_id) for class_id in invalid_class_ids)
+        raise HTTPException(status_code=422, detail=f"Invalid class ID(s): {invalid}. Allowed class IDs: {allowed}")
+
+
 def delete_image_artifacts(image_dir: Path, label_dir: Path, visualization_dir: Path, filename: str) -> None:
     validate_image_filename(filename)
     for path in (

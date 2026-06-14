@@ -54,9 +54,12 @@ const App = () => {
     Object.entries(selectedTask?.class_names ?? FALLBACK_CLASS_NAMES[selectedTaskId] ?? {}).map(([id, name]) => [Number(id), name]),
   );
   const temporaryClassId = selectedTask?.temporary_class_id ?? null;
-  const assignClassIds = Object.keys(classNames).map(Number).filter((classId) => classId !== temporaryClassId);
+  const assignClassIds = Object.keys(classNames)
+    .map(Number)
+    .filter((classId) => classId !== temporaryClassId)
+    .sort((a, b) => a - b);
   const addClassIds = selectedTaskId === 'safety_signs'
-    ? [0]
+    ? assignClassIds.slice(0, 1)
     : temporaryClassId !== null && temporaryClassId !== undefined
       ? [temporaryClassId]
       : assignClassIds;

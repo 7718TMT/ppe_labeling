@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { Image as KonvaImage, Layer, Rect, Stage, Transformer } from 'react-konva';
 
-import { CLASS_COLORS } from '../constants';
+import { classColor } from '../constants';
 import type { BBox, InteractionMode, SelectionRect } from '../types';
 
 interface AnnotationCanvasProps {
@@ -90,10 +90,7 @@ export function AnnotationCanvas({
             <KonvaImage image={imageObj} />
             {overlayVisible && labels
               .map((box, index) => ({ box, index }))
-              .sort((a, b) => {
-                const order: Record<number, number> = { 0: 0, 2: 1, 1: 2 };
-                return (order[a.box.class_id] ?? 0) - (order[b.box.class_id] ?? 0);
-              })
+              .sort((a, b) => a.box.class_id - b.box.class_id)
               .map(({ box, index }) => {
                 const width = box.w * imageSize.width;
                 const height = box.h * imageSize.height;
@@ -108,7 +105,7 @@ export function AnnotationCanvas({
                     y={y}
                     width={width}
                     height={height}
-                    fill={CLASS_COLORS[box.class_id]}
+                    fill={classColor(box.class_id)}
                     stroke={selectedIndices.includes(index) ? 'white' : 'transparent'}
                     strokeWidth={2 / scale}
                     draggable={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
@@ -141,7 +138,7 @@ export function AnnotationCanvas({
                 y={Math.min(selectionRect.y1, selectionRect.y2)}
                 width={Math.abs(selectionRect.x2 - selectionRect.x1)}
                 height={Math.abs(selectionRect.y2 - selectionRect.y1)}
-                fill={drawingClass !== null ? CLASS_COLORS[drawingClass] : 'rgba(0, 161, 255, 0.3)'}
+                fill={drawingClass !== null ? classColor(drawingClass) : 'rgba(0, 161, 255, 0.3)'}
                 stroke={drawingClass !== null ? 'white' : '#00a1ff'}
                 strokeWidth={1 / scale}
                 listening={false}

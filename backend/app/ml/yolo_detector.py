@@ -14,6 +14,7 @@ class PpeDetector:
         image_size: int = 640,
         confidence: float = 0.25,
         iou: float = 0.7,
+        allowed_class_ids: set[int] | None = None,
         use_color_vest_fallback: bool = False,
         device: str = "auto",
     ) -> None:
@@ -21,6 +22,7 @@ class PpeDetector:
         self.image_size = image_size
         self.confidence = confidence
         self.iou = iou
+        self.allowed_class_ids = allowed_class_ids or {0, 1, 2}
         self.use_color_vest_fallback = use_color_vest_fallback
         self.device = resolve_inference_device(device)
         self._model = None
@@ -44,6 +46,7 @@ class PpeDetector:
         if image is None:
             raise HTTPException(status_code=422, detail=f"Unreadable image: {image_path.name}")
 
+        boxes: list[BoundingBox] = []
         humans: list[BoundingBox] = []
         helmets: list[BoundingBox] = []
         vests: list[BoundingBox] = []
@@ -61,7 +64,7 @@ class PpeDetector:
             cls_list = result.boxes.cls.tolist()
             for index, cls_id in enumerate(cls_list):
                 class_id = int(cls_id)
-                if class_id not in (0, 1, 2):
+                if class_id not in self.allowed_class_ids:
                     continue
                 x_center, y_center, width, height = xywhn_list[index]
                 box = clamp_box(
@@ -73,14 +76,16 @@ class PpeDetector:
                         h=height,
                     )
                 )
+                boxes.append(box)
                 if class_id == 0:
                     humans.append(box)
                 elif class_id == 1:
                     helmets.append(box)
-                else:
+                elif class_id == 2:
                     vests.append(box)
 
         if self.use_color_vest_fallback and not vests:
-            vests = detect_vests(image, humans, helmets)
+            fallback_vests = detect_vests(image, humans, helmets)
+            boxes.extend(fallback_vests)
 
-        return [*helmets, *humans, *vests]
+        return boxes

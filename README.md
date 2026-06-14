@@ -15,6 +15,7 @@ Classes:
 - `0`: Person
 - `1`: Helmet
 - `2`: Vest
+- `3`: Cleaning Coverall
 
 Expected local data:
 
@@ -127,6 +128,7 @@ PPE_MODEL_PATH=weights/ppe.pt
 PPE_IMAGE_DIR=data/ppe/images
 PPE_LABEL_DIR=data/ppe/labels
 PPE_VISUALIZATION_DIR=data/ppe/labeled_images
+PPE_CLASS_NAMES=0=Person|1=Helmet|2=Vest|3=Cleaning Coverall
 
 SAFETY_SIGN_MODEL_PATH=weights/sign.pt
 SAFETY_SIGN_IMAGE_DIR=data/safety_signs/images
@@ -135,8 +137,11 @@ SAFETY_SIGN_VISUALIZATION_DIR=data/safety_signs/labeled_images
 SAFETY_SIGN_CONF=0.15
 SAFETY_SIGN_IMG_SIZE=640
 SAFETY_SIGN_IOU=0.7
+SAFETY_SIGN_CLASS_NAMES=0=M014 Wear head protection|1=M015 Wear high-visibility clothing|2=P004 No thoroughfare|3=W011 Slippery surface
 SAFETY_SIGN_AGNOSTIC_NMS=false
 ```
+
+Class maps use `ID=Name` entries separated by `|`. To add a class later, update the task's class map and replace the task model with a model trained to output the same class ID. The backend filters auto-label detections to the configured class IDs, the API rejects manual labels outside the task map, and the UI renders the dropdown from the backend task metadata.
 
 Inference device options:
 
@@ -222,7 +227,7 @@ The command should not show generated dependencies, model weights, or dataset fi
 ## Troubleshooting
 
 - Missing model file: check the task-specific model path in `.env`.
-- Sign detector class mismatch: make sure `SAFETY_SIGN_MODEL_PATH` points to a trained sign detector whose class IDs are `0-3`.
+- Model class mismatch: make sure the task model path points to a trained detector whose class IDs match the task's `*_CLASS_NAMES` map.
 - No images show up: put images in the selected task image folder.
 - Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
 - CUDA not used: run the PyTorch verification command above. If `torch.version.cuda` is `None`, rerun `uv sync` and make sure the lockfile is current. If `torch.cuda.is_available()` is `False`, update the NVIDIA driver and confirm the GPU is visible to Windows.

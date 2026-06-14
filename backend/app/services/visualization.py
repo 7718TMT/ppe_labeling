@@ -5,19 +5,30 @@ from fastapi import HTTPException
 from backend.app.services import storage
 
 
-CLASS_COLORS = {
-    0: (255, 0, 0),
-    1: (0, 0, 255),
-    2: (0, 255, 0),
-    3: (0, 255, 255),
-}
+CLASS_COLORS = [
+    (255, 0, 0),
+    (0, 0, 255),
+    (0, 255, 0),
+    (0, 255, 255),
+    (248, 189, 56),
+    (255, 0, 255),
+    (255, 128, 0),
+    (128, 0, 255),
+]
 
 
 class VisualizationService:
-    def __init__(self, image_dir: Path, label_dir: Path, visualization_dir: Path) -> None:
+    def __init__(
+        self,
+        image_dir: Path,
+        label_dir: Path,
+        visualization_dir: Path,
+        class_names: dict[int, str],
+    ) -> None:
         self.image_dir = image_dir
         self.label_dir = label_dir
         self.visualization_dir = visualization_dir
+        self.class_names = class_names
 
     def generate_all(self) -> int:
         generated = 0
@@ -50,11 +61,11 @@ class VisualizationService:
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(width - 1, x2), min(height - 1, y2)
 
-            color = CLASS_COLORS.get(box.class_id, (255, 255, 255))
+            color = color_for_class(box.class_id)
             cv2.rectangle(image, (x1, y1), (x2, y2), color, 3)
             cv2.putText(
                 image,
-                f"Class: {box.class_id}",
+                f"{box.class_id}: {self.class_names.get(box.class_id, 'Unknown')}",
                 (x1, max(y1 - 10, 20)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -64,3 +75,13 @@ class VisualizationService:
 
         output_path = storage.visualization_path_for(self.visualization_dir, filename)
         cv2.imwrite(str(output_path), image)
+
+
+def color_for_class(class_id: int) -> tuple[int, int, int]:
+    if class_id < len(CLASS_COLORS):
+        return CLASS_COLORS[class_id]
+    return (
+        (37 * class_id + 80) % 256,
+        (67 * class_id + 140) % 256,
+        (97 * class_id + 200) % 256,
+    )
