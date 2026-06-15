@@ -183,17 +183,42 @@ Open:
 http://localhost:5173
 ```
 
+## Annotation Workflow
+
+You can add images from the UI with `Upload Images`, or place files directly in the selected task image folder.
+
+Common UI actions:
+
+- `AI Current`: auto-label the selected image.
+- `AI All`: auto-label every image in the selected task.
+- `Export Current`: download a zip containing the selected image and its matching YOLO label file.
+- `Export All`: download a zip containing all images and matching YOLO label files for the selected task.
+- `Rename Sequential`: rename the selected task dataset to `image_00000`, `image_00001`, and so on, keeping image and label basenames aligned.
+
+Exports use this structure:
+
+```text
+images/
+labels/
+```
+
+If an image has no label yet, export creates an empty matching `.txt` file.
+
 ## API Overview
 
 Task-scoped endpoints:
 
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{task}/images`
+- `POST /api/v1/tasks/{task}/images/upload`
 - `DELETE /api/v1/tasks/{task}/images/{filename}`
 - `GET /api/v1/tasks/{task}/images/{filename}/labels`
 - `PUT /api/v1/tasks/{task}/images/{filename}/labels`
+- `GET /api/v1/tasks/{task}/images/{filename}/export`
 - `POST /api/v1/tasks/{task}/images/{filename}/auto-label`
 - `POST /api/v1/tasks/{task}/auto-label`
+- `GET /api/v1/tasks/{task}/export`
+- `POST /api/v1/tasks/{task}/rename-sequential`
 - `POST /api/v1/tasks/{task}/visualizations`
 
 Media routes:

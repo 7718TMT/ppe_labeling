@@ -1,8 +1,10 @@
 from functools import lru_cache
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.core.config import Settings, TaskProfile, get_settings
 from backend.app.ml.safety_sign_detector import SafetySignDetector
@@ -137,6 +139,18 @@ def get_task_labels(filename: str, profile: TaskProfile = Depends(get_task_profi
     return LabelResponse(filename=filename, boxes=storage.read_labels(profile.label_dir, filename))
 
 
+@router.post("/tasks/{task}/images/upload", response_model=OperationResponse)
+async def upload_task_images(
+    files: list[UploadFile] = File(...),
+    profile: TaskProfile = Depends(get_task_profile),
+) -> OperationResponse:
+    uploaded_names: list[str] = []
+    for file in files:
+        content = await file.read()
+        uploaded_names.append(storage.save_uploaded_image(profile.image_dir, file.filename or "image.jpg", content))
+    return OperationResponse(message=f"Uploaded {len(uploaded_names)} image(s)")
+
+
 @router.put("/tasks/{task}/images/{filename}/labels", response_model=OperationResponse)
 def update_task_labels(
     filename: str,
@@ -146,6 +160,23 @@ def update_task_labels(
     storage.validate_label_classes(payload.boxes, set(profile.class_names))
     storage.save_labels(profile.label_dir, filename, payload.boxes)
     return OperationResponse(message=f"Labels updated for {filename}")
+
+
+@router.get("/tasks/{task}/images/{filename}/export", response_model=None)
+def export_task_image(filename: str, profile: TaskProfile = Depends(get_task_profile)) -> StreamingResponse:
+    return export_zip_response(profile, [filename], f"{Path(filename).stem}_dataset.zip")
+
+
+@router.get("/tasks/{task}/export", response_model=None)
+def export_task_all(profile: TaskProfile = Depends(get_task_profile)) -> StreamingResponse:
+    filenames = [path.name for path in storage.image_paths(profile.image_dir)]
+    return export_zip_response(profile, filenames, f"{profile.id}_dataset.zip")
+
+
+@router.post("/tasks/{task}/rename-sequential", response_model=OperationResponse)
+def rename_task_sequential(profile: TaskProfile = Depends(get_task_profile)) -> OperationResponse:
+    renamed_count = storage.rename_dataset_sequential(profile.image_dir, profile.label_dir, profile.visualization_dir)
+    return OperationResponse(message=f"Renamed {renamed_count} image(s)")
 
 
 @router.post("/tasks/{task}/images/{filename}/auto-label", response_model=OperationResponse)
@@ -170,6 +201,19 @@ def generate_task_visualizations(profile: TaskProfile = Depends(get_task_profile
     service = visualization_service_for_profile(profile)
     generated_count = service.generate_all()
     return OperationResponse(message=f"Generated {generated_count} visualizations")
+
+
+def export_zip_response(profile: TaskProfile, filenames: list[str], download_name: str) -> StreamingResponse:
+    buffer = BytesIO()
+    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
+        for filename in filenames:
+            storage.copy_image_and_label_to_zip(zip_file, profile.image_dir, profile.label_dir, filename)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
+    )
 
 
 @media_router.get("/{task}/images/{filename}", include_in_schema=False)

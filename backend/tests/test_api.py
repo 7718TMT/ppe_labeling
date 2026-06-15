@@ -1,4 +1,6 @@
 from pathlib import Path
+from io import BytesIO
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
@@ -60,6 +62,67 @@ def test_task_image_list_uses_scoped_media_urls(monkeypatch, tmp_path: Path) -> 
             "visualization_url": None,
         }
     ]
+
+
+def test_upload_images_adds_files_to_task(monkeypatch, tmp_path: Path) -> None:
+    image_dir, _, _, _ = _configure_safety_task(monkeypatch, tmp_path)
+
+    client = TestClient(create_app())
+    response = client.post(
+        "/api/v1/tasks/safety_signs/images/upload",
+        files=[
+            ("files", ("sample.jpg", b"image-one", "image/jpeg")),
+            ("files", ("sample.jpg", b"image-two", "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert sorted(path.name for path in image_dir.iterdir()) == ["sample.jpg", "sample_001.jpg"]
+
+
+def test_export_current_image_includes_image_and_empty_label(monkeypatch, tmp_path: Path) -> None:
+    image_dir, label_dir, _, _ = _configure_safety_task(monkeypatch, tmp_path)
+    (image_dir / "sample.jpg").write_bytes(b"image")
+
+    client = TestClient(create_app())
+    response = client.get("/api/v1/tasks/safety_signs/images/sample.jpg/export")
+
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert sorted(archive.namelist()) == ["images/sample.jpg", "labels/sample.txt"]
+        assert archive.read("labels/sample.txt") == b""
+    assert (label_dir / "sample.txt").exists()
+
+
+def test_export_all_includes_all_image_label_pairs(monkeypatch, tmp_path: Path) -> None:
+    image_dir, label_dir, _, _ = _configure_safety_task(monkeypatch, tmp_path)
+    (image_dir / "a.jpg").write_bytes(b"a")
+    (image_dir / "b.png").write_bytes(b"b")
+    (label_dir / "a.txt").write_text("0 0.500000 0.500000 0.200000 0.200000\n", encoding="utf-8")
+
+    client = TestClient(create_app())
+    response = client.get("/api/v1/tasks/safety_signs/export")
+
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        assert sorted(archive.namelist()) == ["images/a.jpg", "images/b.png", "labels/a.txt", "labels/b.txt"]
+
+
+def test_rename_sequential_keeps_images_and_labels_together(monkeypatch, tmp_path: Path) -> None:
+    image_dir, label_dir, visualization_dir, _ = _configure_safety_task(monkeypatch, tmp_path)
+    (image_dir / "z.png").write_bytes(b"z")
+    (image_dir / "a.jpg").write_bytes(b"a")
+    (label_dir / "z.txt").write_text("3 0.500000 0.500000 0.200000 0.200000\n", encoding="utf-8")
+    (visualization_dir / "verified_z.jpg").write_bytes(b"visual")
+
+    client = TestClient(create_app())
+    response = client.post("/api/v1/tasks/safety_signs/rename-sequential")
+
+    assert response.status_code == 200
+    assert sorted(path.name for path in image_dir.iterdir()) == ["image_00000.jpg", "image_00001.png"]
+    assert (label_dir / "image_00000.txt").read_text(encoding="utf-8") == ""
+    assert (label_dir / "image_00001.txt").read_text(encoding="utf-8").startswith("3 ")
+    assert (visualization_dir / "verified_image_00001.jpg").exists()
 
 
 def test_put_empty_labels_persists_empty_label_file(monkeypatch, tmp_path: Path) -> None:

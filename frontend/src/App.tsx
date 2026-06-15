@@ -4,12 +4,16 @@ import {
   autoLabelAll,
   autoLabelImage,
   deleteImage,
+  exportAll,
+  exportImage,
   generateVisualizations,
   getImages,
   getLabels,
   getTasks,
   imageUrl,
+  renameSequential,
   saveLabels,
+  uploadImages,
 } from './api/client';
 import { AnnotationCanvas } from './components/AnnotationCanvas';
 import { ImageSidebar } from './components/ImageSidebar';
@@ -270,7 +274,7 @@ const App = () => {
     try {
       const imageList = await getImages(taskId);
       setImages(imageList);
-      setSelectedImage((current) => current ?? imageList[0]?.name ?? null);
+      setSelectedImage((current) => (current && imageList.some((image) => image.name === current) ? current : imageList[0]?.name ?? null));
     } catch (error) {
       console.error('Error fetching images:', error);
     }
@@ -321,6 +325,7 @@ const App = () => {
   const handleProcess = async () => {
     setProcessing(true);
     try {
+      await flushPendingLabels();
       await autoLabelAll(selectedTaskId);
       await refreshImages(selectedTaskId);
       if (selectedImage) await loadLabels(selectedImage);
@@ -328,6 +333,84 @@ const App = () => {
     } catch (error) {
       console.error('Processing failed:', error);
       alert('Processing failed. Check console for details.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleUploadImages = async (files: File[]) => {
+    setProcessing(true);
+    try {
+      await flushPendingLabels();
+      await uploadImages(selectedTaskId, files);
+      await refreshImages(selectedTaskId);
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert('Upload failed. Check console for details.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleAutoLabelCurrent = async () => {
+    if (!selectedImage) return;
+    setProcessing(true);
+    try {
+      await autoLabelImage(selectedTaskId, selectedImage);
+      await loadLabels(selectedImage);
+      await refreshImages(selectedTaskId);
+    } catch (error) {
+      console.error('Auto-label failed:', error);
+      alert('Auto-label failed. Check console for details.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleExportCurrent = async () => {
+    if (!selectedImage) return;
+    setProcessing(true);
+    try {
+      await flushPendingLabels();
+      await exportImage(selectedTaskId, selectedImage);
+      await refreshImages(selectedTaskId);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Export failed. Check console for details.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleExportAll = async () => {
+    setProcessing(true);
+    try {
+      await flushPendingLabels();
+      await exportAll(selectedTaskId);
+      await refreshImages(selectedTaskId);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Export failed. Check console for details.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleRenameSequential = async () => {
+    if (!confirm('Rename all images and matching labels in this task to image_00000, image_00001, and so on?')) return;
+    setProcessing(true);
+    try {
+      await flushPendingLabels();
+      await renameSequential(selectedTaskId);
+      setSelectedImage(null);
+      setLabels([]);
+      setImageObj(null);
+      setHistory([]);
+      setSelectedIndices([]);
+      await refreshImages(selectedTaskId);
+    } catch (error) {
+      console.error('Rename failed:', error);
+      alert('Rename failed. Check console for details.');
     } finally {
       setProcessing(false);
     }
@@ -655,8 +738,13 @@ const App = () => {
         images={images}
         selectedImage={selectedImage}
         processing={processing}
+        onUploadImages={handleUploadImages}
+        onAutoLabelCurrent={handleAutoLabelCurrent}
         onProcess={handleProcess}
         onVisualize={handleVisualize}
+        onExportCurrent={handleExportCurrent}
+        onExportAll={handleExportAll}
+        onRenameSequential={handleRenameSequential}
         onSelectImage={handleSelectImage}
         onDeleteImage={handleDeleteImage}
       />

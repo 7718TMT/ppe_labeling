@@ -7,6 +7,7 @@ from backend.app.models.schemas import BoundingBox, ImageItem
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+TEMP_RENAME_SUFFIX = ".renaming"
 
 
 def validate_image_filename(filename: str) -> str:
@@ -92,6 +93,109 @@ def save_labels(label_dir: Path, filename: str, boxes: list[BoundingBox]) -> Non
         for box in (clamp_box(box) for box in boxes)
     ]
     path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+
+
+def ensure_label_file(label_dir: Path, filename: str) -> Path:
+    path = label_path_for(label_dir, filename)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    return path
+
+
+def save_uploaded_image(image_dir: Path, filename: str, content: bytes) -> str:
+    safe_name = validate_image_filename(Path(filename).name)
+    target_path = unique_image_path(image_dir, safe_name)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(content)
+    return target_path.name
+
+
+def unique_image_path(image_dir: Path, filename: str) -> Path:
+    base_path = image_dir / filename
+    if not base_path.exists():
+        return base_path
+
+    stem = base_path.stem
+    suffix = base_path.suffix
+    index = 1
+    while True:
+        candidate = image_dir / f"{stem}_{index:03d}{suffix}"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def rename_dataset_sequential(
+    image_dir: Path,
+    label_dir: Path,
+    visualization_dir: Path,
+    prefix: str = "image",
+    start_index: int = 0,
+) -> int:
+    images = image_paths(image_dir)
+    if not images:
+        return 0
+
+    pending: list[tuple[Path, Path, Path | None, Path, Path | None, Path | None]] = []
+    for offset, image_path in enumerate(images):
+        target_stem = f"{prefix}_{start_index + offset:05d}"
+        target_image = image_dir / f"{target_stem}{image_path.suffix.lower()}"
+        source_label = label_path_for(label_dir, image_path.name)
+        target_label = label_dir / f"{target_stem}.txt"
+        source_visualization = visualization_path_for(visualization_dir, image_path.name)
+        target_visualization = visualization_dir / f"verified_{target_stem}.jpg"
+
+        temp_image = image_path.with_name(f"{image_path.name}{TEMP_RENAME_SUFFIX}")
+        temp_label = source_label.with_name(f"{source_label.name}{TEMP_RENAME_SUFFIX}") if source_label.exists() else None
+        temp_visualization = (
+            source_visualization.with_name(f"{source_visualization.name}{TEMP_RENAME_SUFFIX}")
+            if source_visualization.exists()
+            else None
+        )
+        pending.append((image_path, temp_image, source_label if source_label.exists() else None, target_image, target_label, source_visualization if source_visualization.exists() else None))
+
+        if image_path != temp_image:
+            image_path.rename(temp_image)
+        if source_label.exists() and temp_label is not None:
+            source_label.rename(temp_label)
+        if source_visualization.exists() and temp_visualization is not None:
+            source_visualization.rename(temp_visualization)
+
+    for _, temp_image, source_label, target_image, target_label, source_visualization in pending:
+        if target_image.exists():
+            target_image.unlink()
+        temp_image.rename(target_image)
+
+        if target_label.exists():
+            target_label.unlink()
+        if source_label is not None:
+            temp_label = source_label.with_name(f"{source_label.name}{TEMP_RENAME_SUFFIX}")
+            temp_label.rename(target_label)
+        else:
+            target_label.parent.mkdir(parents=True, exist_ok=True)
+            target_label.write_text("", encoding="utf-8")
+
+        if source_visualization is not None:
+            temp_visualization = source_visualization.with_name(f"{source_visualization.name}{TEMP_RENAME_SUFFIX}")
+            target_visualization = visualization_dir / f"verified_{target_image.stem}.jpg"
+            target_visualization.parent.mkdir(parents=True, exist_ok=True)
+            if target_visualization.exists():
+                target_visualization.unlink()
+            temp_visualization.rename(target_visualization)
+
+    return len(images)
+
+
+def copy_image_and_label_to_zip(zip_file, image_dir: Path, label_dir: Path, filename: str) -> None:
+    validate_image_filename(filename)
+    image_path = image_dir / filename
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    label_path = ensure_label_file(label_dir, filename)
+    zip_file.write(image_path, f"images/{image_path.name}")
+    zip_file.write(label_path, f"labels/{label_path.name}")
 
 
 def validate_label_classes(boxes: list[BoundingBox], allowed_class_ids: set[int]) -> None:
