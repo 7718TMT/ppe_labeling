@@ -81,8 +81,8 @@ export function FilmstripPanel({
               className={`group relative rounded p-2 cursor-pointer transition-colors ${
                 isActive
                   ? isApproved
-                    ? 'border-2 border-primary-container bg-surface'
-                    : 'border-2 border-primary bg-surface'
+                    ? 'border-2 border-primary-container bg-surface ring-2 ring-primary-container shadow-md'
+                    : 'border-2 border-primary bg-surface ring-2 ring-primary shadow-md'
                   : isApproved
                   ? 'border border-primary-container bg-surface-container-lowest'
                   : 'border border-outline-variant bg-surface-container-lowest hover:border-on-surface-variant'

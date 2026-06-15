@@ -1,10 +1,10 @@
 from functools import lru_cache
-from io import BytesIO
+import tempfile
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_STORED, ZipFile
 
 from fastapi import APIRouter, Depends, File, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 
 from backend.app.core.config import Settings, TaskProfile, get_settings
 from backend.app.ml.safety_sign_detector import SafetySignDetector
@@ -173,12 +173,12 @@ def approve_task_image(
 
 
 @router.get("/tasks/{task}/images/{filename}/export", response_model=None)
-def export_task_image(filename: str, profile: TaskProfile = Depends(get_task_profile)) -> StreamingResponse:
+def export_task_image(filename: str, profile: TaskProfile = Depends(get_task_profile)) -> FileResponse:
     return export_zip_response(profile, [filename], f"{Path(filename).stem}_dataset.zip")
 
 
 @router.get("/tasks/{task}/export", response_model=None)
-def export_task_all(profile: TaskProfile = Depends(get_task_profile)) -> StreamingResponse:
+def export_task_all(profile: TaskProfile = Depends(get_task_profile)) -> FileResponse:
     filenames = [path.name for path in storage.image_paths(profile.image_dir)]
     return export_zip_response(profile, filenames, f"{profile.id}_dataset.zip")
 
@@ -213,17 +213,32 @@ def generate_task_visualizations(profile: TaskProfile = Depends(get_task_profile
     return OperationResponse(message=f"Generated {generated_count} visualizations")
 
 
-def export_zip_response(profile: TaskProfile, filenames: list[str], download_name: str) -> StreamingResponse:
-    buffer = BytesIO()
-    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
-        for filename in filenames:
-            storage.copy_image_and_label_to_zip(zip_file, profile.image_dir, profile.label_dir, filename)
-    buffer.seek(0)
-    return StreamingResponse(
-        buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{download_name}"'},
-    )
+def export_zip_response(profile: TaskProfile, filenames: list[str], download_name: str) -> FileResponse:
+    # Write to a temp file on disk instead of BytesIO. FileResponse uses OS-level
+    # sendfile() for zero-copy transfer, which is dramatically faster than
+    # StreamingResponse reading a BytesIO in small Python-level chunks.
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    try:
+        with ZipFile(tmp, mode="w", compression=ZIP_STORED) as zip_file:
+            for filename in filenames:
+                storage.copy_image_and_label_to_zip(zip_file, profile.image_dir, profile.label_dir, filename)
+        tmp.close()
+        return FileResponse(
+            tmp.name,
+            media_type="application/zip",
+            filename=download_name,
+            background=_cleanup_tempfile(tmp.name),
+        )
+    except Exception:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
+def _cleanup_tempfile(path: str):
+    """Return a BackgroundTask that deletes the temp file after the response is sent."""
+    from starlette.background import BackgroundTask
+    return BackgroundTask(Path(path).unlink, missing_ok=True)
 
 
 @media_router.get("/{task}/images/{filename}", include_in_schema=False)

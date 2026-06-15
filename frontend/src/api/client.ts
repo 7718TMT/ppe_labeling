@@ -57,31 +57,25 @@ export async function renameSequential(taskId: string): Promise<void> {
   await api.post(`/tasks/${encodeURIComponent(taskId)}/rename-sequential`);
 }
 
-export async function exportImage(taskId: string, filename: string): Promise<void> {
-  const response = await api.get<Blob>(`/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(filename)}/export`, {
-    responseType: 'blob',
-  });
-  downloadBlob(response.data, filename.replace(/\.[^.]+$/, '_dataset.zip'));
+export function exportImage(taskId: string, filename: string): void {
+  const url = `/api/v1/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(filename)}/export`;
+  triggerBrowserDownload(url, filename.replace(/\.[^.]+$/, '_dataset.zip'));
 }
 
-export async function exportAll(taskId: string): Promise<void> {
-  const response = await api.get<Blob>(`/tasks/${encodeURIComponent(taskId)}/export`, {
-    responseType: 'blob',
-  });
-  downloadBlob(response.data, `${taskId}_dataset.zip`);
+export function exportAll(taskId: string): void {
+  const url = `/api/v1/tasks/${encodeURIComponent(taskId)}/export`;
+  triggerBrowserDownload(url, `${taskId}_dataset.zip`);
 }
 
 export function imageUrl(taskId: string, filename: string): string {
   return `/media/${encodeURIComponent(taskId)}/images/${encodeURIComponent(filename)}`;
 }
 
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
+function triggerBrowserDownload(url: string, filename: string): void {
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
 }

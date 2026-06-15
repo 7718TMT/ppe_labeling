@@ -218,6 +218,22 @@ def rename_dataset_sequential(
                 target_visualization.unlink()
             temp_visualization.rename(target_visualization)
 
+    # Clean up orphan labels and visualizations
+    valid_stems = {img.stem for img in image_paths(image_dir)}
+    for label_path in label_dir.glob("*.txt"):
+        if label_path.name not in ["classes.txt"] and label_path.stem not in valid_stems:
+            try:
+                label_path.unlink()
+            except OSError:
+                pass
+
+    for vis_path in visualization_dir.glob("*.jpg"):
+        if vis_path.stem.replace("verified_", "", 1) not in valid_stems:
+            try:
+                vis_path.unlink()
+            except OSError:
+                pass
+
     return len(images)
 
 

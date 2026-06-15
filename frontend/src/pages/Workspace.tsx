@@ -394,8 +394,7 @@ export const Workspace = () => {
     
     try {
       await flushPendingLabels();
-      await exportAll(selectedTaskId);
-      await refreshImages(selectedTaskId);
+      exportAll(selectedTaskId);
     } catch (error) {
       console.error('Export failed:', error);
       alert('Export failed. Check console for details.');

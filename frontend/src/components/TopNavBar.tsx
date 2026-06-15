@@ -33,6 +33,7 @@ export function TopNavBar({
   overlayVisible,
   isSaving,
   processingAction,
+  selectedImage,
   images,
   leftSidebarOpen,
   rightSidebarOpen,
@@ -74,7 +75,13 @@ export function TopNavBar({
         <div className="text-headline-sm font-headline-sm font-bold text-primary flex items-center gap-2">
           <Link to="/" className="hover:underline">Home</Link>
           <span className="text-on-surface-variant text-sm font-normal">&gt;</span>
-          <span className="text-on-surface">{selectedTask?.name || 'Loading...'}</span>
+          <span className={selectedImage ? "text-on-surface-variant" : "text-on-surface"}>{selectedTask?.name || 'Loading...'}</span>
+          {selectedImage && (
+            <>
+              <span className="text-on-surface-variant text-sm font-normal">&gt;</span>
+              <span className="text-on-surface">{selectedImage}</span>
+            </>
+          )}
         </div>
       </div>
 
