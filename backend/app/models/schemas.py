@@ -21,6 +21,7 @@ class LabelResponse(BaseModel):
 class ImageItem(BaseModel):
     name: str
     has_label: bool
+    is_approved: bool = False
     image_url: str
     visualization_url: str | None = None
 
@@ -35,3 +36,7 @@ class TaskInfo(BaseModel):
     name: str
     class_names: dict[int, str]
     temporary_class_id: int | None = None
+
+
+class ApprovePayload(BaseModel):
+    is_approved: bool

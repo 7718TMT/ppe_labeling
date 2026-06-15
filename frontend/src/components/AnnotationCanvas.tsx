@@ -1,7 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { Image as KonvaImage, Layer, Rect, Stage, Transformer } from 'react-konva';
 
-import { classColor } from '../constants';
+import { classBorderColor, classColor } from '../constants';
 import type { BBox, InteractionMode, SelectionRect } from '../types';
 
 interface AnnotationCanvasProps {
@@ -106,7 +106,7 @@ export function AnnotationCanvas({
                     width={width}
                     height={height}
                     fill={classColor(box.class_id)}
-                    stroke={selectedIndices.includes(index) ? 'white' : 'transparent'}
+                    stroke={selectedIndices.includes(index) ? 'white' : classBorderColor(box.class_id)}
                     strokeWidth={2 / scale}
                     draggable={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
                     listening={drawingClass === null && !isSpacePressed && interactionMode === 'select' && overlayVisible}
@@ -139,8 +139,8 @@ export function AnnotationCanvas({
                 width={Math.abs(selectionRect.x2 - selectionRect.x1)}
                 height={Math.abs(selectionRect.y2 - selectionRect.y1)}
                 fill={drawingClass !== null ? classColor(drawingClass) : 'rgba(0, 161, 255, 0.3)'}
-                stroke={drawingClass !== null ? 'white' : '#00a1ff'}
-                strokeWidth={1 / scale}
+                stroke={drawingClass !== null ? classBorderColor(drawingClass) : '#00a1ff'}
+                strokeWidth={2 / scale}
                 listening={false}
               />
             )}

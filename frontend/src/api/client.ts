@@ -33,6 +33,10 @@ export async function saveLabels(taskId: string, filename: string, boxes: BBox[]
   await api.put(`/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(filename)}/labels`, { boxes });
 }
 
+export async function setApproval(taskId: string, filename: string, isApproved: boolean): Promise<void> {
+  await api.put(`/tasks/${encodeURIComponent(taskId)}/images/${encodeURIComponent(filename)}/approve`, { is_approved: isApproved });
+}
+
 export async function autoLabelAll(taskId: string): Promise<void> {
   await api.post(`/tasks/${encodeURIComponent(taskId)}/auto-label`);
 }

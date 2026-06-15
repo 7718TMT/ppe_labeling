@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from backend.app.core.config import Settings, TaskProfile, get_settings
 from backend.app.ml.safety_sign_detector import SafetySignDetector
 from backend.app.ml.yolo_detector import PpeDetector
-from backend.app.models.schemas import ImageItem, LabelPayload, LabelResponse, OperationResponse, TaskInfo
+from backend.app.models.schemas import ApprovePayload, ImageItem, LabelPayload, LabelResponse, OperationResponse, TaskInfo
 from backend.app.services import storage
 from backend.app.services.labeling import LabelingService
 from backend.app.services.visualization import VisualizationService
@@ -162,6 +162,16 @@ def update_task_labels(
     return OperationResponse(message=f"Labels updated for {filename}")
 
 
+@router.put("/tasks/{task}/images/{filename}/approve", response_model=OperationResponse)
+def approve_task_image(
+    filename: str,
+    payload: ApprovePayload,
+    profile: TaskProfile = Depends(get_task_profile),
+) -> OperationResponse:
+    storage.set_approval(profile.label_dir, filename, payload.is_approved)
+    return OperationResponse(message=f"Approval set to {payload.is_approved} for {filename}")
+
+
 @router.get("/tasks/{task}/images/{filename}/export", response_model=None)
 def export_task_image(filename: str, profile: TaskProfile = Depends(get_task_profile)) -> StreamingResponse:
     return export_zip_response(profile, [filename], f"{Path(filename).stem}_dataset.zip")
@@ -257,6 +267,13 @@ def update_labels(filename: str, payload: LabelPayload, settings: Settings = Dep
     storage.validate_label_classes(payload.boxes, set(profile.class_names))
     storage.save_labels(profile.label_dir, filename, payload.boxes)
     return OperationResponse(message=f"Labels updated for {filename}")
+
+
+@router.put("/images/{filename}/approve", response_model=OperationResponse)
+def approve_image(filename: str, payload: ApprovePayload, settings: Settings = Depends(get_settings)) -> OperationResponse:
+    profile = active_profile(settings)
+    storage.set_approval(profile.label_dir, filename, payload.is_approved)
+    return OperationResponse(message=f"Approval set to {payload.is_approved} for {filename}")
 
 
 @router.post("/images/{filename}/auto-label", response_model=OperationResponse)
