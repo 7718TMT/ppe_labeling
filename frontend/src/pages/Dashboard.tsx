@@ -52,10 +52,10 @@ export function Dashboard() {
         <div className="max-w-6xl mx-auto p-8 md:p-12">
           <div className="mb-12 text-center md:text-left">
             <h1 className="font-headline-lg text-[2.5rem] font-bold text-on-surface mb-3 tracking-tight">
-              Active Projects
+              Active Tasks
             </h1>
             <p className="font-body-lg text-lg text-on-surface-variant max-w-2xl">
-              Select a workspace below to continue labeling and refining your object detection datasets.
+              Select a task below to continue labeling and refining your object detection datasets.
             </p>
           </div>
 
@@ -109,10 +109,12 @@ export function Dashboard() {
                             <FolderKanban size={20} className="text-primary opacity-80" />
                             {task.name}
                           </h2>
+                          {prog.total > 0 && (
                           <div className="bg-surface-container-highest px-2.5 py-1 rounded-md text-label-sm font-medium text-on-surface-variant flex items-center gap-1.5 flex-shrink-0 border border-outline-variant/50">
                             <ImageIcon size={14} />
                             {prog.total}
                           </div>
+                          )}
                         </div>
                         
                         <div className="flex flex-wrap gap-2 mb-8">
@@ -127,6 +129,7 @@ export function Dashboard() {
                         </div>
                       </div>
                       
+                      {prog.total > 0 ? (
                       <div className="mt-auto">
                         <div className="flex justify-between text-label-sm mb-2 items-center">
                           <span className="text-on-surface-variant flex items-center gap-1.5">
@@ -162,6 +165,16 @@ export function Dashboard() {
                           </div>
                         </div>
                       </div>
+                      ) : (
+                        <div className="mt-auto flex justify-between items-end">
+                          <div className="text-label-sm text-on-surface-variant font-medium italic">
+                            No images uploaded yet.
+                          </div>
+                          <div className="text-primary opacity-0 group-hover:opacity-100 transform translate-x-2 group-hover:translate-x-0 transition-all duration-300">
+                            <ChevronRight size={18} />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </Link>
                 );

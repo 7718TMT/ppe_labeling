@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { Upload, Loader2 } from 'lucide-react';
 
 import {
   autoLabelAll,
@@ -797,32 +798,61 @@ export const Workspace = () => {
           />
         )}
 
-        <AnnotationCanvas
-          containerRef={containerRef}
-          stageRef={stageRef}
-          transformerRef={transformerRef}
-          containerSize={containerSize}
-          imageSize={imageSize}
-          loading={loading}
-          imageObj={imageObj}
-          labels={labels}
-          selectedIndices={selectedIndices}
-          selectionRect={selectionRect}
-          drawingClass={drawingClass}
-          interactionMode={interactionMode}
-          overlayVisible={overlayVisible}
-          isPanning={isPanning}
-          isSpacePressed={isSpacePressed}
-          scale={scale}
-          position={position}
-          onWheel={handleWheel}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onSelectBox={handleSelectBox}
-          onBoxDragEnd={handleBoxDragEnd}
-          onBoxTransformEnd={handleBoxTransformEnd}
-        />
+        {images.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center bg-surface-container-lowest">
+            <div className="max-w-md w-full p-8 border-2 border-dashed border-outline-variant rounded-2xl bg-surface flex flex-col items-center text-center">
+              <Upload className="w-16 h-16 text-on-surface-variant/50 mb-4" />
+              <h2 className="text-headline-sm font-headline-sm text-on-surface mb-2">No Images Found</h2>
+              <p className="text-body-md text-on-surface-variant mb-6">
+                Get started by uploading images for this task. You can upload multiple files at once.
+              </p>
+              
+              <label className={`bg-primary-container text-on-primary-container font-label-lg font-bold px-6 py-3 rounded-xl hover:bg-primary-fixed transition-colors cursor-pointer active:scale-95 duration-100 flex items-center gap-2 ${processingAction === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
+                {processingAction === 'upload' ? <Loader2 className="animate-spin" size={20} /> : <Upload size={20} />}
+                {processingAction === 'upload' ? 'Uploading...' : 'Select Images'}
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    if (files.length > 0) handleUploadImages(files);
+                    event.target.value = '';
+                  }}
+                  disabled={processingAction !== null}
+                />
+              </label>
+            </div>
+          </div>
+        ) : (
+          <AnnotationCanvas
+            containerRef={containerRef}
+            stageRef={stageRef}
+            transformerRef={transformerRef}
+            containerSize={containerSize}
+            imageSize={imageSize}
+            loading={loading}
+            imageObj={imageObj}
+            labels={labels}
+            selectedIndices={selectedIndices}
+            selectionRect={selectionRect}
+            drawingClass={drawingClass}
+            interactionMode={interactionMode}
+            overlayVisible={overlayVisible}
+            isPanning={isPanning}
+            isSpacePressed={isSpacePressed}
+            scale={scale}
+            position={position}
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onSelectBox={handleSelectBox}
+            onBoxDragEnd={handleBoxDragEnd}
+            onBoxTransformEnd={handleBoxTransformEnd}
+          />
+        )}
 
         {rightSidebarOpen && (
           <PropertiesPanel

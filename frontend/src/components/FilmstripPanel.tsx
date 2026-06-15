@@ -31,7 +31,7 @@ export function FilmstripPanel({
       {/* Panel Header */}
       <div className="p-4 border-b border-outline-variant flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <span className="font-headline-sm text-headline-sm text-on-surface">Process</span>
+          <span className="font-headline-sm text-headline-sm text-on-surface">Progress</span>
           <span className="font-code-md text-code-md text-on-surface-variant">
             <span className="text-primary font-bold">{approvedCount}</span>/{images.length} Approved
           </span>
