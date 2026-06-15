@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Eye, EyeOff, Hand, Loader2, MousePointer2, PanelLeft, PanelRight, Save, Undo2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Eye, EyeOff, Hand, Loader2, MousePointer2, PanelLeft, PanelRight, Save, Undo2, Download, Wand2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import type { ImageData, InteractionMode, TaskInfo } from '../types';
@@ -72,7 +72,7 @@ export function TopNavBar({
           <PanelLeft size={18} />
         </button>
         <div className="text-headline-sm font-headline-sm font-bold text-primary flex items-center gap-2">
-          <Link to="/" className="hover:underline">Projects</Link>
+          <Link to="/" className="hover:underline">Home</Link>
           <span className="text-on-surface-variant text-sm font-normal">&gt;</span>
           <span className="text-on-surface">{selectedTask?.name || 'Loading...'}</span>
         </div>
@@ -170,7 +170,7 @@ export function TopNavBar({
           disabled={processingAction !== null || images.length === 0}
           className="px-4 h-8 bg-surface border border-outline-variant text-on-surface font-label-sm text-label-sm rounded hover:bg-surface-container-high transition-colors active:scale-95 duration-100 flex items-center gap-2 disabled:opacity-50"
         >
-          {processingAction === 'exportAll' ? <Loader2 className="animate-spin" size={16} /> : null}
+          {processingAction === 'exportAll' ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
           Export Dataset
         </button>
 
@@ -180,7 +180,7 @@ export function TopNavBar({
           disabled={processingAction !== null || images.length === 0}
           className="px-4 h-8 bg-primary-container text-on-primary-container font-label-sm text-label-sm rounded hover:bg-primary-fixed transition-colors active:scale-95 duration-100 font-bold flex items-center gap-2 disabled:opacity-50"
         >
-          {processingAction === 'autoLabelAll' ? <Loader2 className="animate-spin" size={16} /> : null}
+          {processingAction === 'autoLabelAll' ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />}
           AI Batch Label
         </button>
         
