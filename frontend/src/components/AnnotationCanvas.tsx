@@ -151,11 +151,11 @@ export function AnnotationCanvas({
                 keepRatio={false}
                 borderStroke="#00a1ff"
                 borderStrokeWidth={1 / scale}
-                anchorSize={6 / scale}
+                anchorSize={4 / scale}
                 anchorFill="white"
                 anchorStroke="#00a1ff"
                 anchorStrokeWidth={1 / scale}
-                anchorCornerRadius={3 / scale}
+                anchorCornerRadius={2 / scale}
                 listening={!isSpacePressed && interactionMode === 'select'}
                 onDragStart={(event) => {
                   event.cancelBubble = true;
