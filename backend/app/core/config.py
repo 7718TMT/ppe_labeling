@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     active_task: TaskId = "safety_signs"
     cors_origins: str = "http://localhost:5173"
     inference_device: str = "auto"
+    database_path: Path = Path("data/labeling_db.sqlite3")
 
     ppe_model_path: Path = Path("weights/ppe.pt")
     ppe_image_dir: Path = Path("data/ppe/images")
@@ -128,6 +129,7 @@ class Settings(BaseSettings):
         return profiles[task]  # type: ignore[index]
 
     def ensure_directories(self) -> None:
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
         for profile in self.task_profiles.values():
             profile.image_dir.mkdir(parents=True, exist_ok=True)
             profile.label_dir.mkdir(parents=True, exist_ok=True)

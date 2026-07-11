@@ -62,6 +62,8 @@ export const Workspace = () => {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
+  const selectedImageData = images.find((image) => image.name === selectedImage);
+  const selectedImageApproved = selectedImageData?.is_approved ?? false;
   const classNames: Record<number, string> = Object.fromEntries(
     Object.entries(selectedTask?.class_names ?? FALLBACK_CLASS_NAMES[selectedTaskId] ?? {}).map(([id, name]) => [Number(id), name]),
   );
@@ -441,18 +443,17 @@ export const Workspace = () => {
   };
 
 
-  const handleApprove = async () => {
+  const handleApprovalChange = async (isApproved: boolean) => {
     if (!selectedImage) return;
     setProcessingAction('approve');
-    if (!selectedImage) return;
     
     try {
-      await setApproval(selectedTaskId, selectedImage, true);
+      await setApproval(selectedTaskId, selectedImage, isApproved);
       await refreshImages(selectedTaskId);
-      goToNext();
+      if (isApproved) await goToNext();
     } catch (error) {
-      console.error('Approve failed:', error);
-      alert('Approve failed. Check console.');
+      console.error('Approval update failed:', error);
+      alert('Approval update failed. Check console.');
     } finally {
       setProcessingAction(null);
     }
@@ -862,13 +863,14 @@ export const Workspace = () => {
             selectedIndices={selectedIndices}
             drawingClass={drawingClass}
             selectedImage={selectedImage}
+            isApproved={selectedImageApproved}
             processingAction={processingAction}
             onToggleAddMode={toggleAddMode}
             onDelete={handleDelete}
             onSelectedClassChange={handleSelectedClassChange}
             onReset={handleReset}
             onAutoLabelCurrent={handleAutoLabelCurrent}
-            onApprove={handleApprove}
+            onApprovalChange={handleApprovalChange}
           />
         )}
       </main>

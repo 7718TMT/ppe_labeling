@@ -10,6 +10,7 @@ from backend.app.core.config import Settings, TaskProfile, get_settings
 from backend.app.ml.safety_sign_detector import SafetySignDetector
 from backend.app.ml.yolo_detector import PpeDetector
 from backend.app.models.schemas import ApprovePayload, ImageItem, LabelPayload, LabelResponse, OperationResponse, TaskInfo
+from backend.app.repositories.approvals import ApprovalRepository
 from backend.app.services import storage
 from backend.app.services.labeling import LabelingService
 from backend.app.services.visualization import VisualizationService
@@ -63,6 +64,10 @@ def get_safety_sign_detector(
 
 def get_task_profile(task: str, settings: Settings = Depends(get_settings)) -> TaskProfile:
     return settings.task_profile(task)
+
+
+def get_approval_repository(settings: Settings = Depends(get_settings)) -> ApprovalRepository:
+    return ApprovalRepository(settings.database_path)
 
 
 def detector_for_profile(profile: TaskProfile):
@@ -119,18 +124,27 @@ def get_tasks(settings: Settings = Depends(get_settings)) -> list[TaskInfo]:
 
 
 @router.get("/tasks/{task}/images", response_model=list[ImageItem])
-def get_task_images(profile: TaskProfile = Depends(get_task_profile)) -> list[ImageItem]:
+def get_task_images(
+    profile: TaskProfile = Depends(get_task_profile),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
+) -> list[ImageItem]:
     return storage.list_images(
         profile.image_dir,
         profile.label_dir,
         profile.visualization_dir,
+        approvals.approved_filenames(profile.id),
         media_prefix=f"/media/{profile.id}",
     )
 
 
 @router.delete("/tasks/{task}/images/{filename}", response_model=OperationResponse)
-def delete_task_image(filename: str, profile: TaskProfile = Depends(get_task_profile)) -> OperationResponse:
+def delete_task_image(
+    filename: str,
+    profile: TaskProfile = Depends(get_task_profile),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
+) -> OperationResponse:
     storage.delete_image_artifacts(profile.image_dir, profile.label_dir, profile.visualization_dir, filename)
+    approvals.delete_approval(profile.id, filename)
     return OperationResponse(message=f"Deleted {filename}")
 
 
@@ -167,8 +181,10 @@ def approve_task_image(
     filename: str,
     payload: ApprovePayload,
     profile: TaskProfile = Depends(get_task_profile),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
 ) -> OperationResponse:
-    storage.set_approval(profile.label_dir, filename, payload.is_approved)
+    storage.validate_image_filename(filename)
+    approvals.set_approval(profile.id, filename, payload.is_approved)
     return OperationResponse(message=f"Approval set to {payload.is_approved} for {filename}")
 
 
@@ -184,9 +200,13 @@ def export_task_all(profile: TaskProfile = Depends(get_task_profile)) -> FileRes
 
 
 @router.post("/tasks/{task}/rename-sequential", response_model=OperationResponse)
-def rename_task_sequential(profile: TaskProfile = Depends(get_task_profile)) -> OperationResponse:
-    renamed_count = storage.rename_dataset_sequential(profile.image_dir, profile.label_dir, profile.visualization_dir)
-    return OperationResponse(message=f"Renamed {renamed_count} image(s)")
+def rename_task_sequential(
+    profile: TaskProfile = Depends(get_task_profile),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
+) -> OperationResponse:
+    result = storage.rename_dataset_sequential(profile.image_dir, profile.label_dir, profile.visualization_dir)
+    approvals.rename_approvals(profile.id, result.filename_map)
+    return OperationResponse(message=f"Renamed {result.count} image(s)")
 
 
 @router.post("/tasks/{task}/images/{filename}/auto-label", response_model=OperationResponse)
@@ -258,15 +278,29 @@ def active_profile(settings: Settings) -> TaskProfile:
 
 
 @router.get("/images", response_model=list[ImageItem])
-def get_images(settings: Settings = Depends(get_settings)) -> list[ImageItem]:
+def get_images(
+    settings: Settings = Depends(get_settings),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
+) -> list[ImageItem]:
     profile = active_profile(settings)
-    return storage.list_images(profile.image_dir, profile.label_dir, profile.visualization_dir, media_prefix=f"/media/{profile.id}")
+    return storage.list_images(
+        profile.image_dir,
+        profile.label_dir,
+        profile.visualization_dir,
+        approvals.approved_filenames(profile.id),
+        media_prefix=f"/media/{profile.id}",
+    )
 
 
 @router.delete("/images/{filename}", response_model=OperationResponse)
-def delete_image(filename: str, settings: Settings = Depends(get_settings)) -> OperationResponse:
+def delete_image(
+    filename: str,
+    settings: Settings = Depends(get_settings),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
+) -> OperationResponse:
     profile = active_profile(settings)
     storage.delete_image_artifacts(profile.image_dir, profile.label_dir, profile.visualization_dir, filename)
+    approvals.delete_approval(profile.id, filename)
     return OperationResponse(message=f"Deleted {filename}")
 
 
@@ -285,9 +319,15 @@ def update_labels(filename: str, payload: LabelPayload, settings: Settings = Dep
 
 
 @router.put("/images/{filename}/approve", response_model=OperationResponse)
-def approve_image(filename: str, payload: ApprovePayload, settings: Settings = Depends(get_settings)) -> OperationResponse:
+def approve_image(
+    filename: str,
+    payload: ApprovePayload,
+    settings: Settings = Depends(get_settings),
+    approvals: ApprovalRepository = Depends(get_approval_repository),
+) -> OperationResponse:
     profile = active_profile(settings)
-    storage.set_approval(profile.label_dir, filename, payload.is_approved)
+    storage.validate_image_filename(filename)
+    approvals.set_approval(profile.id, filename, payload.is_approved)
     return OperationResponse(message=f"Approval set to {payload.is_approved} for {filename}")
 
 

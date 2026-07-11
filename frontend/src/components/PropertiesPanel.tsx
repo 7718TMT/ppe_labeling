@@ -10,12 +10,13 @@ interface PropertiesPanelProps {
   selectedIndices: number[];
   drawingClass: number | null;
   selectedImage: string | null;
+  isApproved: boolean;
   onToggleAddMode: (classId: number) => void;
   onSelectedClassChange: (classId: number) => void;
   onDelete: () => void;
   onReset: () => void;
   onAutoLabelCurrent: () => void;
-  onApprove: () => void;
+  onApprovalChange: (isApproved: boolean) => void;
   processingAction: string | null;
 }
 
@@ -42,13 +43,14 @@ export function PropertiesPanel({
   selectedIndices,
   drawingClass,
   selectedImage,
+  isApproved,
   processingAction,
   onToggleAddMode,
   onSelectedClassChange,
   onDelete,
   onReset,
   onAutoLabelCurrent,
-  onApprove,
+  onApprovalChange,
 }: PropertiesPanelProps) {
   const selectedCount = selectedIndices.length;
   const selectedClassIds = [...new Set(selectedIndices.map((index) => labels[index]?.class_id).filter((classId) => classId !== undefined))];
@@ -168,12 +170,25 @@ export function PropertiesPanel({
       {/* Bottom Action */}
       <div className="p-4 border-t border-outline-variant bg-surface-container-highest">
         <button
-          onClick={onApprove}
+          onClick={() => onApprovalChange(!isApproved)}
           disabled={processingAction !== null || !selectedImage}
-          className="w-full py-2 bg-primary-container text-on-primary-container font-label-sm text-label-sm rounded hover:bg-primary-fixed transition-colors active:scale-95 duration-100 font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+          className={`w-full py-2 font-label-sm text-label-sm rounded transition-colors active:scale-95 duration-100 font-bold flex items-center justify-center gap-2 disabled:opacity-50 ${
+            isApproved
+              ? 'border hover:opacity-80'
+              : 'bg-primary-container text-on-primary-container hover:bg-primary-fixed'
+          }`}
+          style={
+            isApproved
+              ? {
+                  borderColor: getClassAccent(3).border,
+                  color: getClassAccent(3).text,
+                  backgroundColor: getClassAccent(3).bg,
+                }
+              : undefined
+          }
         >
           {processingAction === 'approve' ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-          Approve Current Image
+          {isApproved ? 'Unapprove Current Image' : 'Approve Current Image'}
         </button>
       </div>
     </aside>

@@ -1,4 +1,4 @@
-import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -9,6 +9,15 @@ from backend.app.models.schemas import BoundingBox, ImageItem
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 TEMP_RENAME_SUFFIX = ".renaming"
+
+
+@dataclass(frozen=True)
+class RenameResult:
+    filename_map: dict[str, str]
+
+    @property
+    def count(self) -> int:
+        return len(self.filename_map)
 
 
 def validate_image_filename(filename: str) -> str:
@@ -38,40 +47,14 @@ def visualization_path_for(visualization_dir: Path, filename: str) -> Path:
     return visualization_dir / f"verified_{Path(filename).stem}.jpg"
 
 
-def _approved_file_path(label_dir: Path) -> Path:
-    return label_dir / "approved.json"
-
-
-def read_approvals(label_dir: Path) -> set[str]:
-    path = _approved_file_path(label_dir)
-    if not path.exists():
-        return set()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return set(data)
-    except (json.JSONDecodeError, IOError):
-        pass
-    return set()
-
-
-def set_approval(label_dir: Path, filename: str, is_approved: bool) -> None:
-    validate_image_filename(filename)
-    label_dir.mkdir(parents=True, exist_ok=True)
-    approvals = read_approvals(label_dir)
-    
-    if is_approved:
-        approvals.add(filename)
-    else:
-        approvals.discard(filename)
-        
-    path = _approved_file_path(label_dir)
-    path.write_text(json.dumps(sorted(list(approvals)), indent=2), encoding="utf-8")
-
-
-def list_images(image_dir: Path, label_dir: Path, visualization_dir: Path, media_prefix: str = "/media") -> list[ImageItem]:
+def list_images(
+    image_dir: Path,
+    label_dir: Path,
+    visualization_dir: Path,
+    approved_filenames: set[str],
+    media_prefix: str = "/media",
+) -> list[ImageItem]:
     items: list[ImageItem] = []
-    approvals = read_approvals(label_dir)
     for path in image_paths(image_dir):
         label_path = label_path_for(label_dir, path.name)
         visualization_path = visualization_path_for(visualization_dir, path.name)
@@ -79,7 +62,7 @@ def list_images(image_dir: Path, label_dir: Path, visualization_dir: Path, media
             ImageItem(
                 name=path.name,
                 has_label=label_path.exists(),
-                is_approved=path.name in approvals,
+                is_approved=path.name in approved_filenames,
                 image_url=f"{media_prefix}/images/{path.name}",
                 visualization_url=f"{media_prefix}/visualizations/{visualization_path.name}"
                 if visualization_path.exists()
@@ -166,15 +149,17 @@ def rename_dataset_sequential(
     visualization_dir: Path,
     prefix: str = "image",
     start_index: int = 0,
-) -> int:
+) -> RenameResult:
     images = image_paths(image_dir)
     if not images:
-        return 0
+        return RenameResult(filename_map={})
 
     pending: list[tuple[Path, Path, Path | None, Path, Path | None, Path | None]] = []
+    filename_map: dict[str, str] = {}
     for offset, image_path in enumerate(images):
         target_stem = f"{prefix}_{start_index + offset:05d}"
         target_image = image_dir / f"{target_stem}{image_path.suffix.lower()}"
+        filename_map[image_path.name] = target_image.name
         source_label = label_path_for(label_dir, image_path.name)
         target_label = label_dir / f"{target_stem}.txt"
         source_visualization = visualization_path_for(visualization_dir, image_path.name)
@@ -234,7 +219,7 @@ def rename_dataset_sequential(
             except OSError:
                 pass
 
-    return len(images)
+    return RenameResult(filename_map=filename_map)
 
 
 def copy_image_and_label_to_zip(zip_file, image_dir: Path, label_dir: Path, filename: str) -> None:
@@ -265,13 +250,6 @@ def delete_image_artifacts(image_dir: Path, label_dir: Path, visualization_dir: 
     ):
         if path.exists():
             path.unlink()
-            
-    # Also remove from approvals
-    approvals = read_approvals(label_dir)
-    if filename in approvals:
-        approvals.remove(filename)
-        path = _approved_file_path(label_dir)
-        path.write_text(json.dumps(sorted(list(approvals)), indent=2), encoding="utf-8")
 
 
 def clamp_box(box: BoundingBox) -> BoundingBox:

@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 from io import BytesIO
 from zipfile import ZipFile
@@ -13,12 +14,14 @@ def _configure_safety_task(monkeypatch, tmp_path: Path) -> tuple[Path, Path, Pat
     label_dir = tmp_path / "safety_signs" / "labels"
     visualization_dir = tmp_path / "safety_signs" / "visualizations"
     model_path = tmp_path / "weights" / "sign.pt"
+    database_path = tmp_path / "state" / "labeling_db.sqlite3"
 
     monkeypatch.setenv("ACTIVE_TASK", "safety_signs")
     monkeypatch.setenv("SAFETY_SIGN_IMAGE_DIR", str(image_dir))
     monkeypatch.setenv("SAFETY_SIGN_LABEL_DIR", str(label_dir))
     monkeypatch.setenv("SAFETY_SIGN_VISUALIZATION_DIR", str(visualization_dir))
     monkeypatch.setenv("SAFETY_SIGN_MODEL_PATH", str(model_path))
+    monkeypatch.setenv("DATABASE_PATH", str(database_path))
     get_settings.cache_clear()
 
     image_dir.mkdir(parents=True)
@@ -58,6 +61,7 @@ def test_task_image_list_uses_scoped_media_urls(monkeypatch, tmp_path: Path) -> 
         {
             "name": "sample.jpg",
             "has_label": True,
+            "is_approved": False,
             "image_url": "/media/safety_signs/images/sample.jpg",
             "visualization_url": None,
         }
@@ -116,6 +120,11 @@ def test_rename_sequential_keeps_images_and_labels_together(monkeypatch, tmp_pat
     (visualization_dir / "verified_z.jpg").write_bytes(b"visual")
 
     client = TestClient(create_app())
+    approval_response = client.put(
+        "/api/v1/tasks/safety_signs/images/z.png/approve",
+        json={"is_approved": True},
+    )
+    assert approval_response.status_code == 200
     response = client.post("/api/v1/tasks/safety_signs/rename-sequential")
 
     assert response.status_code == 200
@@ -123,6 +132,9 @@ def test_rename_sequential_keeps_images_and_labels_together(monkeypatch, tmp_pat
     assert (label_dir / "image_00000.txt").read_text(encoding="utf-8") == ""
     assert (label_dir / "image_00001.txt").read_text(encoding="utf-8").startswith("3 ")
     assert (visualization_dir / "verified_image_00001.jpg").exists()
+    images_response = client.get("/api/v1/tasks/safety_signs/images")
+    approvals = {item["name"]: item["is_approved"] for item in images_response.json()}
+    assert approvals["image_00001.png"] is True
 
 
 def test_put_empty_labels_persists_empty_label_file(monkeypatch, tmp_path: Path) -> None:
@@ -164,3 +176,46 @@ def test_custom_task_class_map_accepts_added_class(monkeypatch, tmp_path: Path) 
 
     assert response.status_code == 200
     assert (label_dir / "sample.txt").read_text(encoding="utf-8").startswith("8 ")
+
+
+def test_approval_status_is_persisted_in_sqlite(monkeypatch, tmp_path: Path) -> None:
+    image_dir, _, _, _ = _configure_safety_task(monkeypatch, tmp_path)
+    (image_dir / "sample.jpg").write_bytes(b"not-real-image")
+    database_path = tmp_path / "state" / "labeling_db.sqlite3"
+
+    client = TestClient(create_app())
+    response = client.put(
+        "/api/v1/tasks/safety_signs/images/sample.jpg/approve",
+        json={"is_approved": True},
+    )
+
+    assert response.status_code == 200
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT is_approved FROM approval_status WHERE task_id = ? AND filename = ?",
+            ("safety_signs", "sample.jpg"),
+        ).fetchone()
+    assert row == (1,)
+
+    response = client.put(
+        "/api/v1/tasks/safety_signs/images/sample.jpg/approve",
+        json={"is_approved": False},
+    )
+    assert response.status_code == 200
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT is_approved FROM approval_status WHERE task_id = ? AND filename = ?",
+            ("safety_signs", "sample.jpg"),
+        ).fetchone()
+    assert row == (0,)
+    image_response = client.get("/api/v1/tasks/safety_signs/images")
+    assert image_response.json()[0]["is_approved"] is False
+
+    response = client.delete("/api/v1/tasks/safety_signs/images/sample.jpg")
+    assert response.status_code == 200
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            "SELECT 1 FROM approval_status WHERE task_id = ? AND filename = ?",
+            ("safety_signs", "sample.jpg"),
+        ).fetchone()
+    assert row is None

@@ -66,6 +66,7 @@ backend/                          FastAPI backend
   app/core/                       Settings and task profiles
   app/ml/                         Auto-labeling model integrations
   app/models/                     Request/response schemas
+  app/repositories/               SQLite-backed application metadata
   app/services/                   Label, image, visualization, and orchestration logic
   tests/                          Backend tests
 frontend/                         React + Vite annotation UI
@@ -123,6 +124,7 @@ Important settings:
 ACTIVE_TASK=safety_signs
 CORS_ORIGINS=http://localhost:5173
 INFERENCE_DEVICE=auto
+DATABASE_PATH=data/labeling_db.sqlite3
 
 PPE_MODEL_PATH=weights/ppe.pt
 PPE_IMAGE_DIR=data/ppe/images
@@ -148,6 +150,8 @@ Inference device options:
 - `INFERENCE_DEVICE=auto`: use `cuda:0` when PyTorch can access CUDA, otherwise CPU.
 - `INFERENCE_DEVICE=cpu`: force CPU inference.
 - `INFERENCE_DEVICE=cuda`, `cuda:0`, or `0`: request a specific NVIDIA CUDA device.
+
+Approval state is stored in SQLite at `DATABASE_PATH`. Images, YOLO labels, and generated visualizations remain filesystem artifacts because they are the dataset and its derived output.
 
 ## Frontend Setup
 
