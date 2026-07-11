@@ -1,4 +1,4 @@
-import { CheckCircle2, Loader2, RotateCcw, Trash2, Wand2 } from 'lucide-react';
+import { CheckCircle2, Loader2, RotateCcw, Trash2, Wand2, X } from 'lucide-react';
 
 import type { BBox } from '../types';
 
@@ -187,7 +187,7 @@ export function PropertiesPanel({
               : undefined
           }
         >
-          {processingAction === 'approve' ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+          {processingAction === 'approve' ? <Loader2 className="animate-spin" size={16} /> : isApproved ? <X size={16} /> : <CheckCircle2 size={16} />}
           {isApproved ? 'Unapprove Current Image' : 'Approve Current Image'}
         </button>
       </div>

@@ -61,16 +61,20 @@ class ApprovalRepository:
             return {row[0] for row in rows}
 
     def set_approval(self, task_id: str, filename: str, is_approved: bool) -> None:
+        if not is_approved:
+            self.delete_approval(task_id, filename)
+            return
+
         with self._connection() as connection, connection:
             connection.execute(
                 """
                 INSERT INTO approval_status (task_id, filename, is_approved)
-                VALUES (?, ?, ?)
+                VALUES (?, ?, 1)
                 ON CONFLICT(task_id, filename) DO UPDATE SET
-                    is_approved = excluded.is_approved,
+                    is_approved = 1,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (task_id, filename, int(is_approved)),
+                (task_id, filename),
             )
 
     def delete_approval(self, task_id: str, filename: str) -> None:

@@ -207,7 +207,7 @@ def test_approval_status_is_persisted_in_sqlite(monkeypatch, tmp_path: Path) -> 
             "SELECT is_approved FROM approval_status WHERE task_id = ? AND filename = ?",
             ("safety_signs", "sample.jpg"),
         ).fetchone()
-    assert row == (0,)
+    assert row is None
     image_response = client.get("/api/v1/tasks/safety_signs/images")
     assert image_response.json()[0]["is_approved"] is False
 
