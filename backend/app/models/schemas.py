@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class BoundingBox(BaseModel):
-    class_id: int = Field(ge=0, le=3)
+    class_id: int = Field(ge=0)
     x_center: float = Field(ge=0, le=1)
     y_center: float = Field(ge=0, le=1)
     w: float = Field(gt=0, le=1)
@@ -21,6 +21,7 @@ class LabelResponse(BaseModel):
 class ImageItem(BaseModel):
     name: str
     has_label: bool
+    is_approved: bool = False
     image_url: str
     visualization_url: str | None = None
 
@@ -35,3 +36,7 @@ class TaskInfo(BaseModel):
     name: str
     class_names: dict[int, str]
     temporary_class_id: int | None = None
+
+
+class ApprovePayload(BaseModel):
+    is_approved: bool

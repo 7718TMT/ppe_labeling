@@ -31,7 +31,7 @@ def test_read_labels_rejects_malformed_rows(tmp_path: Path) -> None:
 
 
 def test_save_and_read_labels_round_trip(tmp_path: Path) -> None:
-    box = BoundingBox(class_id=1, x_center=0.5, y_center=0.4, w=0.2, h=0.1)
+    box = BoundingBox(class_id=8, x_center=0.5, y_center=0.4, w=0.2, h=0.1)
 
     storage.save_labels(tmp_path, "sample.jpg", [box])
 

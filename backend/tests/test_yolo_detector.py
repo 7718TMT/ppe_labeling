@@ -20,9 +20,11 @@ class _FakeBoxes:
             [0.5, 0.5, 0.8, 0.9],
             [0.5, 0.12, 0.2, 0.1],
             [0.5, 0.55, 0.35, 0.3],
+            [0.25, 0.55, 0.2, 0.4],
+            [0.75, 0.55, 0.2, 0.4],
         ]
     )
-    cls = _FakeTensor([0, 1, 2])
+    cls = _FakeTensor([0, 1, 2, 3, 8])
 
 
 class _FakeResult:
@@ -50,6 +52,7 @@ def test_detector_uses_yolo_vest_boxes_directly(monkeypatch, tmp_path: Path) -> 
         image_size=960,
         confidence=0.4,
         iou=0.6,
+        allowed_class_ids={0, 1, 2, 3},
         use_color_vest_fallback=False,
         device="cpu",
     )
@@ -57,8 +60,9 @@ def test_detector_uses_yolo_vest_boxes_directly(monkeypatch, tmp_path: Path) -> 
 
     boxes = detector.detect(image_path)
 
-    assert [box.class_id for box in boxes] == [1, 0, 2]
+    assert [box.class_id for box in boxes] == [0, 1, 2, 3]
     assert boxes[2].x_center == pytest.approx(0.5)
     assert boxes[2].y_center == pytest.approx(0.55)
     assert boxes[2].w == pytest.approx(0.35)
     assert boxes[2].h == pytest.approx(0.3)
+    assert boxes[3].class_id == 3

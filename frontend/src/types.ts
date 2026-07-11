@@ -9,6 +9,7 @@ export interface BBox {
 export interface ImageData {
   name: string;
   has_label: boolean;
+  is_approved: boolean;
   image_url: string;
   visualization_url?: string | null;
 }

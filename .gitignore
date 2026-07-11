@@ -4,10 +4,17 @@ venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-
+.ruff_cache/
 node_modules/
 dist/
 .vite/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.cursor/
 
 # weights/**/*.pt
 weights/**/*.onnx
@@ -28,3 +35,6 @@ data/safety_signs/labeled_images/*
 !weights/.gitkeep
 
 orange_range_preview.jpg
+
+AGENTS.md
+DESIGN.md

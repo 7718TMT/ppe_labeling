@@ -9,6 +9,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 TaskId = Literal["ppe", "safety_signs"]
 
 
+def parse_class_names(raw_value: str) -> dict[int, str]:
+    class_names: dict[int, str] = {}
+    for item in raw_value.split("|"):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"Invalid class mapping '{item}'. Use ID=Name entries separated by '|'.")
+        class_id_text, class_name = item.split("=", 1)
+        class_id = int(class_id_text.strip())
+        if class_id < 0:
+            raise ValueError("Class IDs must be non-negative integers.")
+        class_name = class_name.strip()
+        if not class_name:
+            raise ValueError(f"Class {class_id} must have a non-empty name.")
+        class_names[class_id] = class_name
+    if not class_names:
+        raise ValueError("At least one class mapping is required.")
+    return dict(sorted(class_names.items()))
+
+
 class TaskProfile(BaseModel):
     id: TaskId
     name: str
@@ -41,6 +62,7 @@ class Settings(BaseSettings):
     ppe_yolo_img_size: int = 640
     ppe_yolo_conf: float = 0.25
     ppe_yolo_iou: float = 0.7
+    ppe_class_names: str = "0=Person|1=Helmet|2=Vest|3=Cleaning Coverall"
     ppe_use_color_vest_fallback: bool = False
 
     safety_sign_model_path: Path = Path("weights/sign.pt")
@@ -50,6 +72,12 @@ class Settings(BaseSettings):
     safety_sign_conf: float = 0.15
     safety_sign_img_size: int = 640
     safety_sign_iou: float = 0.7
+    safety_sign_class_names: str = (
+        "0=M014 Wear head protection|"
+        "1=M015 Wear high-visibility clothing|"
+        "2=P004 No thoroughfare|"
+        "3=W011 Slippery surface"
+    )
     safety_sign_agnostic_nms: bool = False
 
     @property
@@ -69,7 +97,7 @@ class Settings(BaseSettings):
                 yolo_img_size=self.ppe_yolo_img_size,
                 yolo_conf=self.ppe_yolo_conf,
                 yolo_iou=self.ppe_yolo_iou,
-                class_names={0: "Person", 1: "Helmet", 2: "Vest"},
+                class_names=parse_class_names(self.ppe_class_names),
                 detector_type="ppe",
                 inference_device=self.inference_device,
                 use_color_vest_fallback=self.ppe_use_color_vest_fallback,
@@ -84,12 +112,7 @@ class Settings(BaseSettings):
                 yolo_img_size=self.safety_sign_img_size,
                 yolo_conf=self.safety_sign_conf,
                 yolo_iou=self.safety_sign_iou,
-                class_names={
-                    0: "M014 Wear head protection",
-                    1: "M015 Wear high-visibility clothing",
-                    2: "P004 No thoroughfare",
-                    3: "W011 Slippery surface",
-                },
+                class_names=parse_class_names(self.safety_sign_class_names),
                 detector_type="safety_signs",
                 inference_device=self.inference_device,
                 agnostic_nms=self.safety_sign_agnostic_nms,

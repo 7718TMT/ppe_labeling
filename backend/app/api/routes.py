@@ -1,13 +1,15 @@
 from functools import lru_cache
+import tempfile
 from pathlib import Path
+from zipfile import ZIP_STORED, ZipFile
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse
 
 from backend.app.core.config import Settings, TaskProfile, get_settings
 from backend.app.ml.safety_sign_detector import SafetySignDetector
 from backend.app.ml.yolo_detector import PpeDetector
-from backend.app.models.schemas import ImageItem, LabelPayload, LabelResponse, OperationResponse, TaskInfo
+from backend.app.models.schemas import ApprovePayload, ImageItem, LabelPayload, LabelResponse, OperationResponse, TaskInfo
 from backend.app.services import storage
 from backend.app.services.labeling import LabelingService
 from backend.app.services.visualization import VisualizationService
@@ -20,6 +22,7 @@ media_router = APIRouter(prefix="/media")
 @lru_cache
 def get_ppe_detector(
     model_path: str,
+    allowed_class_ids: tuple[int, ...],
     image_size: int,
     confidence: float,
     iou: float,
@@ -31,6 +34,7 @@ def get_ppe_detector(
         image_size=image_size,
         confidence=confidence,
         iou=iou,
+        allowed_class_ids=set(allowed_class_ids),
         use_color_vest_fallback=use_color_vest_fallback,
         device=device,
     )
@@ -75,6 +79,7 @@ def detector_for_profile(profile: TaskProfile):
 
     return get_ppe_detector(
         str(profile.model_path),
+        tuple(profile.class_names.keys()),
         profile.yolo_img_size,
         profile.yolo_conf,
         profile.yolo_iou,
@@ -96,6 +101,7 @@ def visualization_service_for_profile(profile: TaskProfile) -> VisualizationServ
         image_dir=profile.image_dir,
         label_dir=profile.label_dir,
         visualization_dir=profile.visualization_dir,
+        class_names=profile.class_names,
     )
 
 
@@ -133,14 +139,54 @@ def get_task_labels(filename: str, profile: TaskProfile = Depends(get_task_profi
     return LabelResponse(filename=filename, boxes=storage.read_labels(profile.label_dir, filename))
 
 
+@router.post("/tasks/{task}/images/upload", response_model=OperationResponse)
+async def upload_task_images(
+    files: list[UploadFile] = File(...),
+    profile: TaskProfile = Depends(get_task_profile),
+) -> OperationResponse:
+    uploaded_names: list[str] = []
+    for file in files:
+        content = await file.read()
+        uploaded_names.append(storage.save_uploaded_image(profile.image_dir, file.filename or "image.jpg", content))
+    return OperationResponse(message=f"Uploaded {len(uploaded_names)} image(s)")
+
+
 @router.put("/tasks/{task}/images/{filename}/labels", response_model=OperationResponse)
 def update_task_labels(
     filename: str,
     payload: LabelPayload,
     profile: TaskProfile = Depends(get_task_profile),
 ) -> OperationResponse:
+    storage.validate_label_classes(payload.boxes, set(profile.class_names))
     storage.save_labels(profile.label_dir, filename, payload.boxes)
     return OperationResponse(message=f"Labels updated for {filename}")
+
+
+@router.put("/tasks/{task}/images/{filename}/approve", response_model=OperationResponse)
+def approve_task_image(
+    filename: str,
+    payload: ApprovePayload,
+    profile: TaskProfile = Depends(get_task_profile),
+) -> OperationResponse:
+    storage.set_approval(profile.label_dir, filename, payload.is_approved)
+    return OperationResponse(message=f"Approval set to {payload.is_approved} for {filename}")
+
+
+@router.get("/tasks/{task}/images/{filename}/export", response_model=None)
+def export_task_image(filename: str, profile: TaskProfile = Depends(get_task_profile)) -> FileResponse:
+    return export_zip_response(profile, [filename], f"{Path(filename).stem}_dataset.zip")
+
+
+@router.get("/tasks/{task}/export", response_model=None)
+def export_task_all(profile: TaskProfile = Depends(get_task_profile)) -> FileResponse:
+    filenames = [path.name for path in storage.image_paths(profile.image_dir)]
+    return export_zip_response(profile, filenames, f"{profile.id}_dataset.zip")
+
+
+@router.post("/tasks/{task}/rename-sequential", response_model=OperationResponse)
+def rename_task_sequential(profile: TaskProfile = Depends(get_task_profile)) -> OperationResponse:
+    renamed_count = storage.rename_dataset_sequential(profile.image_dir, profile.label_dir, profile.visualization_dir)
+    return OperationResponse(message=f"Renamed {renamed_count} image(s)")
 
 
 @router.post("/tasks/{task}/images/{filename}/auto-label", response_model=OperationResponse)
@@ -165,6 +211,34 @@ def generate_task_visualizations(profile: TaskProfile = Depends(get_task_profile
     service = visualization_service_for_profile(profile)
     generated_count = service.generate_all()
     return OperationResponse(message=f"Generated {generated_count} visualizations")
+
+
+def export_zip_response(profile: TaskProfile, filenames: list[str], download_name: str) -> FileResponse:
+    # Write to a temp file on disk instead of BytesIO. FileResponse uses OS-level
+    # sendfile() for zero-copy transfer, which is dramatically faster than
+    # StreamingResponse reading a BytesIO in small Python-level chunks.
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    try:
+        with ZipFile(tmp, mode="w", compression=ZIP_STORED) as zip_file:
+            for filename in filenames:
+                storage.copy_image_and_label_to_zip(zip_file, profile.image_dir, profile.label_dir, filename)
+        tmp.close()
+        return FileResponse(
+            tmp.name,
+            media_type="application/zip",
+            filename=download_name,
+            background=_cleanup_tempfile(tmp.name),
+        )
+    except Exception:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
+
+
+def _cleanup_tempfile(path: str):
+    """Return a BackgroundTask that deletes the temp file after the response is sent."""
+    from starlette.background import BackgroundTask
+    return BackgroundTask(Path(path).unlink, missing_ok=True)
 
 
 @media_router.get("/{task}/images/{filename}", include_in_schema=False)
@@ -205,8 +279,16 @@ def get_labels(filename: str, settings: Settings = Depends(get_settings)) -> Lab
 @router.put("/images/{filename}/labels", response_model=OperationResponse)
 def update_labels(filename: str, payload: LabelPayload, settings: Settings = Depends(get_settings)) -> OperationResponse:
     profile = active_profile(settings)
+    storage.validate_label_classes(payload.boxes, set(profile.class_names))
     storage.save_labels(profile.label_dir, filename, payload.boxes)
     return OperationResponse(message=f"Labels updated for {filename}")
+
+
+@router.put("/images/{filename}/approve", response_model=OperationResponse)
+def approve_image(filename: str, payload: ApprovePayload, settings: Settings = Depends(get_settings)) -> OperationResponse:
+    profile = active_profile(settings)
+    storage.set_approval(profile.label_dir, filename, payload.is_approved)
+    return OperationResponse(message=f"Approval set to {payload.is_approved} for {filename}")
 
 
 @router.post("/images/{filename}/auto-label", response_model=OperationResponse)
