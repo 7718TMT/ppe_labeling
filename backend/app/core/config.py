@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from backend.app.domain.errors import UnknownTaskError
+
 
 TaskId = Literal["ppe", "safety_signs"]
 
@@ -51,7 +53,6 @@ class TaskProfile(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    active_task: TaskId = "safety_signs"
     cors_origins: str = "http://localhost:5173"
     inference_device: str = "auto"
     database_path: Path = Path("data/labeling_db.sqlite3")
@@ -123,9 +124,7 @@ class Settings(BaseSettings):
     def task_profile(self, task: str) -> TaskProfile:
         profiles = self.task_profiles
         if task not in profiles:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=404, detail=f"Unknown task: {task}")
+            raise UnknownTaskError(f"Unknown task: {task}")
         return profiles[task]  # type: ignore[index]
 
     def ensure_directories(self) -> None:

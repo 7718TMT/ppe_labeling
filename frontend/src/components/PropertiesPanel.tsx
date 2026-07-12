@@ -1,5 +1,6 @@
 import { CheckCircle2, Loader2, RotateCcw, Trash2, Wand2, X } from 'lucide-react';
 
+import { getClassAccent } from '../constants';
 import type { BBox } from '../types';
 
 interface PropertiesPanelProps {
@@ -18,21 +19,6 @@ interface PropertiesPanelProps {
   onAutoLabelCurrent: () => void;
   onApprovalChange: (isApproved: boolean) => void;
   processingAction: string | null;
-}
-
-const CLASS_ACCENT_COLORS: Record<number, { border: string; text: string; bg: string }> = {
-  0: { border: '#10b981', text: '#10b981', bg: 'rgba(6, 78, 59, 0.2)' },
-  1: { border: '#eab308', text: '#eab308', bg: 'rgba(113, 63, 18, 0.2)' },
-  2: { border: '#3b82f6', text: '#3b82f6', bg: 'rgba(30, 58, 138, 0.2)' },
-  3: { border: '#ef4444', text: '#ef4444', bg: 'rgba(127, 29, 29, 0.2)' },
-  4: { border: '#a855f7', text: '#a855f7', bg: 'rgba(88, 28, 135, 0.2)' },
-  5: { border: '#f97316', text: '#f97316', bg: 'rgba(124, 45, 18, 0.2)' },
-  6: { border: '#06b6d4', text: '#06b6d4', bg: 'rgba(22, 78, 99, 0.2)' },
-  7: { border: '#ec4899', text: '#ec4899', bg: 'rgba(131, 24, 67, 0.2)' },
-};
-
-function getClassAccent(classId: number) {
-  return CLASS_ACCENT_COLORS[classId] ?? CLASS_ACCENT_COLORS[classId % 8];
 }
 
 export function PropertiesPanel({
@@ -64,7 +50,7 @@ export function PropertiesPanel({
         <div className="space-y-2">
           {addClassIds.map((id) => {
             const isActive = drawingClass === id;
-            const accent = getClassAccent(id);
+            const accent = getClassAccent(id, 0.2);
             return (
               <button
                 key={id}
@@ -180,9 +166,9 @@ export function PropertiesPanel({
           style={
             isApproved
               ? {
-                  borderColor: getClassAccent(3).border,
-                  color: getClassAccent(3).text,
-                  backgroundColor: getClassAccent(3).bg,
+                  borderColor: getClassAccent(3, 0.2).border,
+                  color: getClassAccent(3, 0.2).text,
+                  backgroundColor: getClassAccent(3, 0.2).bg,
                 }
               : undefined
           }

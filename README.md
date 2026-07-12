@@ -4,6 +4,8 @@ This repository contains a local image annotation tool for smart factory safety 
 
 The app is organized around annotation tasks. Each task has its own images, labels, visualization output, model settings, and class mapping so datasets do not overlap.
 
+Architecture and operational details are maintained in [docs/architecture.md](docs/architecture.md) and [docs/operations.md](docs/operations.md).
+
 ## Supported Tasks
 
 ### PPE
@@ -62,12 +64,13 @@ weights/sign.pt
 
 ```text
 backend/                          FastAPI backend
-  app/api/                        API and media routes
-  app/core/                       Settings and task profiles
-  app/ml/                         Auto-labeling model integrations
-  app/models/                     Request/response schemas
-  app/repositories/               SQLite-backed application metadata
-  app/services/                   Label, image, visualization, and orchestration logic
+  app/api/                        Controllers, HTTP schemas, dependencies, and router registration
+  app/core/                       Settings, task profiles, and device selection
+  app/domain/                     Internal models, errors, and geometry utilities
+  app/inference/                  Detector protocol and model integrations
+  app/repositories/               Filesystem dataset and SQLite approval persistence
+  app/services/                   Annotation, label, visualization, and reconciliation workflows
+  scripts/                        Operational maintenance commands
   tests/                          Backend tests
 frontend/                         React + Vite annotation UI
   src/api/                        Frontend API client
@@ -121,7 +124,6 @@ Copy-Item .env.example .env
 Important settings:
 
 ```text
-ACTIVE_TASK=safety_signs
 CORS_ORIGINS=http://localhost:5173
 INFERENCE_DEVICE=auto
 DATABASE_PATH=data/labeling_db.sqlite3
@@ -152,6 +154,10 @@ Inference device options:
 - `INFERENCE_DEVICE=cuda`, `cuda:0`, or `0`: request a specific NVIDIA CUDA device.
 
 Approval state is stored in SQLite at `DATABASE_PATH`. Images, YOLO labels, and generated visualizations remain filesystem artifacts because they are the dataset and its derived output.
+
+If upgrading an existing installation that still has task-local
+`labels/approved.json`, run the explicit dry-run and apply migration described
+in [docs/operations.md](docs/operations.md#release-migration-from-legacy-approvedjson) before relying on SQLite approval state.
 
 ## Frontend Setup
 
@@ -218,6 +224,7 @@ Task-scoped endpoints:
 - `DELETE /api/v1/tasks/{task}/images/{filename}`
 - `GET /api/v1/tasks/{task}/images/{filename}/labels`
 - `PUT /api/v1/tasks/{task}/images/{filename}/labels`
+- `PUT /api/v1/tasks/{task}/images/{filename}/approve`
 - `GET /api/v1/tasks/{task}/images/{filename}/export`
 - `POST /api/v1/tasks/{task}/images/{filename}/auto-label`
 - `POST /api/v1/tasks/{task}/auto-label`
@@ -245,6 +252,13 @@ cd frontend
 npm run build
 ```
 
+Frontend tests:
+
+```powershell
+cd frontend
+npm run test
+```
+
 Git hygiene check:
 
 ```powershell
@@ -259,6 +273,7 @@ The command should not show generated dependencies, model weights, or dataset fi
 - Model class mismatch: make sure the task model path points to a trained detector whose class IDs match the task's `*_CLASS_NAMES` map.
 - No images show up: put images in the selected task image folder.
 - Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
+- Rename or delete reported a partial operation: inspect the task filesystem first, then use `uv run python -m backend.scripts.reconcile_approvals --task <task> --apply` only to remove stale approval metadata.
 - CUDA not used: run the PyTorch verification command above. If `torch.version.cuda` is `None`, rerun `uv sync` and make sure the lockfile is current. If `torch.cuda.is_available()` is `False`, update the NVIDIA driver and confirm the GPU is visible to Windows.
 - Frontend cannot reach backend: confirm backend port `8000`, frontend port `5173`, and `CORS_ORIGINS`.
 - Python version mismatch: run `uv python install 3.12` and `uv sync`.

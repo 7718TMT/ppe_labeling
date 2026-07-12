@@ -19,12 +19,20 @@ def resolve_inference_device(requested_device: str = "auto") -> str:
 
     if requested.startswith("cuda"):
         if not _cuda_available():
-            logger.warning("Requested %s, but PyTorch cannot access CUDA. Falling back to CPU.", requested_device)
+            logger.warning(
+                "Requested %s, but PyTorch cannot access CUDA. Falling back to CPU.",
+                requested_device,
+                extra={"requested_device": requested_device, "resolved_device": "cpu"},
+            )
             return "cpu"
 
         index = _cuda_device_index(requested)
         if index is None:
-            logger.warning("Invalid CUDA device value %s. Falling back to CPU.", requested_device)
+            logger.warning(
+                "Invalid CUDA device value %s. Falling back to CPU.",
+                requested_device,
+                extra={"requested_device": requested_device, "resolved_device": "cpu"},
+            )
             return "cpu"
 
         device_count = _cuda_device_count()
@@ -33,12 +41,17 @@ def resolve_inference_device(requested_device: str = "auto") -> str:
                 "Requested CUDA device %s, but only %s CUDA device(s) are available. Falling back to CPU.",
                 requested_device,
                 device_count,
+                extra={"requested_device": requested_device, "resolved_device": "cpu"},
             )
             return "cpu"
 
         return f"cuda:{index}"
 
-    logger.warning("Unknown inference device %s. Falling back to CPU.", requested_device)
+    logger.warning(
+        "Unknown inference device %s. Falling back to CPU.",
+        requested_device,
+        extra={"requested_device": requested_device, "resolved_device": "cpu"},
+    )
     return "cpu"
 
 

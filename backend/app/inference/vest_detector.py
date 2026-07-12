@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from backend.app.models.schemas import BoundingBox
+from backend.app.domain.models import BoundingBox
 
 
 LOWER_ORANGE = np.array([5, 120, 120])
@@ -24,7 +24,6 @@ def detect_vests(
         hx_min, hy_min, hx_max, hy_max = _to_pixels(human, width, height)
         hx_min, hx_max = max(0, hx_min), min(width - 1, hx_max)
         hy_min, hy_max = max(0, hy_min), min(height - 1, hy_max)
-
         if hx_max <= hx_min or hy_max <= hy_min:
             continue
 
@@ -43,7 +42,6 @@ def detect_vests(
         vest_xmax = hx_min + int(np.max(roi_x))
         vest_ymin = hy_min + int(np.min(roi_y))
         vest_ymax = hy_min + int(np.max(roi_y))
-
         vests.append(
             BoundingBox(
                 class_id=2,
@@ -53,21 +51,20 @@ def detect_vests(
                 h=max(0.000001, (vest_ymax - vest_ymin) / height),
             )
         )
-
     return vests
 
 
 def _color_pixels(hsv_roi: np.ndarray, lower: np.ndarray, upper: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    mask = cv2.inRange(hsv_roi, lower, upper)
-    return np.where(mask == 255)
+    return np.where(cv2.inRange(hsv_roi, lower, upper) == 255)
 
 
 def _to_pixels(box: BoundingBox, width: int, height: int) -> tuple[int, int, int, int]:
-    x_min = int((box.x_center - box.w / 2.0) * width)
-    x_max = int((box.x_center + box.w / 2.0) * width)
-    y_min = int((box.y_center - box.h / 2.0) * height)
-    y_max = int((box.y_center + box.h / 2.0) * height)
-    return x_min, y_min, x_max, y_max
+    return (
+        int((box.x_center - box.w / 2.0) * width),
+        int((box.y_center - box.w / 2.0) * height),
+        int((box.x_center + box.w / 2.0) * width),
+        int((box.y_center + box.h / 2.0) * height),
+    )
 
 
 def _mask_overlapping_helmet(
@@ -79,9 +76,7 @@ def _mask_overlapping_helmet(
     helmet_xmin, helmet_ymin, helmet_xmax, helmet_ymax = helmet_box
     if helmet_xmax < hx_min or helmet_xmin > hx_max or helmet_ymax < hy_min or helmet_ymin > hy_max:
         return
-
-    rel_xmin = max(0, helmet_xmin - hx_min)
-    rel_xmax = min(hx_max - hx_min, helmet_xmax - hx_min)
-    rel_ymin = max(0, helmet_ymin - hy_min)
-    rel_ymax = min(hy_max - hy_min, helmet_ymax - hy_min)
-    roi[rel_ymin:rel_ymax, rel_xmin:rel_xmax] = [0, 0, 0]
+    roi[
+        max(0, helmet_ymin - hy_min):min(hy_max - hy_min, helmet_ymax - hy_min),
+        max(0, helmet_xmin - hx_min):min(hx_max - hx_min, helmet_xmax - hx_min),
+    ] = [0, 0, 0]

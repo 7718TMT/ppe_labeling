@@ -1,10 +1,13 @@
+import logging
 from pathlib import Path
 
-from fastapi import HTTPException
-
 from backend.app.core.device import resolve_inference_device
-from backend.app.models.schemas import BoundingBox
-from backend.app.services.storage import clamp_box
+from backend.app.domain.errors import ModelUnavailableError, UnreadableImageError
+from backend.app.domain.geometry import clamp_box
+from backend.app.domain.models import BoundingBox
+
+
+logger = logging.getLogger(__name__)
 
 
 class SafetySignDetector:
@@ -33,7 +36,11 @@ class SafetySignDetector:
 
         if self._model is None:
             if not self.model_path.exists():
-                raise HTTPException(status_code=500, detail=f"Model file not found: {self.model_path}")
+                raise ModelUnavailableError(f"Model file not found: {self.model_path}")
+            logger.info(
+                "Loading safety-sign detector model",
+                extra={"detector_type": "safety_signs", "model_path": str(self.model_path), "inference_device": self.device},
+            )
             self._model = YOLO(str(self.model_path))
         return self._model
 
@@ -42,8 +49,7 @@ class SafetySignDetector:
 
         image = cv2.imread(str(image_path))
         if image is None:
-            raise HTTPException(status_code=422, detail=f"Unreadable image: {image_path.name}")
-
+            raise UnreadableImageError(f"Unreadable image: {image_path.name}")
         results = self.model(
             image_path,
             imgsz=self.image_size,
@@ -53,23 +59,12 @@ class SafetySignDetector:
             device=self.device,
             verbose=False,
         )
-
         boxes: list[BoundingBox] = []
         for result in results:
-            class_ids = result.boxes.cls.tolist()
-            for class_id_value, (x_center, y_center, width, height) in zip(class_ids, result.boxes.xywhn.tolist(), strict=True):
+            for class_id_value, (x_center, y_center, width, height) in zip(
+                result.boxes.cls.tolist(), result.boxes.xywhn.tolist(), strict=True
+            ):
                 class_id = int(class_id_value)
-                if class_id not in self.allowed_class_ids:
-                    continue
-                boxes.append(
-                    clamp_box(
-                        BoundingBox(
-                            class_id=class_id,
-                            x_center=x_center,
-                            y_center=y_center,
-                            w=width,
-                            h=height,
-                        )
-                    )
-                )
+                if class_id in self.allowed_class_ids:
+                    boxes.append(clamp_box(BoundingBox(class_id, x_center, y_center, width, height)))
         return boxes

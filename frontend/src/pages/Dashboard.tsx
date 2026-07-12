@@ -84,7 +84,7 @@ export function Dashboard() {
              <div className="flex flex-col items-center justify-center py-20 px-4 border border-dashed border-outline-variant rounded-2xl bg-surface-container-low/50">
                <FolderKanban className="text-on-surface-variant/50 w-16 h-16 mb-4" />
                <h3 className="text-headline-sm text-on-surface mb-2">No Projects Found</h3>
-               <p className="text-body-md text-on-surface-variant">Update your config.yaml and restart the server to see projects here.</p>
+               <p className="text-body-md text-on-surface-variant">Configure task profiles in the backend settings and restart the server to see them here.</p>
              </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">

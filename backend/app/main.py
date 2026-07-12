@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.api.routes import media_router, router
+from backend.app.api.errors import register_exception_handlers
+from backend.app.api.router import router
 from backend.app.core.config import get_settings
 
 
@@ -16,9 +17,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    register_exception_handlers(app)
 
     app.include_router(router)
-    app.include_router(media_router)
     return app
 
 
