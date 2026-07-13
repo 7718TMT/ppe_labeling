@@ -6,11 +6,14 @@ Copy `.env.example` to `.env` and run commands from the repository root. Paths
 in `DATABASE_PATH` and task-profile settings are relative to that working
 directory unless absolute paths are supplied.
 
+Start the complete local product with one command:
+
 ```powershell
-uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
-cd frontend
-npm run dev
+uv run python -m backend.scripts.start_app
 ```
+
+The launcher starts FastAPI, the persistent video worker, and Vite, and stops
+all three on `Ctrl+C`. Ports `8000` and `5173` must be available.
 
 `CORS_ORIGINS` controls FastAPI CORS. During local frontend development, Vite
 proxies `/api/v1` and `/media` to `VITE_BACKEND_URL` (default
@@ -165,3 +168,101 @@ cd frontend
 npm run test
 npm run build
 ```
+
+## Pose-video labeling operations
+
+Configure the video capability in `.env`:
+
+```text
+VIDEO_STORAGE_ROOT=data/video_labeling
+POSE_MODEL_PATH=weights/pose.pt
+VIDEO_WORKER_CONCURRENCY=1
+```
+
+Place yolo26m-pose-compatible COCO 17-keypoint weights at `weights/pose.pt`.
+Missing weights do not prevent project administration, but the pose job fails
+with the exact configured path and remains retryable.
+
+Normal users should use the unified launcher:
+
+```powershell
+uv run python -m backend.scripts.start_app
+```
+
+For worker diagnostics or operator-controlled concurrency, the services can
+still be run separately:
+
+```powershell
+uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+uv run python -m backend.scripts.video_worker
+
+# Diagnostics or an explicit local concurrency override:
+uv run python -m backend.scripts.video_worker --once
+uv run python -m backend.scripts.video_worker --concurrency 2
+```
+
+The local worker uses SQLite directly; Redis, Celery, and cloud queues are not
+required. Pause, resume, cancel, retry, priority, progress, and error text
+survive API restarts. On startup, orphaned `running` rows return to `queued`.
+Multiple workers atomically claim distinct jobs.
+
+Threshold/Model Process requests persist the requested final suggestion mode
+and, for Model, pin the active compatible external model version. Only one
+queued/running/paused pipeline is allowed per video. Suggestions remain separate
+from manual segments.
+
+Video deletion first stages only files prefixed by that managed video ID,
+deletes the SQLite video row transactionally so dependent jobs and annotations
+cascade, then finalizes the staged files. A database failure restores staged
+files. Project-wide model packages, immutable export snapshots, unrelated
+videos, and external source files are not removed.
+
+Video storage is project scoped:
+
+```text
+data/video_labeling/<project_id>/
+  raw/          immutable imported bytes
+  canonical/    generated 24 FPS processing videos
+  pose/         versioned compressed pose/tracking caches
+  tracks/       optional track-derived filesystem caches
+  features/     versioned compressed raw/transformed feature caches
+  suggestions/  optional threshold suggestion artifacts
+  model_predictions/ optional model prediction artifacts
+  thumbnails/   cached video-card previews and fallbacks
+  overlays/     optional rendered overlays
+  models/       trusted-local inference artifacts
+  exports/      atomically published export directories
+```
+
+Browser playback serves the owned raw import with suffix-appropriate media
+type and byte-range support. Canonical OpenCV output is worker-only because
+local builds may encode it as FMP4, which is not reliably browser-decodable.
+Canonical frame synchronization remains timestamp based.
+
+SQLite migrations run idempotently when `VideoRepository` opens the configured
+database. Back up the database with SQLite's backup facility and retain the
+project storage root together; either half alone is incomplete.
+
+Video schema v2 adds `target_mode` and pinned `external_model_id` to persistent
+jobs, normalizes legacy `model:<id>` stages to `model`, cancels duplicate active
+legacy jobs deterministically, and creates partial unique indexes for one
+active pipeline per video and one active model per project. The migration does
+not rewrite raw videos, annotations, or large cache files.
+
+Track edits invalidate only affected downstream artifacts and mark affected
+human segments `needs_review`; labels are never silently deleted. Editing an
+approved video clears approval until it is validated again. Threshold profile
+edits invalidate threshold caches only. External model versions and predictions
+remain separate.
+
+Joblib/pickle artifacts can execute code and require explicit trusted-local
+confirmation through the developer API. Model package paths, schema details,
+thresholds, and classifier configuration are intentionally absent from the
+annotator UI. Compatibility validation checks the exact class map, feature
+schema/order, 60/12 window contract, 24 FPS, and adapter before Model processing
+is enabled. ONNX uses `onnxruntime`; joblib packages are never silently trusted.
+
+Export validation reports errors and unresolved/quality warnings. Generation
+uses a staging directory and publishes by atomic rename only after JSONL,
+Parquet, NPZ, suggestion audits, and the reproducibility manifest are complete.
+Exports never create train/validation/test splits.

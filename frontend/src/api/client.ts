@@ -1,6 +1,12 @@
 import axios from 'axios';
 
 import type { BBox, ImageData, TaskInfo } from '../types';
+import type {
+  ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
+  ProcessingOptions,
+  SuggestionSource, ThresholdProfile, VideoItem, VideoProject, VideoSegment,
+  VideoSuggestion, VideoTrack, VideoWorkspaceState, HumanVideoLabel,
+} from '../types';
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -78,4 +84,201 @@ function triggerBrowserDownload(url: string, filename: string): void {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+export async function getVideoProjects(): Promise<VideoProject[]> {
+  return (await api.get<VideoProject[]>('/video-projects')).data;
+}
+
+export async function createVideoProject(name: string): Promise<VideoProject> {
+  return (await api.post<VideoProject>('/video-projects', { name })).data;
+}
+
+export async function getVideoProject(projectId: string): Promise<VideoProject> {
+  return (await api.get<VideoProject>(`/video-projects/${projectId}`)).data;
+}
+
+export async function getVideos(projectId: string, status?: string): Promise<VideoItem[]> {
+  return (await api.get<VideoItem[]>(`/video-projects/${projectId}/videos`, { params: { status } })).data;
+}
+
+export async function importVideos(projectId: string, files: File[]): Promise<VideoItem[]> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  return (await api.post<VideoItem[]>(`/video-projects/${projectId}/videos/import`, formData)).data;
+}
+
+export function videoMediaUrl(projectId: string, videoId: string): string {
+  return `/api/v1/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/media`;
+}
+
+export function videoThumbnailUrl(projectId: string, videoId: string): string {
+  return `/api/v1/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/thumbnail`;
+}
+
+export async function deleteVideo(projectId: string, videoId: string): Promise<void> {
+  await api.delete(`/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}`);
+}
+
+export async function processVideo(
+  projectId: string,
+  videoId: string,
+  mode: 'Threshold' | 'Model',
+): Promise<ProcessingJob[]> {
+  return (await api.post<ProcessingJob[]>(
+    `/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/process`,
+    { mode: mode.toLowerCase(), priority: 1000 },
+  )).data;
+}
+
+export async function getProcessingOptions(projectId: string): Promise<ProcessingOptions> {
+  return (await api.get<ProcessingOptions>(
+    `/video-projects/${encodeURIComponent(projectId)}/processing-options`,
+  )).data;
+}
+
+export async function getVideoJobs(projectId: string): Promise<ProcessingJob[]> {
+  return (await api.get<ProcessingJob[]>(`/video-projects/${projectId}/jobs`)).data;
+}
+
+export async function controlVideoJob(projectId: string, jobId: string, action: string): Promise<ProcessingJob> {
+  return (await api.post<ProcessingJob>(`/video-projects/${projectId}/jobs/${jobId}/control`, { action })).data;
+}
+
+export async function getVideoTracks(projectId: string, videoId: string): Promise<VideoTrack[]> {
+  return (await api.get<VideoTrack[]>(`/video-projects/${projectId}/videos/${videoId}/tracks`)).data;
+}
+
+export async function getVideoSegments(projectId: string, videoId: string): Promise<{ revision: number; segments: VideoSegment[] }> {
+  return (await api.get(`/video-projects/${projectId}/videos/${videoId}/segments`)).data;
+}
+
+export async function saveVideoSegment(
+  projectId: string, videoId: string, payload: { track_id: number; start_frame: number; end_frame: number; label: HumanVideoLabel; expected_revision: number }, segmentId?: string,
+): Promise<{ segment: VideoSegment; revision: number }> {
+  const url = `/video-projects/${projectId}/videos/${videoId}/segments${segmentId ? `/${segmentId}` : ''}`;
+  return (await (segmentId ? api.put(url, payload) : api.post(url, payload))).data;
+}
+
+export async function deleteVideoSegment(projectId: string, videoId: string, segmentId: string, revision: number): Promise<{ revision: number }> {
+  return (await api.delete(`/video-projects/${projectId}/videos/${videoId}/segments/${segmentId}`, { data: { expected_revision: revision } })).data;
+}
+
+export async function videoHistoryAction(projectId: string, videoId: string, action: 'undo' | 'redo', revision: number): Promise<{ revision: number }> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/history/${action}`, { expected_revision: revision })).data;
+}
+
+export async function getPoseOverlay(projectId: string, videoId: string, start: number, end: number): Promise<PoseTrackFrame[]> {
+  return (await api.get<PoseTrackFrame[]>(`/video-projects/${projectId}/videos/${videoId}/overlay`, { params: { start, end } })).data;
+}
+
+export async function getWindows(projectId: string, videoId: string): Promise<GeneratedWindow[]> {
+  return (await api.get<GeneratedWindow[]>(`/video-projects/${projectId}/videos/${videoId}/windows`)).data;
+}
+
+export async function getFeatures(projectId: string, videoId: string, trackId?: number): Promise<FeatureWindow[]> {
+  return (await api.get<FeatureWindow[]>(`/video-projects/${projectId}/videos/${videoId}/features`, { params: { track_id: trackId } })).data;
+}
+
+export async function getSuggestions(projectId: string, videoId: string, source: SuggestionSource, trackId?: number): Promise<VideoSuggestion[]> {
+  if (source === 'Off') return [];
+  const key = source === 'Threshold' ? 'threshold' : 'model';
+  return (await api.get<VideoSuggestion[]>(`/video-projects/${projectId}/videos/${videoId}/suggestions/${key}`, { params: { track_id: trackId } })).data;
+}
+
+export async function reviewSuggestion(projectId: string, videoId: string, source: SuggestionSource, suggestionId: string, action: string, revision: number, changes?: Record<string, unknown>): Promise<any> {
+  const key = source === 'Threshold' ? 'threshold' : 'model';
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/suggestions/${key}/${suggestionId}/review`, { action, expected_revision: revision, changes })).data;
+}
+
+export async function approveVideo(projectId: string, videoId: string): Promise<VideoItem> {
+  return (await api.post<VideoItem>(`/video-projects/${projectId}/videos/${videoId}/approve`)).data;
+}
+
+export async function getThresholdProfiles(projectId: string): Promise<ThresholdProfile[]> {
+  return (await api.get<ThresholdProfile[]>(`/video-projects/${projectId}/threshold-profiles`)).data;
+}
+
+export async function saveThresholdProfile(projectId: string, profile: ThresholdProfile): Promise<ThresholdProfile> {
+  return (await api.post<ThresholdProfile>(`/video-projects/${projectId}/threshold-profiles`, { profile_id: profile.threshold_profile_id, name: profile.name, config: profile.config })).data;
+}
+
+export async function cloneThresholdProfile(projectId: string, profile: ThresholdProfile): Promise<ThresholdProfile> {
+  return (await api.post<ThresholdProfile>(`/video-projects/${projectId}/threshold-profiles`, { name: `${profile.name} Copy`, config: profile.config })).data;
+}
+
+export async function restoreDefaultThresholdProfile(projectId: string): Promise<ThresholdProfile> {
+  return (await api.post<ThresholdProfile>(`/video-projects/${projectId}/threshold-profiles/restore-default`)).data;
+}
+
+export async function getExternalModels(projectId: string): Promise<ExternalModel[]> {
+  return (await api.get<ExternalModel[]>(`/video-projects/${projectId}/models`)).data;
+}
+
+export async function saveVideoWorkspaceState(projectId: string, state: VideoWorkspaceState): Promise<VideoWorkspaceState> {
+  return (await api.put<VideoWorkspaceState>(`/video-projects/${projectId}/workspace-state`, state)).data;
+}
+
+export async function validateVideoExport(projectId: string): Promise<{ errors: string[]; warnings: string[] }> {
+  return (await api.get(`/video-projects/${projectId}/exports/validate`)).data;
+}
+
+export async function createVideoExport(projectId: string): Promise<any> {
+  return (await api.post(`/video-projects/${projectId}/exports`)).data;
+}
+
+export async function mergeVideoTracks(projectId: string, videoId: string, target: number, source: number): Promise<VideoTrack> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/tracks/${target}/merge`, { source_track_id: source })).data;
+}
+
+export async function splitVideoTrack(projectId: string, videoId: string, trackId: number, frame: number): Promise<VideoTrack[]> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/tracks/${trackId}/split`, { frame })).data;
+}
+
+export async function setVideoTrackInclusion(projectId: string, videoId: string, trackId: number, include: boolean, reason?: string): Promise<VideoTrack> {
+  return (await api.put(`/video-projects/${projectId}/videos/${videoId}/tracks/${trackId}/inclusion`, { include, reason })).data;
+}
+
+export async function reviewWindow(projectId: string, videoId: string, windowId: string, include: boolean, reason?: string): Promise<GeneratedWindow> {
+  return (await api.put(`/video-projects/${projectId}/videos/${videoId}/windows/${windowId}`, { include, reason })).data;
+}
+
+export async function importExternalModel(projectId: string, artifact: File, manifest: File, trusted: boolean): Promise<ExternalModel> {
+  const form = new FormData();
+  form.append('artifact', artifact);
+  form.append('manifest_json', await manifest.text());
+  form.append('trusted_local', String(trusted));
+  return (await api.post<ExternalModel>(`/video-projects/${projectId}/models/import`, form)).data;
+}
+
+export async function runExternalModel(projectId: string, videoId: string, modelId: string): Promise<ProcessingJob> {
+  return (await api.post<ProcessingJob>(`/video-projects/${projectId}/videos/${videoId}/models/${modelId}/infer`)).data;
+}
+
+export async function unloadExternalModel(projectId: string, modelId: string): Promise<ExternalModel> {
+  return (await api.post<ExternalModel>(`/video-projects/${projectId}/models/${modelId}/unload`)).data;
+}
+
+export async function generateThresholdSuggestions(projectId: string, videoId: string): Promise<VideoSuggestion[]> {
+  return (await api.post<VideoSuggestion[]>(`/video-projects/${projectId}/videos/${videoId}/threshold-suggestions/generate`)).data;
+}
+
+export async function splitVideoSegment(projectId: string, videoId: string, segmentId: string, frame: number, revision: number): Promise<VideoSegment[]> {
+  return (await api.post<VideoSegment[]>(`/video-projects/${projectId}/videos/${videoId}/segments/${segmentId}/split`, { frame, expected_revision: revision })).data;
+}
+
+export async function mergeVideoSegments(projectId: string, videoId: string, segmentIds: string[], revision: number): Promise<{segment: VideoSegment; revision: number}> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/segments/merge`, { segment_ids: segmentIds, expected_revision: revision })).data;
+}
+
+export async function extendVideoSegment(projectId: string, videoId: string, segmentId: string, revision: number): Promise<{segment: VideoSegment; revision: number}> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/segments/${segmentId}/extend`, { expected_revision: revision })).data;
+}
+
+export async function labelFullVideoTrack(projectId: string, videoId: string, trackId: number, label: HumanVideoLabel, revision: number): Promise<{segment: VideoSegment; revision: number}> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/tracks/${trackId}/label/${label}`, { expected_revision: revision })).data;
+}
+
+export async function setVideoSegmentInclusion(projectId: string, videoId: string, segmentId: string, include: boolean, revision: number, reason?: string): Promise<{segment: VideoSegment; revision: number}> {
+  return (await api.put(`/video-projects/${projectId}/videos/${videoId}/segments/${segmentId}/inclusion`, { include, reason, expected_revision: revision })).data;
 }

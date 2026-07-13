@@ -12,6 +12,13 @@ from backend.app.services.annotation import AnnotationService
 from backend.app.services.export import DatasetExportService
 from backend.app.services.media import MediaService
 from backend.app.services.tasks import TaskService
+from backend.app.repositories.video_db import VideoRepository
+from backend.app.repositories.video_storage import VideoStorageRepository
+from backend.app.services.video_annotation_service import VideoAnnotationService
+from backend.app.services.video_export_service import VideoExportService
+from backend.app.services.video_feature_service import VideoFeatureService
+from backend.app.services.video_model_service import VideoModelService
+from backend.app.services.video_service import VideoService
 
 
 def get_task_profile(task: str, settings: Settings = Depends(get_settings)) -> TaskProfile:
@@ -120,3 +127,58 @@ def get_inference_annotation_service(
 
 def get_task_service(settings: Settings = Depends(get_settings)) -> TaskService:
     return TaskService(settings)
+
+
+@lru_cache
+def _video_repository(database_path: str) -> VideoRepository:
+    return VideoRepository(Path(database_path))
+
+
+@lru_cache
+def _video_storage(root: str) -> VideoStorageRepository:
+    return VideoStorageRepository(Path(root))
+
+
+def get_video_repository(settings: Settings = Depends(get_settings)) -> VideoRepository:
+    return _video_repository(str(settings.database_path))
+
+
+def get_video_storage(settings: Settings = Depends(get_settings)) -> VideoStorageRepository:
+    return _video_storage(str(settings.video_storage_root))
+
+
+def get_video_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+) -> VideoService:
+    return VideoService(repository, storage)
+
+
+def get_video_annotation_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+) -> VideoAnnotationService:
+    return VideoAnnotationService(repository, storage)
+
+
+def get_video_feature_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+) -> VideoFeatureService:
+    return VideoFeatureService(repository, storage)
+
+
+def get_video_model_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+    features: VideoFeatureService = Depends(get_video_feature_service),
+) -> VideoModelService:
+    return VideoModelService(repository, storage, features)
+
+
+def get_video_export_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+    features: VideoFeatureService = Depends(get_video_feature_service),
+) -> VideoExportService:
+    return VideoExportService(repository, storage, features)

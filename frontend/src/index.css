@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .toolbar-icon { @apply w-8 h-8 flex items-center justify-center rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors; }
+  .panel-button { @apply h-8 px-2 border border-outline-variant rounded text-label-sm hover:border-primary hover:text-primary transition-colors; }
+  .editor-input { @apply block mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 font-label text-label-sm focus:border-primary outline-none; }
+  .status-pill { @apply border border-outline-variant rounded-sm px-1.5 py-0.5 font-label text-[10px] text-on-surface-variant; }
+}
+
 body {
   margin: 0;
   padding: 0;

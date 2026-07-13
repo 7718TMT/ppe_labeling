@@ -116,9 +116,69 @@ in `frontend/src/api/client.ts`; feature hooks compose workspace data, annotatio
 editing, and actions. It consumes task-scoped JSON and media URLs only, so
 backend folder movement is not part of its contract.
 
-## Future capability guidance
+## Capability boundary guidance
 
-Video annotation must be introduced as a separate capability when it is needed.
-It may reuse neutral configuration, geometry, detector, logging, and safe-path
+Video annotation remains a separate capability from image annotation. It may
+reuse neutral configuration, geometry, detector, logging, and safe-path
 utilities, but must not add clip, frame, temporal, track, or playback state to
 the established image annotation workflow.
+
+## Pose-video labeling capability
+
+Pose-video labeling is implemented beside, not inside, the image workflow. Its
+controllers call dedicated project, annotation, feature, model, and export
+services. Those services coordinate `VideoRepository` (versioned SQLite
+metadata) and `VideoStorageRepository` (raw/canonical video plus versioned large
+artifacts). The existing `AnnotationService`, image controllers, task profiles,
+and image filesystem contract are unchanged.
+
+Heavy stages are SQLite jobs claimed by dedicated `VideoWorker` processes:
+
+```text
+canonicalize -> pose_track -> features -> threshold
+                              -> model (on request)
+project      -> export:<id>   (on request)
+```
+
+Each video pipeline persists its requested `target_mode`; Model pipelines also
+pin `external_model_id` independently of the stage name. SQLite schema v2 adds
+those fields and partial unique indexes for one active pipeline per video and
+one active model per project. A fresh import remains unprocessed until the
+annotator uses the Process control.
+
+API requests enqueue these stages and never run full-video inference or export
+generation. Workers persist progress, errors, and control requests, publish
+cache files atomically, and return orphaned `running` jobs to `queued` on worker
+startup. Structured track/segment/window/history/model/export state is
+transactional SQLite data; keypoint matrices, feature arrays, model artifacts,
+and export files remain project-scoped filesystem artifacts.
+
+The React/Vite video routes reuse the image application's toolbar, tonal panel,
+typography, spacing, focus, feedback, and responsive-collapse conventions. The
+video player, pose overlay, virtualized browser, queue, multilayer timeline,
+feature details, window review, and export validation are intentionally
+video-specific components.
+
+The root React router is the single product shell for PPE, Sign, and Pose. The
+homepage links to the two task-scoped image workspaces and the project-scoped
+Pose workspace; no second frontend or standalone Pose shell is created. The
+local launcher starts Vite, FastAPI, and the persistent worker as one managed
+runtime command.
+
+Browser media is the immutable project-owned raw import, served with range
+support and its suffix-specific content type. Canonical video remains a worker
+cache because OpenCV may produce FMP4 output that is suitable for pose inference
+but not reliable in HTML video decoders. Canonical frame indices are still
+derived from media timestamps. The React player explicitly unloads and reloads
+when video identity changes, and generation guards prevent stale media-frame,
+overlay, track, segment, feature, or suggestion responses from crossing video
+boundaries.
+The fitted video and SVG share one `object-contain` viewport. Overlay frames are
+loaded in bounded chunks and cached per video, so normal 24 FPS playback does
+not issue or discard one HTTP request per frame. Fullscreen targets this shared
+viewport and therefore retains skeletons, boxes, and track IDs.
+
+Detailed pipeline stages remain backend state. The annotator UI maps videos to
+Unprocessed, Processing, Ready, or Failed and keeps annotation progress
+separate. Developer model packages and threshold configuration remain backend
+contracts; the end-user processing surface exposes only Threshold or Model.

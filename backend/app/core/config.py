@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     inference_device: str = "auto"
     database_path: Path = Path("data/labeling_db.sqlite3")
+    video_storage_root: Path = Path("data/video_labeling")
+    pose_model_path: Path = Path("weights/pose.pt")
+    video_worker_concurrency: int = 1
 
     ppe_model_path: Path = Path("weights/ppe.pt")
     ppe_image_dir: Path = Path("data/ppe/images")
@@ -129,6 +132,8 @@ class Settings(BaseSettings):
 
     def ensure_directories(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.video_storage_root.mkdir(parents=True, exist_ok=True)
+        self.pose_model_path.parent.mkdir(parents=True, exist_ok=True)
         for profile in self.task_profiles.values():
             profile.image_dir.mkdir(parents=True, exist_ok=True)
             profile.label_dir.mkdir(parents=True, exist_ok=True)

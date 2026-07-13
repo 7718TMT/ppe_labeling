@@ -13,9 +13,15 @@ from backend.app.domain.errors import (
     InvalidLabelError,
     ModelUnavailableError,
     PartialOperationError,
+    DuplicateVideoError,
+    ModelCompatibilityError,
+    RevisionConflictError,
+    VideoProcessingConflictError,
     UnknownTaskError,
     UnreadableImageError,
     UnsupportedImageTypeError,
+    VideoResourceNotFoundError,
+    VideoValidationError,
 )
 
 
@@ -34,15 +40,23 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 
 def _status_for_error(error: ApplicationError) -> int:
-    if isinstance(error, (UnknownTaskError, ImageNotFoundError)):
+    if isinstance(error, (UnknownTaskError, ImageNotFoundError, VideoResourceNotFoundError)):
         return 404
     if isinstance(error, (InvalidFilenameError, UnsupportedImageTypeError)):
         return 400
-    if isinstance(error, DatasetCollisionError):
+    if isinstance(
+        error,
+        (
+            DatasetCollisionError,
+            DuplicateVideoError,
+            RevisionConflictError,
+            VideoProcessingConflictError,
+        ),
+    ):
         return 409
     if isinstance(error, ApprovalPersistenceError):
         return 503
-    if isinstance(error, (InvalidLabelError, InvalidClassError, UnreadableImageError)):
+    if isinstance(error, (InvalidLabelError, InvalidClassError, UnreadableImageError, VideoValidationError, ModelCompatibilityError)):
         return 422
     if isinstance(error, (ModelUnavailableError, PartialOperationError)):
         return 500

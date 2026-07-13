@@ -31,6 +31,7 @@ data/safety_signs/labeled_images/*
 data/*.sqlite3
 data/*.sqlite3-shm
 data/*.sqlite3-wal
+data/video_labeling/
 !data/ppe/images/.gitkeep
 !data/ppe/labels/.gitkeep
 !data/ppe/labeled_images/.gitkeep
@@ -38,6 +39,7 @@ data/*.sqlite3-wal
 !data/safety_signs/labels/.gitkeep
 !data/safety_signs/labeled_images/.gitkeep
 !weights/.gitkeep
+!weights/pose.pt
 
 orange_range_preview.jpg
 

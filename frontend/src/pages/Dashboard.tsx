@@ -1,186 +1,207 @@
 import { useEffect, useState } from 'react';
+import { Activity, CheckCircle2, ChevronRight, HardHat, ShieldAlert, Video } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { getTasks, getImages } from '../api/client';
-import type { TaskInfo } from '../types';
-import { FolderKanban, CheckCircle2, Image as ImageIcon, ChevronRight, Activity } from 'lucide-react';
+
+import { getImages, getTasks } from '../api/client';
+
+interface ModuleProgress {
+  approved: number;
+  total: number;
+}
+
+const MODULES = [
+  {
+    id: 'ppe',
+    title: 'PPE',
+    kind: 'Image labeling',
+    description: 'Label workers and personal protective equipment in factory images.',
+    path: '/task/ppe',
+    icon: HardHat,
+  },
+  {
+    id: 'safety_signs',
+    title: 'Sign',
+    kind: 'Image labeling',
+    description: 'Label workplace safety signs in factory images.',
+    path: '/task/safety_signs',
+    icon: ShieldAlert,
+  },
+  {
+    id: 'pose',
+    title: 'Pose',
+    kind: 'Video labeling',
+    description: 'Review worker tracks and label falling, running, or other behavior.',
+    path: '/video',
+    icon: Video,
+  },
+] as const;
 
 export function Dashboard() {
-  const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  const [progress, setProgress] = useState<Record<string, { approved: number; total: number }>>({});
+  const [progress, setProgress] = useState<Record<string, ModuleProgress>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
-    async function loadData() {
+    let active = true;
+
+    async function loadProgress() {
       try {
-        const taskList = await getTasks();
-        setTasks(taskList);
-        
-        const progressData: Record<string, { approved: number; total: number }> = {};
-        for (const task of taskList) {
-          const images = await getImages(task.id);
-          progressData[task.id] = {
-            total: images.length,
-            approved: images.filter(img => img.is_approved).length
-          };
+        const tasks = await getTasks();
+        const entries = await Promise.all(
+          tasks.map(async (task) => {
+            const images = await getImages(task.id);
+            return [
+              task.id,
+              {
+                total: images.length,
+                approved: images.filter((image) => image.is_approved).length,
+              },
+            ] as const;
+          }),
+        );
+
+        if (active) {
+          setProgress(Object.fromEntries(entries));
         }
-        setProgress(progressData);
       } catch (error) {
-        console.error("Failed to load dashboard data", error);
+        console.error('Failed to load dashboard progress', error);
+        if (active) {
+          setLoadError(true);
+        }
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     }
-    
-    void loadData();
+
+    void loadProgress();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (
-    <div className="flex flex-col min-h-screen bg-background text-on-background">
-      {/* Dashboard Top Navbar */}
-      <header className="bg-surface-container border-b border-outline-variant h-toolbar-height flex justify-between items-center px-gutter z-50 flex-shrink-0 select-none">
-        <div className="flex items-center gap-4 h-full">
-          <div className="text-headline-sm font-headline-sm font-bold bg-gradient-to-r from-primary to-primary-container bg-clip-text text-transparent whitespace-nowrap drop-shadow-[0_0_8px_rgba(45,212,191,0.2)]">
-            Image Annotator
-          </div>
+    <div className="flex min-h-screen flex-col bg-background text-on-background">
+      <header className="flex h-toolbar-height flex-shrink-0 items-center justify-between border-b border-outline-variant bg-surface-container px-gutter z-50 select-none">
+        <div className="text-headline-sm font-headline-sm font-bold bg-gradient-to-r from-primary to-primary-container bg-clip-text text-transparent whitespace-nowrap drop-shadow-[0_0_8px_rgba(45,212,191,0.2)]">
+          Smart Factory Annotation Tool
         </div>
+        <span className="font-label text-label-sm text-on-surface-variant">
+          PPE · Sign · Pose
+        </span>
       </header>
 
-      <main className="flex-1 overflow-y-auto relative">
-        {/* Subtle background glow effect */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-64 bg-primary/5 blur-[120px] rounded-full pointer-events-none -z-10" />
+      <main className="relative flex-1 overflow-y-auto">
+        <div className="pointer-events-none absolute left-1/2 top-0 -z-10 h-64 w-3/4 -translate-x-1/2 rounded-full bg-primary/5 blur-[120px]" />
 
-        <div className="max-w-6xl mx-auto p-8 md:p-12">
-          <div className="mb-12 text-center md:text-left">
-            <h1 className="font-headline-lg text-[2.5rem] font-bold text-on-surface mb-3 tracking-tight">
-              Active Tasks
+        <div className="mx-auto max-w-6xl p-8 md:p-12">
+          <div className="mb-10 text-center md:text-left">
+            <p className="mb-2 font-label text-label-caps uppercase text-primary">
+              Labeling modules
+            </p>
+            <h1 className="mb-3 font-headline-lg text-[2.5rem] font-bold tracking-tight text-on-surface">
+              Choose what you want to label
             </h1>
-            <p className="font-body-lg text-lg text-on-surface-variant max-w-2xl">
-              Select a task below to continue labeling and refining your object detection datasets.
+            <p className="max-w-2xl font-body-lg text-lg text-on-surface-variant">
+              PPE, safety signs, and worker pose videos are available from this single workspace.
             </p>
           </div>
 
-          {loading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="bg-surface-container-low border border-outline-variant rounded-2xl p-6 h-64 flex flex-col justify-between animate-pulse">
-                  <div className="space-y-4">
-                    <div className="flex justify-between">
-                      <div className="w-3/5 h-6 bg-surface-container-highest rounded-md" />
-                      <div className="w-16 h-6 bg-surface-container-highest rounded-md" />
-                    </div>
-                    <div className="flex gap-2">
-                      <div className="w-16 h-5 bg-surface-container-highest rounded-full" />
-                      <div className="w-20 h-5 bg-surface-container-highest rounded-full" />
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="w-full h-2 bg-surface-container-highest rounded-full" />
-                    <div className="w-24 h-4 bg-surface-container-highest rounded-md" />
-                  </div>
-                </div>
-              ))}
+          {loadError && (
+            <div
+              role="status"
+              className="mb-5 rounded border border-outline-variant bg-surface-container-low px-4 py-3 text-body-md text-on-surface-variant"
+            >
+              Dataset progress is temporarily unavailable. You can still open any labeling module.
             </div>
-          ) : tasks.length === 0 ? (
-             <div className="flex flex-col items-center justify-center py-20 px-4 border border-dashed border-outline-variant rounded-2xl bg-surface-container-low/50">
-               <FolderKanban className="text-on-surface-variant/50 w-16 h-16 mb-4" />
-               <h3 className="text-headline-sm text-on-surface mb-2">No Projects Found</h3>
-               <p className="text-body-md text-on-surface-variant">Configure task profiles in the backend settings and restart the server to see them here.</p>
-             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {tasks.map(task => {
-                const prog = progress[task.id] || { total: 0, approved: 0 };
-                const percent = prog.total > 0 ? Math.round((prog.approved / prog.total) * 100) : 0;
-                const isComplete = percent === 100 && prog.total > 0;
-                
-                return (
-                  <Link 
-                    key={task.id}
-                    to={`/task/${task.id}`}
-                    className="block relative bg-surface-container-low border border-outline-variant rounded-2xl p-6 hover:bg-surface-container hover:border-primary/50 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:shadow-primary/10 hover:-translate-y-1 transition-all duration-300 group overflow-hidden"
-                  >
-                    {/* Hover Glow Background */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+          )}
 
-                    <div className="relative z-10 flex flex-col h-full justify-between">
-                      <div>
-                        <div className="flex justify-between items-start mb-4">
-                          <h2 className="font-headline-sm text-xl font-bold text-on-surface group-hover:text-primary transition-colors pr-2 flex items-center gap-2">
-                            <FolderKanban size={20} className="text-primary opacity-80" />
-                            {task.name}
-                          </h2>
-                          {prog.total > 0 && (
-                          <div className="bg-surface-container-highest px-2.5 py-1 rounded-md text-label-sm font-medium text-on-surface-variant flex items-center gap-1.5 flex-shrink-0 border border-outline-variant/50">
-                            <ImageIcon size={14} />
-                            {prog.total}
-                          </div>
-                          )}
+          <section aria-label="Labeling modules" className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            {MODULES.map((module) => {
+              const Icon = module.icon;
+              const moduleProgress = progress[module.id];
+              const percent = moduleProgress?.total
+                ? Math.round((moduleProgress.approved / moduleProgress.total) * 100)
+                : 0;
+              const isComplete = Boolean(moduleProgress?.total) && percent === 100;
+
+              return (
+                <Link
+                  key={module.id}
+                  to={module.path}
+                  aria-label={`Open ${module.title} labeling`}
+                  className="group relative flex min-h-64 flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-low p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:bg-surface-container focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+
+                  <div className="relative z-10 flex h-full flex-col">
+                    <div className="mb-5 flex items-start justify-between">
+                      <div className="flex h-12 w-12 items-center justify-center rounded bg-primary/10 text-primary">
+                        <Icon aria-hidden="true" size={24} />
+                      </div>
+                      <span className="rounded-sm border border-outline-variant bg-surface-container-high px-2 py-1 font-label text-label-sm text-on-surface-variant">
+                        {module.kind}
+                      </span>
+                    </div>
+
+                    <h2 className="mb-2 font-headline-sm text-2xl font-semibold text-on-surface transition-colors group-hover:text-primary">
+                      {module.title}
+                    </h2>
+                    <p className="font-body-md text-on-surface-variant">
+                      {module.description}
+                    </p>
+
+                    <div className="mt-auto pt-8">
+                      {module.id === 'pose' ? (
+                        <div className="flex items-center justify-between border-t border-outline-variant pt-4 font-label text-label-sm">
+                          <span className="text-on-surface-variant">Open video projects</span>
+                          <ChevronRight className="text-primary transition-transform group-hover:translate-x-1" size={18} />
                         </div>
-                        
-                        <div className="flex flex-wrap gap-2 mb-8">
-                          {Object.values(task.class_names).map((className, idx) => (
-                            <span 
-                              key={idx}
-                              className="text-[11px] font-medium tracking-wide uppercase bg-background text-on-surface-variant px-2.5 py-1 rounded-full border border-outline-variant/60 shadow-sm"
-                            >
-                              {className}
+                      ) : loading ? (
+                        <div className="space-y-2" aria-label={`Loading ${module.title} progress`}>
+                          <div className="h-2 w-full animate-pulse rounded-full bg-surface-container-highest" />
+                          <div className="h-4 w-28 animate-pulse rounded bg-surface-container-highest" />
+                        </div>
+                      ) : moduleProgress?.total ? (
+                        <>
+                          <div className="mb-2 flex items-center justify-between font-label text-label-sm">
+                            <span className="flex items-center gap-1.5 text-on-surface-variant">
+                              {isComplete ? (
+                                <CheckCircle2 className="text-primary" size={14} />
+                              ) : (
+                                <Activity size={14} />
+                              )}
+                              {isComplete ? 'Completed' : 'Annotation progress'}
                             </span>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      {prog.total > 0 ? (
-                      <div className="mt-auto">
-                        <div className="flex justify-between text-label-sm mb-2 items-center">
-                          <span className="text-on-surface-variant flex items-center gap-1.5">
-                            {isComplete ? (
-                              <><CheckCircle2 size={14} className="text-primary" /> Completed</>
-                            ) : (
-                              <><Activity size={14} /> Progress</>
-                            )}
-                          </span>
-                          <span className={`font-bold ${isComplete ? 'text-primary' : 'text-on-surface'}`}>
-                            {percent}%
-                          </span>
-                        </div>
-                        
-                        <div className="h-2 bg-surface-container-highest rounded-full overflow-hidden shadow-inner">
-                          <div 
-                            className={`h-full rounded-full transition-all duration-1000 ease-out relative ${
-                              isComplete ? 'bg-primary' : 'bg-gradient-to-r from-primary to-primary-container'
-                            }`}
-                            style={{ width: `${percent}%` }}
-                          >
-                            {/* Inner glow for the progress bar */}
-                            <div className="absolute inset-0 bg-white/20 w-full h-full rounded-full" />
+                            <span className={isComplete ? 'font-bold text-primary' : 'font-bold text-on-surface'}>
+                              {percent}%
+                            </span>
                           </div>
-                        </div>
-                        
-                        <div className="mt-4 flex justify-between items-center">
-                          <div className="text-label-sm text-on-surface-variant font-medium">
-                            <span className={isComplete ? 'text-primary' : 'text-on-surface'}>{prog.approved}</span> / {prog.total} Approved
+                          <div className="h-2 overflow-hidden rounded-full bg-surface-container-highest">
+                            <div
+                              className="h-full rounded-full bg-primary transition-[width] duration-500"
+                              style={{ width: `${percent}%` }}
+                            />
                           </div>
-                          <div className="text-primary opacity-0 group-hover:opacity-100 transform translate-x-2 group-hover:translate-x-0 transition-all duration-300">
-                            <ChevronRight size={18} />
+                          <div className="mt-3 flex items-center justify-between font-label text-label-sm text-on-surface-variant">
+                            <span>{moduleProgress.approved} / {moduleProgress.total} approved</span>
+                            <ChevronRight className="text-primary transition-transform group-hover:translate-x-1" size={18} />
                           </div>
-                        </div>
-                      </div>
+                        </>
                       ) : (
-                        <div className="mt-auto flex justify-between items-end">
-                          <div className="text-label-sm text-on-surface-variant font-medium italic">
-                            No images uploaded yet.
-                          </div>
-                          <div className="text-primary opacity-0 group-hover:opacity-100 transform translate-x-2 group-hover:translate-x-0 transition-all duration-300">
-                            <ChevronRight size={18} />
-                          </div>
+                        <div className="flex items-center justify-between border-t border-outline-variant pt-4 font-label text-label-sm">
+                          <span className="text-on-surface-variant">No images yet</span>
+                          <ChevronRight className="text-primary transition-transform group-hover:translate-x-1" size={18} />
                         </div>
                       )}
                     </div>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
+                  </div>
+                </Link>
+              );
+            })}
+          </section>
         </div>
       </main>
     </div>

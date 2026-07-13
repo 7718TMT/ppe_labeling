@@ -1,10 +1,13 @@
 # Smart Factory Annotation Tool
 
-This repository contains a local image annotation tool for smart factory safety monitoring datasets. It combines a FastAPI backend, a React/Vite frontend, task-specific auto-labeling, and manual review/editing of YOLO-format bounding boxes.
+This repository contains a local image and pose-video annotation tool for smart factory safety monitoring datasets. It combines a FastAPI backend, a React/Vite frontend, task-specific image auto-labeling, and a separate human-in-the-loop three-class video workflow.
 
 The app is organized around annotation tasks. Each task has its own images, labels, visualization output, model settings, and class mapping so datasets do not overlap.
 
 Architecture and operational details are maintained in [docs/architecture.md](docs/architecture.md) and [docs/operations.md](docs/operations.md).
+
+The end-user pose-video workflow is documented in
+[docs/video-labeling-user-guide.md](docs/video-labeling-user-guide.md).
 
 ## Supported Tasks
 
@@ -58,6 +61,20 @@ Expected local weights:
 
 ```text
 weights/sign.pt
+```
+
+### Pose Video Labeling
+
+Video annotation uses exactly `others`, `running`, and `falling`. It supports
+independent persistent processing, pose tracks, frame segments, engineered
+features, threshold or trusted external-model suggestions, deterministic 60/12
+windows, approval, and reproducible export. Suggestions never become human
+ground truth without an explicit accept or modify action.
+
+Expected local pose weights:
+
+```text
+weights/pose.pt
 ```
 
 ## Project Structure
@@ -174,20 +191,15 @@ npm install
 
 ## Run The App
 
-Start the backend from the repository root:
+Start the complete PPE, Sign, and Pose product from the repository root with
+one command:
 
 ```powershell
-uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+uv run python -m backend.scripts.start_app
 ```
 
-Start the frontend in a second terminal:
-
-```powershell
-cd frontend
-npm run dev
-```
-
-Open:
+The launcher starts FastAPI on port 8000, the persistent video worker, and Vite
+on port 5173. Press `Ctrl+C` to stop them together. Open:
 
 ```text
 http://localhost:5173
@@ -195,7 +207,8 @@ http://localhost:5173
 
 ## Annotation Workflow
 
-You can add images from the UI with `Upload Images`, or place files directly in the selected task image folder.
+Use the homepage to open PPE, Sign, or Pose. Add datasets through the module's
+upload/import controls.
 
 Common UI actions:
 
