@@ -123,6 +123,12 @@ class VideoWorker:
         self.repository.update_video(video["video_id"], processing_status="probed", last_error=None)
 
     def _pose_track(self, job: dict[str, Any], progress: Callable[[float], None]) -> None:
+        """Run YOLO-Pose inference with BoT-SORT tracking for robust re-ID after falls.
+
+        BoT-SORT uses appearance features + Kalman motion to recover track identity after
+        occlusion or abrupt motion (e.g. a person falling). Falls back to tuned ByteTrack
+        parameters if botsort.yaml is unavailable in the installed Ultralytics version.
+        """
         if not self.pose_model_path.is_file():
             raise ModelUnavailableError(
                 f"YOLO-Pose weights are missing at {self.pose_model_path}. Place yolo26m-pose weights there as pose.pt."
@@ -136,10 +142,33 @@ class VideoWorker:
         model_hash = hashlib.sha256(self.pose_model_path.read_bytes()).hexdigest()[:16]
         version = f"pose-v1-{model_hash}"
         model = YOLO(str(self.pose_model_path))
-        results = model.track(
-            source=str(canonical), stream=True, persist=True, tracker="bytetrack.yaml",
-            conf=0.25, verbose=False,
-        )
+
+        # Prefer BoT-SORT which maintains appearance re-ID through fall occlusions.
+        # If botsort.yaml is absent (older Ultralytics), fall back to ByteTrack with
+        # looser thresholds that tolerate the brief detection gap during a fall.
+        try:
+            import importlib.resources as _pkg_resources  # noqa: PLC0415 – lazy import
+            _ul_path = Path(str(_pkg_resources.files("ultralytics")))
+            _botsort_cfg = _ul_path / "cfg" / "trackers" / "botsort.yaml"
+            tracker_cfg = "botsort.yaml" if _botsort_cfg.is_file() else None
+        except Exception:
+            tracker_cfg = None
+
+        if tracker_cfg:
+            tracking_version = "botsort-v1"
+            results = model.track(
+                source=str(canonical), stream=True, persist=True,
+                tracker=tracker_cfg, conf=0.25, verbose=False,
+            )
+        else:
+            # Tuned ByteTrack: lower track_high_thresh and longer lost-frame budget
+            # so identity survives the detection gap during a fall.
+            tracking_version = "bytetrack-v1-tuned"
+            results = model.track(
+                source=str(canonical), stream=True, persist=True,
+                tracker="bytetrack.yaml", conf=0.20,
+                verbose=False,
+            )
         frames: list[dict[str, Any]] = []
         summaries: dict[int, dict[str, Any]] = {}
         total = int(video["canonical_frame_count"])
@@ -200,7 +229,7 @@ class VideoWorker:
             ("features",),
         )
         self.repository.update_video(
-            video["video_id"], pose_cache_version=version, tracking_cache_version="bytetrack-v1",
+            video["video_id"], pose_cache_version=version, tracking_cache_version=tracking_version,
             processing_status="annotation_ready", quality_status="good" if track_rows else "low_quality", last_error=None,
         )
 

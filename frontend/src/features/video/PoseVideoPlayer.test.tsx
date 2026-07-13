@@ -86,6 +86,8 @@ describe('PoseVideoPlayer', () => {
     delete (HTMLVideoElement.prototype as Partial<HTMLVideoElement>).cancelVideoFrameCallback;
   });
 
+  // showBoxes now controls both bbox and skeleton (#13).
+  // showSkeleton prop is removed.
   function renderPlayer(video = videoA, frameOverlay: PoseTrackFrame | undefined = overlay) {
     const onTimeUpdate = vi.fn();
     const result = render(
@@ -95,7 +97,6 @@ describe('PoseVideoPlayer', () => {
         overlay={frameOverlay}
         selectedTrack={7}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={onTimeUpdate}
@@ -108,7 +109,8 @@ describe('PoseVideoPlayer', () => {
     const { onTimeUpdate, rerender } = renderPlayer();
     const player = document.querySelector('video') as HTMLVideoElement;
     expect(player).toHaveClass('w-full', 'h-full', 'object-contain');
-    expect(screen.getByText('TRACK 7')).toBeInTheDocument();
+    // Bbox label now uses T{id} format (#14)
+    expect(screen.getByText('T7')).toBeInTheDocument();
 
     pauseSpy.mockClear();
     Object.defineProperty(player, 'paused', { configurable: true, value: false });
@@ -127,7 +129,6 @@ describe('PoseVideoPlayer', () => {
         overlay={undefined}
         selectedTrack={7}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={onTimeUpdate}
@@ -173,7 +174,6 @@ describe('PoseVideoPlayer', () => {
         projectId="factory floor"
         video={videoB}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={vi.fn()}
@@ -190,7 +190,6 @@ describe('PoseVideoPlayer', () => {
         projectId="factory floor"
         video={videoA}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={vi.fn()}
@@ -216,7 +215,6 @@ describe('PoseVideoPlayer', () => {
           projectId="factory floor"
           video={currentVideo}
           selectedOnly={false}
-          showSkeleton
           showBoxes
           onSelectTrack={vi.fn()}
           onTimeUpdate={onTimeUpdate}
@@ -248,7 +246,6 @@ describe('PoseVideoPlayer', () => {
         projectId="factory floor"
         video={videoB}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={onTimeUpdate}
@@ -286,7 +283,6 @@ describe('PoseVideoPlayer', () => {
         projectId="factory floor"
         video={videoB}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={onTimeUpdate}
@@ -307,7 +303,6 @@ describe('PoseVideoPlayer', () => {
         overlay={overlay}
         selectedTrack={7}
         selectedOnly={false}
-        showSkeleton
         showBoxes
         onSelectTrack={vi.fn()}
         onTimeUpdate={vi.fn()}
@@ -317,6 +312,7 @@ describe('PoseVideoPlayer', () => {
     const player = document.querySelector('video') as HTMLVideoElement;
     fireEvent.error(player);
     expect(onMediaError).toHaveBeenCalledOnce();
-    expect(screen.getByText('TRACK 7')).toBeInTheDocument();
+    // Bbox label now shows T{id} format (#14)
+    expect(screen.getByText('T7')).toBeInTheDocument();
   });
 });

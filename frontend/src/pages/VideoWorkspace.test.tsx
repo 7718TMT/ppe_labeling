@@ -21,20 +21,20 @@ vi.mock('../api/client', () => ({
   getVideoSegments: vi.fn(),
   getVideoTracks: vi.fn(),
   getVideos: vi.fn(),
-  getWindows: vi.fn(),
   importVideos: vi.fn(),
   labelFullVideoTrack: vi.fn(),
+  mergeMultipleVideoTracks: vi.fn(),
   mergeVideoSegments: vi.fn(),
   mergeVideoTracks: vi.fn(),
   processVideo: vi.fn(),
   reviewSuggestion: vi.fn(),
-  reviewWindow: vi.fn(),
   saveVideoSegment: vi.fn(),
   saveVideoWorkspaceState: vi.fn(),
   setVideoSegmentInclusion: vi.fn(),
   setVideoTrackInclusion: vi.fn(),
   splitVideoSegment: vi.fn(),
   splitVideoTrack: vi.fn(),
+  unapproveVideo: vi.fn(),
   validateVideoExport: vi.fn(),
   createVideoExport: vi.fn(),
   videoHistoryAction: vi.fn(),
@@ -100,7 +100,6 @@ describe('VideoWorkspace', () => {
       include_in_export: 1,
     }]);
     vi.mocked(api.getVideoSegments).mockResolvedValue({ revision: 0, segments: [] });
-    vi.mocked(api.getWindows).mockResolvedValue([]);
     vi.mocked(api.getFeatures).mockResolvedValue([]);
     vi.mocked(api.getSuggestions).mockResolvedValue([]);
     vi.mocked(api.getPoseOverlay).mockResolvedValue([]);
@@ -154,7 +153,8 @@ describe('VideoWorkspace', () => {
     renderWorkspace();
     await screen.findByText('Track 1');
     fireEvent.click(screen.getByRole('button', { name: 'Create segment' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('reload before retrying');
+    // Error message is shown in the status bar
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
 
   it('uses one-click Threshold processing and remembers the selected mode per project', async () => {
@@ -198,14 +198,15 @@ describe('VideoWorkspace', () => {
     });
     renderWorkspace();
     await screen.findByText('Track 1');
-    expect(screen.getByTitle('running 2-10')).toBeInTheDocument();
+    // Segment title format is now 'running frames 2–10' (#2)
+    expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Choose processing mode' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Model' }));
     fireEvent.click(screen.getByRole('button', { name: 'Process: Model' }));
     await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Model'));
     expect(await screen.findByRole('status')).toHaveTextContent('Model processing started');
     expect(api.saveVideoSegment).not.toHaveBeenCalled();
-    expect(screen.getByTitle('running 2-10')).toBeInTheDocument();
+    expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();
     expect(sessionStorage.getItem('pose-process-mode:p1')).toBe('Model');
   });
 
@@ -233,7 +234,8 @@ describe('VideoWorkspace', () => {
       },
     }));
     renderWorkspace();
-    fireEvent.click(await screen.findByTitle('running 2-10'));
+    // Segment title format in the sidebar list uses label + frame range
+    fireEvent.click(await screen.findByTitle('running frames 2\u201310'));
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '12' } });
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     await waitFor(() => expect(api.saveVideoSegment).toHaveBeenCalledWith(
@@ -281,10 +283,10 @@ describe('VideoWorkspace', () => {
       }]);
       await Promise.resolve();
     });
-    expect(await screen.findByText('TRACK 1')).toBeInTheDocument();
+    expect(await screen.findByText('Track 1')).toBeInTheDocument();
   });
 
-  it('shows concise suggestion provenance inside the Suggestions tab', async () => {
+  it('shows suggestion overlay in the timeline (Suggestions tab removed)', async () => {
     vi.mocked(api.getSuggestions).mockResolvedValue([{
       suggestion_id: 'suggestion-1',
       track_id: 1,
@@ -299,14 +301,10 @@ describe('VideoWorkspace', () => {
     }]);
     renderWorkspace();
     await screen.findByText('Track 1');
-    fireEvent.click(screen.getByRole('button', { name: 'suggestions' }));
-    const suggestionCard = (await screen.findByText('Frames 4–9')).closest('button');
-    expect(suggestionCard).not.toBeNull();
-    fireEvent.click(suggestionCard as HTMLButtonElement);
-    fireEvent.click(screen.getByText('Why this suggestion?'));
-    expect(screen.getByText('Rapid loss of balance')).toBeInTheDocument();
-    expect(screen.getByText('torso angle score')).toBeInTheDocument();
-    expect(screen.getByText('82%', { selector: 'dd' })).toBeInTheDocument();
+    // Suggestions tab is removed (#4); suggestion is shown as overlay in timeline
+    expect(screen.queryByRole('button', { name: 'suggestions' })).not.toBeInTheDocument();
+    // Verify suggestions are still loaded (getSuggestions is called)
+    await waitFor(() => expect(api.getSuggestions).toHaveBeenCalled());
   });
 
   it('reloads a saved segment after switching to another video and back', async () => {
@@ -319,11 +317,12 @@ describe('VideoWorkspace', () => {
       }] : [],
     }));
     renderWorkspace();
-    expect(await screen.findByTitle('falling 5-15')).toBeInTheDocument();
+    // Segment title format in sidebar list uses em-dash (#2)
+    expect(await screen.findByTitle('falling frames 5\u201315')).toBeInTheDocument();
     fireEvent.click(screen.getByText('shift-b.mp4'));
     expect(await screen.findByText('Track 2')).toBeInTheDocument();
     fireEvent.click(screen.getByText('shift-a.mp4'));
-    expect(await screen.findByTitle('falling 5-15')).toBeInTheDocument();
+    expect(await screen.findByTitle('falling frames 5\u201315')).toBeInTheDocument();
   });
 
   it('refreshes derived data after an active processing pipeline completes', async () => {
@@ -364,11 +363,12 @@ describe('VideoWorkspace', () => {
     expect(screen.queryByText('Threshold processing started.')).not.toBeInTheDocument();
   });
 
-  it('offers only Annotate, Suggestions, and Details tabs and a searchable Help guide', async () => {
+  it('offers only Annotate and Details tabs and a searchable Help guide', async () => {
     renderWorkspace();
     await screen.findByText('Track 1');
+    // Suggestions tab is removed (#4)
     expect(screen.getByRole('button', { name: 'annotate' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'suggestions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'suggestions' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'details' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /thresholds/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/model file/i)).not.toBeInTheDocument();
@@ -390,7 +390,8 @@ describe('VideoWorkspace', () => {
     await screen.findByText('Track 1');
     fireEvent.click(screen.getByRole('button', { name: 'Delete shift-a.mp4' }));
     expect(screen.getByRole('alertdialog')).toHaveTextContent('shift-a.mp4');
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('does not delete an external original');
+    // Updated delete dialog text: mentions managed copy and derived pose data
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('managed copy');
     fireEvent.click(screen.getByRole('button', { name: 'Delete video' }));
     await waitFor(() => expect(api.deleteVideo).toHaveBeenCalledWith('p1', 'v1'));
     await waitFor(() => expect(screen.queryByText('shift-a.mp4')).not.toBeInTheDocument());

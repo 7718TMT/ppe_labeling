@@ -164,6 +164,10 @@ class VideoAnnotationService:
         )
 
     def approve(self, video_id: str) -> dict[str, Any]:
+        """Mark the video as approved after validation.
+
+        Raises VideoValidationError if any segment is invalid or if no segments exist.
+        """
         video = self.repository.get_video(video_id)
         errors = self.validate_video(video_id)
         if errors:
@@ -174,6 +178,20 @@ class VideoAnnotationService:
             approval_revision=video["annotation_revision"],
             approved_at=self.repository.one("SELECT CURRENT_TIMESTAMP AS value")["value"],
             annotation_status="approved",
+        )
+
+    def unapprove(self, video_id: str) -> dict[str, Any]:
+        """Revoke approval so annotations can be revised.
+
+        Resets is_approved to 0 and annotation_status back to 'labeled'
+        (or 'needs_review' if any segment has needs_review set).
+        """
+        segments = self.repository.list_segments(video_id)
+        status = "needs_review" if any(s["needs_review"] for s in segments) else "labeled" if segments else "unlabeled"
+        return self.repository.update_video(
+            video_id,
+            is_approved=0,
+            annotation_status=status,
         )
 
     def validate_video(self, video_id: str) -> list[str]:
@@ -209,6 +227,19 @@ class VideoAnnotationService:
         self._rewrite_pose_track_ids(video_id, source_track_id, target_track_id)
         self._invalidate_tracks(video_id, {target_track_id, source_track_id})
         return self.repository.get_track(video_id, target_track_id)
+
+    def merge_multiple_tracks(self, video_id: str, track_ids: list[int]) -> dict[str, Any]:
+        """Merge all listed tracks into the first track ID in the list.
+
+        Iterates pairwise, merging each subsequent track into the target.
+        Returns the final merged track.
+        """
+        if len(track_ids) < 2:
+            raise VideoValidationError("At least two track IDs are required for a multi-merge")
+        target_id = track_ids[0]
+        for source_id in track_ids[1:]:
+            self.merge_tracks(video_id, target_id, source_id)
+        return self.repository.get_track(video_id, target_id)
 
     def split_track(self, video_id: str, track_id: int, frame: int) -> list[dict[str, Any]]:
         track = self.repository.get_track(video_id, track_id)

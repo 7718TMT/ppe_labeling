@@ -32,6 +32,7 @@ from backend.app.api.video_schemas import (
     SegmentWrite,
     SuggestionReviewPayload,
     ThresholdProfilePayload,
+    TrackMergeMultiplePayload,
     TrackMergePayload,
     TrackSplitPayload,
     VideoDeleteResponse,
@@ -72,9 +73,22 @@ def update_project(project_id: str, payload: ProjectConfigUpdate, service: Video
 def import_videos(
     project_id: str,
     files: list[UploadFile] = File(...),
+    mode: str = "threshold",
     service: VideoService = Depends(get_video_service),
 ) -> list[dict[str, Any]]:
-    return [service.import_video(project_id, file.filename or "video.mp4", file.file) for file in files]
+    """Import videos and immediately queue the processing pipeline.
+
+    The ``mode`` parameter (``threshold`` or ``model``) controls which suggestion
+    source is generated after pose tracking completes. Defaults to ``threshold``.
+    """
+    imported = [service.import_video(project_id, file.filename or "video.mp4", file.file) for file in files]
+    # Auto-queue pipeline for each newly imported video using the chosen mode.
+    for video in imported:
+        try:
+            service.queue_pipeline(project_id, video["video_id"], mode, priority=500)
+        except Exception:  # noqa: BLE001 – import must not fail if queue fails
+            pass
+    return imported
 
 
 @router.get("/{project_id}/videos")
@@ -198,8 +212,26 @@ def list_tracks(project_id: str, video_id: str, service: VideoAnnotationService 
 
 
 @router.post("/{project_id}/videos/{video_id}/tracks/{track_id}/merge")
-def merge_track(project_id: str, video_id: str, track_id: int, payload: TrackMergePayload, service: VideoAnnotationService = Depends(get_video_annotation_service)) -> dict[str, Any]:
+def merge_track(
+    project_id: str,
+    video_id: str,
+    track_id: int,
+    payload: TrackMergePayload,
+    service: VideoAnnotationService = Depends(get_video_annotation_service),
+) -> dict[str, Any]:
+    """Merge ``source_track_id`` into ``track_id``."""
     return service.merge_tracks(video_id, track_id, payload.source_track_id)
+
+
+@router.post("/{project_id}/videos/{video_id}/tracks/merge-multiple")
+def merge_multiple_tracks(
+    project_id: str,
+    video_id: str,
+    payload: TrackMergeMultiplePayload,
+    service: VideoAnnotationService = Depends(get_video_annotation_service),
+) -> dict[str, Any]:
+    """Merge all tracks listed in ``track_ids`` into the first one."""
+    return service.merge_multiple_tracks(video_id, payload.track_ids)
 
 
 @router.post("/{project_id}/videos/{video_id}/tracks/{track_id}/split")
@@ -279,8 +311,23 @@ def validate_video(project_id: str, video_id: str, service: VideoAnnotationServi
 
 
 @router.post("/{project_id}/videos/{video_id}/approve")
-def approve_video(project_id: str, video_id: str, service: VideoAnnotationService = Depends(get_video_annotation_service)) -> dict[str, Any]:
+def approve_video(
+    project_id: str,
+    video_id: str,
+    service: VideoAnnotationService = Depends(get_video_annotation_service),
+) -> dict[str, Any]:
+    """Mark a video as approved after validation."""
     return service.approve(video_id)
+
+
+@router.post("/{project_id}/videos/{video_id}/unapprove")
+def unapprove_video(
+    project_id: str,
+    video_id: str,
+    service: VideoAnnotationService = Depends(get_video_annotation_service),
+) -> dict[str, Any]:
+    """Revoke approval so a video can be re-annotated."""
+    return service.unapprove(video_id)
 
 
 @router.get("/{project_id}/videos/{video_id}/history")

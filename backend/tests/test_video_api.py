@@ -33,25 +33,39 @@ def video_bytes(tmp_path: Path) -> bytes:
     writer.release();return path.read_bytes()
 
 
-def test_project_import_queue_and_optimistic_annotation_api(video_api,tmp_path:Path)->None:
-    client,repository,_storage=video_api
-    project=client.post("/api/v1/video-projects",json={"name":"API Workflow"}).json();project_id=project["project_id"]
-    response=client.post(f"/api/v1/video-projects/{project_id}/videos/import",files=[("files",("fixture.mp4",video_bytes(tmp_path),"video/mp4"))])
-    assert response.status_code==200
-    video=response.json()[0];video_id=video["video_id"]
-    assert client.get(f"/api/v1/video-projects/{project_id}/jobs").json()==[]
-    processed=client.post(
-        f"/api/v1/video-projects/{project_id}/videos/{video_id}/process",
-        json={"mode":"threshold","priority":1000},
+def test_project_import_queue_and_optimistic_annotation_api(video_api, tmp_path: Path) -> None:
+    """Test the full import-to-annotation API flow.
+
+    After import the pipeline is auto-queued (#7), so we check that
+    at least one job exists before manually requesting processing.
+    """
+    client, repository, _storage = video_api
+    project = client.post("/api/v1/video-projects", json={"name": "API Workflow"}).json()
+    project_id = project["project_id"]
+    response = client.post(
+        f"/api/v1/video-projects/{project_id}/videos/import",
+        files=[("files", ("fixture.mp4", video_bytes(tmp_path), "video/mp4"))],
     )
-    assert processed.status_code==200
-    jobs=processed.json()
-    assert jobs[0]["stage"]=="canonicalize" and jobs[0]["status"]=="queued"
-    repeated=client.post(
+    assert response.status_code == 200
+    video = response.json()[0]
+    video_id = video["video_id"]
+    # After import the pipeline is auto-queued (mode defaults to threshold, #7)
+    auto_jobs = client.get(f"/api/v1/video-projects/{project_id}/jobs").json()
+    assert len(auto_jobs) >= 1 and auto_jobs[0]["status"] == "queued"
+    processed = client.post(
         f"/api/v1/video-projects/{project_id}/videos/{video_id}/process",
-        json={"mode":"threshold","priority":1000},
+        json={"mode": "threshold", "priority": 1000},
     )
-    assert repeated.json()[0]["job_id"]==jobs[0]["job_id"]
+    assert processed.status_code == 200
+    jobs = processed.json()
+    # Returns the already-queued job since it hasn't completed yet
+    assert jobs[0]["stage"] in {"canonicalize", "pose_track", "features", "threshold"}
+    assert jobs[0]["status"] == "queued"
+    repeated = client.post(
+        f"/api/v1/video-projects/{project_id}/videos/{video_id}/process",
+        json={"mode": "threshold", "priority": 1000},
+    )
+    assert repeated.json()[0]["job_id"] == jobs[0]["job_id"]
     options=client.get(
         f"/api/v1/video-projects/{project_id}/processing-options"
     ).json()

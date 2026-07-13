@@ -1,29 +1,39 @@
+/**
+ * PoseVideoPlayer — video element with SVG pose/track overlay and fullscreen controls.
+ *
+ * Changes vs previous version:
+ * - `showBoxes` controls both bbox rect AND skeleton (toggle means hide/show everything).
+ * - Bbox label includes the current segment class for the displayed track (#14).
+ * - Fullscreen mode renders a minimal play/pause button + scrubber overlay (#16).
+ * - `currentSegments` prop provides the segments needed for class lookup.
+ */
+
 import {
   forwardRef,
   useCallback,
   useEffect,
   useRef,
+  useState,
 } from 'react';
+import { Pause, Play } from 'lucide-react';
 
-import type { PoseTrackFrame, VideoItem } from '../../types';
+import type { HumanVideoLabel, PoseTrackFrame, VideoItem, VideoSegment } from '../../types';
 import { videoMediaUrl } from '../../api/client';
 
+/** COCO-17 skeleton edges. */
 const EDGES = [
-  [5, 6],
-  [5, 7],
-  [7, 9],
-  [6, 8],
-  [8, 10],
-  [5, 11],
-  [6, 12],
-  [11, 12],
-  [11, 13],
-  [13, 15],
-  [12, 14],
-  [14, 16],
-  [0, 5],
-  [0, 6],
+  [5, 6], [5, 7], [7, 9], [6, 8], [8, 10],
+  [5, 11], [6, 12], [11, 12],
+  [11, 13], [13, 15], [12, 14], [14, 16],
+  [0, 5], [0, 6],
 ];
+
+/** Human-readable label colors (must match VideoTimeline). */
+const LABEL_COLORS: Record<HumanVideoLabel, string> = {
+  others: '#64748b',
+  running: '#3b82f6',
+  falling: '#ef4444',
+};
 
 interface Props {
   projectId: string;
@@ -31,17 +41,40 @@ interface Props {
   overlay?: PoseTrackFrame;
   selectedTrack?: number;
   selectedOnly: boolean;
-  showSkeleton: boolean;
+  /** When true, hides both bounding boxes AND keypoint skeleton. */
   showBoxes: boolean;
+  /** currentSegments is used to look up the class label shown on the bbox. */
+  currentSegments?: VideoSegment[];
+  /** Current canonical frame index, used to look up active segment class. */
+  currentFrame?: number;
   onSelectTrack: (id: number) => void;
   onTimeUpdate: () => void;
   onMediaError?: () => void;
+  /** Called when the scrubber in fullscreen mode changes position. */
+  onSeek?: (frame: number) => void;
+  playing?: boolean;
+  onPlayPause?: () => void;
 }
 
 type PendingFrame = {
   kind: 'animation' | 'video';
   requestId: number;
 };
+
+/**
+ * Look up which segment covers the given frame for a specific track.
+ * Returns the label string, or undefined if uncovered.
+ */
+function segmentLabelAt(
+  segments: VideoSegment[],
+  trackId: number,
+  frame: number,
+): HumanVideoLabel | undefined {
+  const seg = segments.find(
+    (s) => s.track_id === trackId && frame >= s.start_frame && frame <= s.end_frame,
+  );
+  return seg?.label;
+}
 
 /** Render the active media and keep its pose overlay synchronized. */
 export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
@@ -52,11 +85,15 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       overlay,
       selectedTrack,
       selectedOnly,
-      showSkeleton,
       showBoxes,
+      currentSegments = [],
+      currentFrame = 0,
       onSelectTrack,
       onTimeUpdate,
       onMediaError,
+      onSeek,
+      playing,
+      onPlayPause,
     },
     forwardedRef,
   ) {
@@ -65,6 +102,8 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
     const pendingFrameRef = useRef<PendingFrame>();
     const onTimeUpdateRef = useRef(onTimeUpdate);
     const onMediaErrorRef = useRef(onMediaError);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+
     onTimeUpdateRef.current = onTimeUpdate;
     onMediaErrorRef.current = onMediaError;
 
@@ -81,18 +120,14 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
 
     useEffect(() => {
       const element = videoElementRef.current;
-      if (!element) {
-        return undefined;
-      }
+      if (!element) return undefined;
 
       const generation = mediaGenerationRef.current + 1;
       mediaGenerationRef.current = generation;
 
       const cancelFrameSync = () => {
         const pending = pendingFrameRef.current;
-        if (!pending) {
-          return;
-        }
+        if (!pending) return;
         if (pending.kind === 'video' && typeof element.cancelVideoFrameCallback === 'function') {
           element.cancelVideoFrameCallback(pending.requestId);
         } else if (pending.kind === 'animation') {
@@ -102,52 +137,26 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       };
 
       const isCurrentMedia = () => mediaGenerationRef.current === generation;
-
-      const notifyFrame = () => {
-        if (isCurrentMedia()) {
-          onTimeUpdateRef.current();
-        }
-      };
+      const notifyFrame = () => { if (isCurrentMedia()) onTimeUpdateRef.current(); };
 
       const scheduleFrameSync = () => {
-        if (!isCurrentMedia() || element.paused || element.ended || pendingFrameRef.current) {
-          return;
-        }
-
+        if (!isCurrentMedia() || element.paused || element.ended || pendingFrameRef.current) return;
         const tick = () => {
           pendingFrameRef.current = undefined;
-          if (!isCurrentMedia() || element.paused || element.ended) {
-            return;
-          }
+          if (!isCurrentMedia() || element.paused || element.ended) return;
           notifyFrame();
           scheduleFrameSync();
         };
-
         if (typeof element.requestVideoFrameCallback === 'function') {
-          pendingFrameRef.current = {
-            kind: 'video',
-            requestId: element.requestVideoFrameCallback(tick),
-          };
+          pendingFrameRef.current = { kind: 'video', requestId: element.requestVideoFrameCallback(tick) };
         } else {
-          pendingFrameRef.current = {
-            kind: 'animation',
-            requestId: window.requestAnimationFrame(tick),
-          };
+          pendingFrameRef.current = { kind: 'animation', requestId: window.requestAnimationFrame(tick) };
         }
       };
 
-      const startFrameSync = () => {
-        notifyFrame();
-        scheduleFrameSync();
-      };
-      const stopFrameSync = () => {
-        notifyFrame();
-        cancelFrameSync();
-      };
-      const reportMediaError = () => {
-        cancelFrameSync();
-        if (isCurrentMedia()) onMediaErrorRef.current?.();
-      };
+      const startFrameSync = () => { notifyFrame(); scheduleFrameSync(); };
+      const stopFrameSync = () => { notifyFrame(); cancelFrameSync(); };
+      const reportMediaError = () => { cancelFrameSync(); if (isCurrentMedia()) onMediaErrorRef.current?.(); };
 
       element.addEventListener('loadedmetadata', notifyFrame);
       element.addEventListener('seeked', notifyFrame);
@@ -157,9 +166,6 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       element.addEventListener('ended', stopFrameSync);
       element.addEventListener('error', reportMediaError);
 
-      // React reuses this element when the selected video changes. Explicitly
-      // reset the resource selection algorithm so the decoder cannot retain a
-      // disposed or failed source from the previously selected video.
       cancelFrameSync();
       element.pause();
       element.removeAttribute('src');
@@ -168,9 +174,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       element.load();
 
       return () => {
-        if (isCurrentMedia()) {
-          mediaGenerationRef.current += 1;
-        }
+        if (isCurrentMedia()) mediaGenerationRef.current += 1;
         cancelFrameSync();
         element.removeEventListener('loadedmetadata', notifyFrame);
         element.removeEventListener('seeked', notifyFrame);
@@ -185,9 +189,19 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       };
     }, [source]);
 
-    const tracks = overlay?.tracks.filter(
+    // Track fullscreen state changes
+    useEffect(() => {
+      const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+      document.addEventListener('fullscreenchange', onFsChange);
+      return () => document.removeEventListener('fullscreenchange', onFsChange);
+    }, []);
+
+    const visibleTracks = overlay?.tracks.filter(
       (track) => !selectedOnly || track.track_id === selectedTrack,
     ) ?? [];
+
+    const totalFrames = video.canonical_frame_count;
+    const scrubPercent = totalFrames > 1 ? (currentFrame / (totalFrames - 1)) * 100 : 0;
 
     return (
       <div className="relative bg-surface-container-lowest w-full h-full flex items-center justify-center overflow-hidden">
@@ -197,20 +211,29 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
           preload="auto"
           playsInline
         />
+
+        {/* Pose + bbox SVG overlay */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
           viewBox={`0 0 ${video.width} ${video.height}`}
           preserveAspectRatio="xMidYMid meet"
           aria-label="Pose and track overlay"
         >
-          {tracks.map((track) => {
-            const active = track.track_id === selectedTrack;
+          {visibleTracks.map((track) => {
+            const isActive = track.track_id === selectedTrack;
+            // Look up the class label at the current frame for bbox annotation (#14)
+            const classLabel = segmentLabelAt(currentSegments, track.track_id, currentFrame);
+            const classColor = classLabel ? LABEL_COLORS[classLabel] : undefined;
+            const bboxStroke = isActive ? '#57f1db' : '#f59e0b';
+            const bboxFill = isActive ? '#2dd4bf' : '#b45309';
+
             return (
               <g
                 key={track.track_id}
                 className="pointer-events-auto cursor-pointer"
                 onClick={() => onSelectTrack(track.track_id)}
               >
+                {/* Bounding box — controlled by showBoxes (#13) */}
                 {showBoxes && (
                   <>
                     <rect
@@ -219,50 +242,86 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       width={track.bbox[2] - track.bbox[0]}
                       height={track.bbox[3] - track.bbox[1]}
                       fill="transparent"
-                      stroke={active ? '#57f1db' : '#f59e0b'}
-                      strokeWidth={active ? 3 : 2}
+                      stroke={bboxStroke}
+                      strokeWidth={isActive ? 3 : 2}
                       vectorEffect="non-scaling-stroke"
                     />
+                    {/* Label background */}
                     <rect
                       x={track.bbox[0]}
-                      y={Math.max(0, track.bbox[1] - 20)}
-                      width="72"
-                      height="20"
-                      fill={active ? '#2dd4bf' : '#b45309'}
+                      y={Math.max(0, track.bbox[1] - 22)}
+                      width={classLabel ? 120 : 72}
+                      height={20}
+                      fill={classColor ?? bboxFill}
                     />
+                    {/* Label text: TRACK N · class (#14) */}
                     <text
                       x={track.bbox[0] + 4}
                       y={Math.max(14, track.bbox[1] - 6)}
-                      fontSize="12"
+                      fontSize="11"
                       fill="#09100e"
+                      fontWeight="bold"
                     >
-                      TRACK {track.track_id}
+                      {`T${track.track_id}${classLabel ? ` · ${classLabel}` : ''}`}
                     </text>
                   </>
                 )}
-                {showSkeleton && EDGES.map(([start, end]) => (
-                  track.keypoint_scores[start] >= 0.1
-                    && track.keypoint_scores[end] >= 0.1
-                    ? (
-                      <line
-                        key={`${start}-${end}`}
-                        x1={track.keypoints[start][0]}
-                        y1={track.keypoints[start][1]}
-                        x2={track.keypoints[end][0]}
-                        y2={track.keypoints[end][1]}
-                        stroke={active ? '#57f1db' : '#fbbf24'}
-                        strokeWidth="2"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    ) : null
-                ))}
+
+                {/* Skeleton — also controlled by showBoxes (#13: toggle hides both) */}
+                {showBoxes && EDGES.map(([start, end]) =>
+                  track.keypoint_scores[start] >= 0.1 && track.keypoint_scores[end] >= 0.1 ? (
+                    <line
+                      key={`${start}-${end}`}
+                      x1={track.keypoints[start][0]}
+                      y1={track.keypoints[start][1]}
+                      x2={track.keypoints[end][0]}
+                      y2={track.keypoints[end][1]}
+                      stroke={isActive ? '#57f1db' : '#fbbf24'}
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ) : null,
+                )}
               </g>
             );
           })}
         </svg>
-        {tracks.length === 0 && video.processing_status === 'annotation_ready' && (
+
+        {/* No-pose notice */}
+        {visibleTracks.length === 0 && video.processing_status === 'annotation_ready' && (
           <div className="absolute top-3 left-3 bg-surface-container/90 border border-outline-variant rounded px-2 py-1 text-label-sm">
             No pose at this frame
+          </div>
+        )}
+
+        {/* Fullscreen overlay: play/pause + scrubber (#16) */}
+        {isFullscreen && (
+          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-3 flex flex-col gap-2 pointer-events-auto">
+            {/* Scrubber */}
+            <input
+              aria-label="Video scrubber"
+              type="range"
+              min={0}
+              max={totalFrames - 1}
+              value={currentFrame}
+              onChange={(e) => onSeek?.(Number(e.target.value))}
+              className="w-full accent-primary h-1.5 cursor-pointer"
+            />
+            <div className="flex items-center gap-3">
+              {onPlayPause && (
+                <button
+                  type="button"
+                  aria-label={playing ? 'Pause' : 'Play'}
+                  onClick={onPlayPause}
+                  className="w-9 h-9 bg-primary-container text-on-primary-container rounded-full flex items-center justify-center"
+                >
+                  {playing ? <Pause size={18} /> : <Play size={18} />}
+                </button>
+              )}
+              <span className="text-white text-xs font-mono">
+                {currentFrame} / {totalFrames - 1}
+              </span>
+            </div>
           </div>
         )}
       </div>

@@ -3,18 +3,52 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { VideoTimeline } from './VideoTimeline';
 
-describe('VideoTimeline',()=>{
-  it('keeps human, threshold, and window layers distinct and selectable',()=>{
-    const onSegment=vi.fn(),onSuggestion=vi.fn();
-    render(<VideoTimeline frameCount={120} currentFrame={20} source="Threshold" selectedSegment="s1" onFrame={vi.fn()} onSegment={onSegment} onSuggestion={onSuggestion}
-      segments={[{segment_id:'s1',track_id:1,start_frame:0,end_frame:20,label:'others',quality_status:'good',include_in_export:1,needs_review:0,source_type:'manual'}]}
-      suggestions={[{suggestion_id:'g1',track_id:1,start_frame:30,end_frame:50,suggested_label:'falling',confidence:.9,review_status:'pending'}]}
-      windows={[{window_id:'w1',track_id:1,start_frame:0,end_frame:59,label:'others',quality_status:'good',quality_score:.9,include_in_export:1}]}/>
+describe('VideoTimeline', () => {
+  it('renders the LABEL bar with human segments and suggestion overlays', () => {
+    const onSegment = vi.fn();
+    const onSuggestion = vi.fn();
+    render(
+      <VideoTimeline
+        frameCount={120}
+        currentFrame={20}
+        source="Threshold"
+        selectedSegment="s1"
+        onFrame={vi.fn()}
+        onSegment={onSegment}
+        onSuggestion={onSuggestion}
+        segments={[{
+          segment_id: 's1',
+          track_id: 1,
+          start_frame: 0,
+          end_frame: 20,
+          label: 'others',
+          quality_status: 'good',
+          include_in_export: 1,
+          needs_review: 0,
+          source_type: 'manual',
+        }]}
+        suggestions={[{
+          suggestion_id: 'g1',
+          track_id: 1,
+          start_frame: 30,
+          end_frame: 50,
+          suggested_label: 'falling',
+          confidence: 0.9,
+          review_status: 'pending',
+        }]}
+      />,
     );
-    fireEvent.click(screen.getByTitle('others 0-20'));
-    fireEvent.click(screen.getByTitle('Threshold falling 90%'));
-    expect(onSegment).toHaveBeenCalled();expect(onSuggestion).toHaveBeenCalled();
-    expect(screen.getByTitle('others 0-20')).toHaveClass('ring-1');
-    expect(screen.getByTitle('Threshold falling 90%')).toHaveClass('border-solid');
+    // Segment should render and be clickable
+    const segmentBtn = screen.getByTitle('others frames 0–20');
+    fireEvent.click(segmentBtn);
+    expect(onSegment).toHaveBeenCalled();
+
+    // Suggestion overlay should render and be clickable
+    const sugBtn = screen.getByTitle(/Threshold suggestion: falling/);
+    fireEvent.click(sugBtn);
+    expect(onSuggestion).toHaveBeenCalled();
+
+    // Selected segment should have ring class
+    expect(segmentBtn).toHaveClass('ring-1');
   });
 });

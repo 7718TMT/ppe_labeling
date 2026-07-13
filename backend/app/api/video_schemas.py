@@ -87,6 +87,12 @@ class TrackMergePayload(BaseModel):
     source_track_id: int = Field(ge=0)
 
 
+class TrackMergeMultiplePayload(BaseModel):
+    """Payload for merging multiple tracks into the first one in the list."""
+
+    track_ids: list[int] = Field(min_length=2)
+
+
 class TrackSplitPayload(BaseModel):
     frame: int = Field(ge=0)
 

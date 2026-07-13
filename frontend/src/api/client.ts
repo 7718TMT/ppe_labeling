@@ -102,10 +102,15 @@ export async function getVideos(projectId: string, status?: string): Promise<Vid
   return (await api.get<VideoItem[]>(`/video-projects/${projectId}/videos`, { params: { status } })).data;
 }
 
-export async function importVideos(projectId: string, files: File[]): Promise<VideoItem[]> {
+export async function importVideos(projectId: string, files: File[], mode: 'Threshold' | 'Model' = 'Threshold'): Promise<VideoItem[]> {
   const formData = new FormData();
   files.forEach((file) => formData.append('files', file));
-  return (await api.post<VideoItem[]>(`/video-projects/${projectId}/videos/import`, formData)).data;
+  // mode param triggers auto-pipeline queue on the backend
+  return (await api.post<VideoItem[]>(
+    `/video-projects/${projectId}/videos/import`,
+    formData,
+    { params: { mode: mode.toLowerCase() } },
+  )).data;
 }
 
 export function videoMediaUrl(projectId: string, videoId: string): string {
@@ -281,4 +286,14 @@ export async function labelFullVideoTrack(projectId: string, videoId: string, tr
 
 export async function setVideoSegmentInclusion(projectId: string, videoId: string, segmentId: string, include: boolean, revision: number, reason?: string): Promise<{segment: VideoSegment; revision: number}> {
   return (await api.put(`/video-projects/${projectId}/videos/${videoId}/segments/${segmentId}/inclusion`, { include, reason, expected_revision: revision })).data;
+}
+
+/** Merge multiple tracks (by track_id list) into the first track in the list. */
+export async function mergeMultipleVideoTracks(projectId: string, videoId: string, trackIds: number[]): Promise<VideoTrack> {
+  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/tracks/merge-multiple`, { track_ids: trackIds })).data;
+}
+
+/** Revoke approval on a video so it can be re-annotated. */
+export async function unapproveVideo(projectId: string, videoId: string): Promise<VideoItem> {
+  return (await api.post<VideoItem>(`/video-projects/${projectId}/videos/${videoId}/unapprove`)).data;
 }

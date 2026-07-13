@@ -2,3 +2,4 @@ INFO:     Started server process [11064]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+API failed with exit code 1073807364.
