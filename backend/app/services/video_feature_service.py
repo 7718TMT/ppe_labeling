@@ -174,27 +174,60 @@ class VideoFeatureService:
             by_track.setdefault(int(record["track_id"]), []).append(record)
         for track_id, records in by_track.items():
             records.sort(key=lambda item: item["start_frame"])
+            current_state = None
+            consecutive_exit = 0
             for index, record in enumerate(records):
                 raw, score = record["raw"], record["transformed"]
                 quality_ok = raw["avg_keypoint_confidence"] >= profile["quality"]["min_average_keypoint_confidence"] and raw["valid_frame_ratio"] >= profile["quality"]["min_valid_frame_ratio"]
                 if not quality_ok:
+                    if current_state:
+                        consecutive_exit += 1
+                        if consecutive_exit >= profile[current_state].get("exit_consecutive", 3):
+                            current_state = None
                     continue
-                previous = records[max(0, index - 1):index + 1]
-                fall_condition = len(previous) >= profile["fall"]["entry_consecutive"] and all(
-                    item["transformed"]["fall_transition_score"] >= profile["fall"]["transition_entry"]
-                    and item["transformed"]["fall_state_score"] >= profile["fall"]["state_entry"] for item in previous
+
+                fall_lookback = profile["fall"]["entry_consecutive"]
+                previous_fall = records[max(0, index - fall_lookback + 1):index + 1]
+                fall_condition = len(previous_fall) >= fall_lookback and all(
+                    (item["transformed"]["fall_transition_score"] >= profile["fall"]["transition_entry"] or
+                     item["transformed"]["fall_state_score"] >= profile["fall"]["state_entry"]) for item in previous_fall
                 )
-                lying_condition = len(previous) >= 2 and all(
-                    item["transformed"]["final_lying_score_norm"] >= profile["fall"]["lying_entry"] for item in previous
+                lying_condition = len(records[max(0, index - 1):index + 1]) >= 2 and all(
+                    item["transformed"]["final_lying_score_norm"] >= profile["fall"]["lying_entry"] for item in records[max(0, index - 1):index + 1]
                 )
-                running_condition = len(previous) >= profile["running"]["entry_consecutive"] and all(
+                
+                run_lookback = profile["running"]["entry_consecutive"]
+                previous_run = records[max(0, index - run_lookback + 1):index + 1]
+                running_condition = len(previous_run) >= run_lookback and all(
                     item["transformed"]["running_score"] >= profile["running"]["entry_threshold"]
-                    and item["transformed"]["fall_inhibition_score"] < profile["running"]["max_fall_inhibition"] for item in previous
+                    and item["transformed"]["fall_inhibition_score"] < profile["running"]["max_fall_inhibition"] for item in previous_run
                 )
+
                 if fall_condition or lying_condition:
-                    candidates.append(self._candidate(track_id, record, "falling", max(score["fall_transition_score"], score["fall_state_score"], score["final_lying_score_norm"]), ["fall_transition_and_state" if fall_condition else "persistent_final_lying"], score))
+                    current_state = "falling"
+                    consecutive_exit = 0
                 elif running_condition:
-                    candidates.append(self._candidate(track_id, record, "running", score["running_score"], ["sustained_running_score"], score))
+                    current_state = "running"
+                    consecutive_exit = 0
+                elif current_state:
+                    if current_state == "falling":
+                        is_exit = score["fall_state_score"] < profile["fall"]["exit_threshold"] and score["fall_inhibition_score"] < profile["fall"]["exit_threshold"]
+                    elif current_state == "running":
+                        is_exit = score["running_score"] < profile["running"]["exit_threshold"]
+                    else:
+                        is_exit = False
+
+                    if is_exit:
+                        consecutive_exit += 1
+                        if consecutive_exit >= profile[current_state].get("exit_consecutive", 3):
+                            current_state = None
+                    else:
+                        consecutive_exit = 0
+
+                if current_state == "falling":
+                    candidates.append(self._candidate(track_id, record, "falling", max(score["fall_transition_score"], score["fall_state_score"], score["final_lying_score_norm"]), ["fall_state_machine"], score))
+                elif current_state == "running":
+                    candidates.append(self._candidate(track_id, record, "running", score["running_score"], ["run_state_machine"], score))
         merged = self._merge_candidates(candidates, int(profile["merge_gap_frames"]))
         self.repository.replace_threshold_suggestions(video_id, selected, merged)
         cache_version = f"{profile_record['version']}:{hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()[:12]}"
