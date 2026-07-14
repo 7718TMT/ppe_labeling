@@ -35,8 +35,8 @@ describe('video presentation mappings', () => {
 
   it('keeps annotation state separate and simple', () => {
     expect(userAnnotationStatus(VIDEO)).toBe('Unlabeled');
-    expect(userAnnotationStatus({ ...VIDEO, annotation_status: 'needs_review' })).toBe('In progress');
-    expect(userAnnotationStatus({ ...VIDEO, is_approved: 1 })).toBe('Completed');
+    expect(userAnnotationStatus({ ...VIDEO, annotation_status: 'labeled' })).toBe('Labeled');
+    expect(userAnnotationStatus({ ...VIDEO, is_approved: 1 })).toBe('Approved');
   });
 
   it('uses one clear label for every worker stage', () => {

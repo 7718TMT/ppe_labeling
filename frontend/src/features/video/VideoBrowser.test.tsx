@@ -69,11 +69,11 @@ describe('VideoBrowser', () => {
   });
 
   it('combines system processing and user-labeling filters', () => {
-    const inProgress = { ...video('review', 'annotation_ready'), annotation_status: 'needs_review' };
+    const labeled = { ...video('review', 'annotation_ready'), annotation_status: 'labeled' };
     render(
-      <VideoBrowser videos={[video('unlabeled'), inProgress, video('failed', 'failed')]} onSelect={vi.fn()} onImport={vi.fn()} />,
+      <VideoBrowser videos={[video('unlabeled'), labeled, video('failed', 'failed')]} onSelect={vi.fn()} onImport={vi.fn()} />,
     );
-    fireEvent.change(screen.getByLabelText('Filter user labelling status'), { target: { value: 'In progress' } });
+    fireEvent.change(screen.getByLabelText('Filter user labelling status'), { target: { value: 'Labeled' } });
     expect(screen.getByText('review.mp4')).toBeInTheDocument();
     expect(screen.queryByText('unlabeled.mp4')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Filter system processing status'), { target: { value: 'Ready' } });

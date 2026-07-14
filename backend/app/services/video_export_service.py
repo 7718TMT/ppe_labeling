@@ -13,6 +13,7 @@ from typing import Any, Callable
 import numpy as np
 
 from backend.app.domain.video import HUMAN_LABELS
+from backend.app.domain.errors import VideoResourceNotFoundError, VideoValidationError
 from backend.app.repositories.video_db import VideoRepository
 from backend.app.repositories.video_storage import VideoStorageRepository
 from backend.app.services.video_feature_service import VideoFeatureService
@@ -55,7 +56,22 @@ class VideoExportService:
         return self.repository.list_exports(project_id)
 
     def export_file(self, project_id: str, export_id: str, filename: str) -> Path:
+        self._completed_export(project_id, export_id)
         return self.storage.export_file(project_id, export_id, filename)
+
+    def export_archive(self, project_id: str, export_id: str) -> Path:
+        """Return a ZIP archive after confirming the export belongs to this project."""
+
+        self._completed_export(project_id, export_id)
+        return self.storage.export_archive(project_id, export_id)
+
+    def _completed_export(self, project_id: str, export_id: str) -> dict[str, Any]:
+        export = self.repository.get_export(export_id)
+        if export["project_id"] != project_id:
+            raise VideoResourceNotFoundError("Export not found")
+        if export["status"] != "completed":
+            raise VideoValidationError("Export is not ready for download")
+        return export
 
     def queue(self, project_id: str) -> dict[str, Any]:
         validation = self.validate(project_id)
@@ -93,14 +109,10 @@ class VideoExportService:
         project = self.repository.get_project(project_id)
         videos = [video for video in self.repository.list_videos(project_id) if video["include_in_export"] and video["is_approved"]]
         annotations: list[dict[str, Any]] = []
-        windows_rows: list[dict[str, Any]] = []
-        feature_rows: list[dict[str, Any]] = []
         keypoints: list[np.ndarray] = []
         keypoint_scores: list[np.ndarray] = []
         bboxes: list[np.ndarray] = []
         labels: list[int] = []
-        threshold_audit: list[dict[str, Any]] = []
-        model_audit: list[dict[str, Any]] = []
         video_hashes: dict[str, str] = {}
         for video_index, video in enumerate(videos):
             video_id = video["video_id"]
@@ -109,38 +121,20 @@ class VideoExportService:
                 if segment["include_in_export"]:
                     annotations.append({key: segment[key] for key in ("video_id", "track_id", "start_frame", "end_frame", "label", "annotation_version")})
             windows = self.repository.list_windows(video_id)
-            feature_by_id = {item["window_id"]: item for item in self.features.feature_range(video_id)}
             pose = self.storage.read_json(self.storage.artifact_path(project_id, "pose", video_id, video["pose_cache_version"]))
             track_frames: dict[int, dict[int, dict[str, Any]]] = {}
             for frame in pose["frames"]:
                 for detection in frame["tracks"]:
                     track_frames.setdefault(int(detection["track_id"]), {})[int(frame["frame_index"])] = detection
             for window in windows:
-                row = {key: window[key] for key in ("window_id", "video_id", "track_id", "start_frame", "end_frame", "label", "quality_score", "quality_status", "include_in_export", "exclude_reason")}
-                windows_rows.append(row)
-                feature = feature_by_id.get(window["window_id"])
-                if feature:
-                    feature_rows.append({
-                        "window_id": window["window_id"], "video_id": video_id, "track_id": window["track_id"],
-                        "start_frame": window["start_frame"], "end_frame": window["end_frame"], "label": window["label"],
-                        "quality_status": feature["quality"]["status"], "feature_schema_version": feature["feature_schema_version"],
-                        **{f"raw__{key}": value for key, value in feature["raw"].items()},
-                        **{f"score__{key}": value for key, value in feature["transformed"].items()},
-                    })
                 if window["include_in_export"] and window["label"]:
                     frames = [track_frames.get(int(window["track_id"]), {}).get(index) for index in range(int(window["start_frame"]), int(window["end_frame"]) + 1)]
                     keypoints.append(np.asarray([frame["keypoints"] if frame else [[0.0, 0.0]] * 17 for frame in frames], dtype=np.float32))
                     keypoint_scores.append(np.asarray([frame["keypoint_scores"] if frame else [0.0] * 17 for frame in frames], dtype=np.float32))
                     bboxes.append(np.asarray([frame["bbox"] if frame else [0.0] * 4 for frame in frames], dtype=np.float32))
                     labels.append(HUMAN_LABELS.index(window["label"]))
-            threshold_audit.extend(self.repository.list_suggestions("threshold_suggestions", video_id))
-            model_audit.extend(self.repository.list_suggestions("model_suggestions", video_id))
             progress((video_index + 1) / max(1, len(videos)) * 0.75)
         self._write_jsonl(directory / "annotations.jsonl", annotations)
-        self._write_parquet(directory / "windows.parquet", windows_rows)
-        self._write_parquet(directory / "features.parquet", feature_rows)
-        self._write_jsonl(directory / "threshold_suggestions.jsonl", threshold_audit)
-        self._write_jsonl(directory / "model_suggestions.jsonl", model_audit)
         np.savez_compressed(
             directory / "keypoint_windows.npz",
             keypoints=np.stack(keypoints) if keypoints else np.empty((0, 60, 17, 2), dtype=np.float32),
@@ -172,11 +166,3 @@ class VideoExportService:
         with path.open("w", encoding="utf-8", newline="\n") as output:
             for row in rows:
                 output.write(json.dumps(row, separators=(",", ":"), sort_keys=True) + "\n")
-
-    @staticmethod
-    def _write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        table = pa.Table.from_pylist(rows)
-        pq.write_table(table, path, compression="zstd")

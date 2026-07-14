@@ -17,7 +17,7 @@ interface Props {
 
 const ROW_HEIGHT = 106;
 const PROCESSING_FILTERS = ['All', 'Unprocessed', 'Processing', 'Ready', 'Failed'];
-const ANNOTATION_FILTERS = ['All', 'Unlabeled', 'In progress', 'Completed'];
+const ANNOTATION_FILTERS = ['All', 'Unlabeled', 'Labeled', 'Approved'];
 const ORDER_OPTIONS = [
   ['updated', 'Recently updated'],
   ['filename', 'Video name'],
@@ -31,7 +31,7 @@ type OrderField = typeof ORDER_OPTIONS[number][0];
 type OrderDirection = 'asc' | 'desc';
 
 const PROCESSING_ORDER = ['Unprocessed', 'Processing', 'Ready', 'Failed'];
-const ANNOTATION_ORDER = ['Unlabeled', 'In progress', 'Completed'];
+const ANNOTATION_ORDER = ['Unlabeled', 'Labeled', 'Approved'];
 
 function formatDuration(seconds: number): string {
   const safe = Math.max(0, Math.round(seconds));

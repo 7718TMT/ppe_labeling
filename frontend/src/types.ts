@@ -104,7 +104,6 @@ export interface VideoSegment {
   label: HumanVideoLabel;
   quality_status: string;
   include_in_export: number;
-  needs_review: number;
   source_type: string;
   source_id?: string | null;
 }

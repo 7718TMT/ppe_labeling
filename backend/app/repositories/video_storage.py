@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
@@ -197,6 +198,31 @@ class VideoStorageRepository:
         if not path.is_file():
             raise VideoResourceNotFoundError("Export file not found")
         return path
+
+    def export_archive(self, project_id: str, export_id: str) -> Path:
+        """Create or reuse a ZIP archive for one immutable export snapshot."""
+
+        root = self.ensure_project(project_id) / "exports"
+        directory = self._within(root / export_id)
+        if not directory.is_dir():
+            raise VideoResourceNotFoundError("Export files are not ready")
+        archive = self._within(root / f"{export_id}.zip")
+        if archive.is_file():
+            return archive
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{export_id}.", suffix=".zip.tmp", dir=root
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as output:
+                for source in sorted(directory.rglob("*")):
+                    if source.is_file():
+                        output.write(source, source.relative_to(directory).as_posix())
+            os.replace(temporary, archive)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return archive
 
     def remove_artifacts(self, project_id: str, video_id: str, categories: tuple[str, ...]) -> None:
         project = self.ensure_project(project_id)

@@ -1,4 +1,5 @@
 import io
+import zipfile
 from pathlib import Path
 
 import cv2
@@ -109,3 +110,11 @@ def test_real_endpoint_workflow_windows_features_suggestions_and_export_validati
     assert client.post(f"/api/v1/video-projects/{project_id}/videos/{video_id}/approve").status_code==200
     validation=client.get(f"/api/v1/video-projects/{project_id}/exports/validate").json();assert validation["errors"]==[]
     queued=client.post(f"/api/v1/video-projects/{project_id}/exports").json();assert queued["queued"] is True
+    export_id=queued["export"]["export_id"]
+    VideoExportService(repository,storage,VideoFeatureService(repository,storage)).run_job(
+        {"stage":f"export:{export_id}"},lambda _progress:None,
+    )
+    archive=client.get(f"/api/v1/video-projects/{project_id}/exports/{export_id}/download")
+    assert archive.status_code==200 and archive.headers["content-type"]=="application/zip"
+    with zipfile.ZipFile(io.BytesIO(archive.content)) as output:
+        assert "manifest.json" in output.namelist()

@@ -167,9 +167,9 @@ class VideoService:
         old = self.repository.get_project(project_id)["config"]
         project = self.repository.update_project(project_id, config)
         if old.get("pose") != config.get("pose"):
-            self._invalidate_all(project_id, ("pose", "canonical", "features"), "imported", mark_annotations=True)
+            self._invalidate_all(project_id, ("pose", "canonical", "features"), "imported")
         elif old.get("tracking") != config.get("tracking"):
-            self._invalidate_all(project_id, ("pose", "features"), "pose_ready", mark_annotations=True)
+            self._invalidate_all(project_id, ("pose", "features"), "pose_ready")
         elif old.get("features") != config.get("features"):
             self._invalidate_all(project_id, ("features",), "annotation_ready")
         elif old.get("window") != config.get("window") or old.get("window_labeling") != config.get("window_labeling"):
@@ -367,7 +367,7 @@ class VideoService:
             include_in_export=int(include),
             exclude_reason=None if include else reason,
             annotation_status=self.repository.get_video(video_id)["annotation_status"] if include else "excluded",
-            quality_status="needs_review" if include else "excluded",
+            quality_status="good" if include else "excluded",
         )
 
     def prioritize_opened_video(self, video_id: str) -> None:
@@ -383,7 +383,6 @@ class VideoService:
         project_id: str,
         categories: tuple[str, ...],
         status: str,
-        mark_annotations: bool = False,
     ) -> None:
         for video in self.repository.list_videos(project_id):
             self.storage.remove_artifacts(project_id, video["video_id"], categories)
@@ -391,10 +390,7 @@ class VideoService:
                 video["video_id"], processing_status=status, pose_cache_version=None,
                 tracking_cache_version=None, feature_cache_version=None,
                 threshold_cache_version=None, window_cache_version=None,
-                annotation_status="needs_review" if mark_annotations and self.repository.list_segments(video["video_id"]) else video["annotation_status"],
             )
-            if mark_annotations:
-                self.repository.execute("UPDATE video_segments SET needs_review=1,quality_status='needs_review' WHERE video_id=?", (video["video_id"],))
 
     def _project_video(self, project_id: str, video_id: str) -> dict[str, Any]:
         """Fetch a video while enforcing its project boundary."""

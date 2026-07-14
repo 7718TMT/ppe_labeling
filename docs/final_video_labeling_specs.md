@@ -141,9 +141,7 @@ The following are workflow states, not action classes:
 
 ```text
 unlabeled
-partially_labeled
 labeled
-needs_review
 approved
 excluded
 low_quality
@@ -168,7 +166,7 @@ Use fields such as:
 
 ```text
 include_in_export: true | false
-quality_status: good | needs_review | low_quality | excluded
+quality_status: good | unknown | low_quality | excluded
 exclude_reason: nullable enum/string
 ```
 
@@ -461,8 +459,7 @@ unprocessed
 processing
 annotation_ready
 unlabeled
-partially_labeled
-needs_review
+labeled
 approved
 low_quality
 excluded
@@ -737,7 +734,7 @@ others frames / valid labeled frames >= others_min_ratio
 
 ```text
 include_in_export = false
-quality_status = needs_review
+quality_status = unlabeled
 ```
 
 No fourth class is created.
@@ -1413,7 +1410,7 @@ Default QC rules:
 
 ```text
 avg_keypoint_confidence < 0.35
-→ needs_review
+→ low_quality
 
 missing_ankle_ratio > 0.40
 → ankle/ground motion unreliable
@@ -1718,7 +1715,8 @@ video
 → exports
 ```
 
-Human segments depend on tracks but are not automatically deleted when upstream processing changes; instead they must be marked `needs_review` when track identity changes.
+Human segments depend on tracks but are not automatically deleted or held for
+review when upstream processing changes; existing labels remain ground truth.
 
 Examples:
 
@@ -1728,7 +1726,7 @@ pose model changed
 
 tracker changed
 → invalidate tracking/features/suggestions/windows/exports
-→ mark affected annotations needs_review
+→ preserve existing human annotations
 
 threshold profile changed
 → invalidate threshold suggestions only
@@ -1768,32 +1766,7 @@ The tool exports labels and data for downstream use, but does not split or train
 }
 ```
 
-### 33.2 `windows.parquet`
-
-```text
-window_id
-video_id
-track_id
-start_frame
-end_frame
-label
-quality_score
-include_in_export
-exclude_reason
-```
-
-### 33.3 `features.parquet`
-
-Contains:
-
-- stable IDs,
-- Group A-E raw features,
-- transformed feature scores,
-- human-derived window label,
-- quality fields,
-- feature schema version.
-
-### 33.4 `keypoint_windows.npz`
+### 33.2 `keypoint_windows.npz`
 
 ```text
 keypoints: [N, 60, 17, 2]
@@ -1802,20 +1775,14 @@ bboxes: [N, 60, 4]
 labels: [N]
 ```
 
-### 33.5 Suggestion audit exports
+### 33.3 Training export scope
 
-Optional:
+The compact training export contains only `annotations.jsonl`,
+`keypoint_windows.npz`, and `manifest.json`. It deliberately excludes
+window/feature tables and suggestion audits because they are not required to
+train directly on labelled pose windows.
 
-```text
-threshold_suggestions.jsonl
-model_suggestions.jsonl
-suggestion_review_history.jsonl
-```
-
-These audit files remain separate from human ground truth, even when their
-source-linked suggestions have been materialized into annotation segments.
-
-### 33.6 ST-GCN-compatible export
+### 33.4 ST-GCN-compatible export
 
 Optional adapter:
 

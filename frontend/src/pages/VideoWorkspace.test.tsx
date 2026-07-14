@@ -116,7 +116,7 @@ describe('VideoWorkspace', () => {
       segment: {
         segment_id: 's1', track_id: 1, start_frame: 0, end_frame: 10,
         label: 'running', quality_status: 'good', include_in_export: 1,
-        needs_review: 0, source_type: 'manual',
+        source_type: 'manual',
       },
     });
     vi.mocked(api.processVideo).mockResolvedValue([{
@@ -209,7 +209,7 @@ describe('VideoWorkspace', () => {
       segments: [{
         segment_id: 'manual-1', track_id: 1, start_frame: 2, end_frame: 10,
         label: 'running', quality_status: 'good', include_in_export: 1,
-        needs_review: 0, source_type: 'manual',
+        source_type: 'manual',
       }],
     });
     renderWorkspace();
@@ -231,7 +231,7 @@ describe('VideoWorkspace', () => {
       segments: [{
         segment_id: 'manual-1', track_id: 1, start_frame: 2, end_frame: 10,
         label: 'running', quality_status: 'good', include_in_export: 1,
-        needs_review: 0, source_type: 'manual',
+        source_type: 'manual',
       }],
     });
     vi.mocked(api.saveVideoSegment).mockImplementation(async (_projectId, _videoId, payload, segmentId) => ({
@@ -244,7 +244,6 @@ describe('VideoWorkspace', () => {
         label: payload.label,
         quality_status: 'good',
         include_in_export: 1,
-        needs_review: 0,
         source_type: 'manual',
       },
     }));
@@ -267,7 +266,7 @@ describe('VideoWorkspace', () => {
       segments: [{
         segment_id: 'manual-1', track_id: 1, start_frame: 2, end_frame: 10,
         label: 'running', quality_status: 'good', include_in_export: 1,
-        needs_review: 0, source_type: 'manual',
+        source_type: 'manual',
       }],
     });
     renderWorkspace();
@@ -396,7 +395,7 @@ describe('VideoWorkspace', () => {
       segments: videoId === 'v1' ? [{
         segment_id: 'manual-1', track_id: 1, start_frame: 5, end_frame: 15,
         label: 'falling', quality_status: 'good', include_in_export: 1,
-        needs_review: 0, source_type: 'manual',
+        source_type: 'manual',
       }] : [],
     }));
     renderWorkspace();

@@ -444,6 +444,17 @@ def download_export(project_id: str, export_id: str, filename: str, service: Vid
     return FileResponse(service.export_file(project_id, export_id, filename), filename=filename)
 
 
+@router.get("/{project_id}/exports/{export_id}/download")
+def download_export_archive(project_id: str, export_id: str, service: VideoExportService = Depends(get_video_export_service)) -> FileResponse:
+    """Download a completed export snapshot as one ZIP file."""
+
+    return FileResponse(
+        service.export_archive(project_id, export_id),
+        media_type="application/zip",
+        filename=f"pose-export-{export_id}.zip",
+    )
+
+
 @router.put("/{project_id}/workspace-state")
 def save_workspace_state(project_id: str, payload: WorkspaceStatePayload, service: VideoService = Depends(get_video_service)) -> dict[str, Any]:
     return service.save_workspace_state(project_id, payload.model_dump())

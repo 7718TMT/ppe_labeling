@@ -220,17 +220,15 @@ class VideoWorker:
                 "avg_person_confidence": sum(summary["person"]) / len(summary["person"]),
                 "avg_keypoint_confidence": average_keypoint, "valid_frame_ratio": valid_ratio,
                 "missing_ankle_ratio": summary["ankles_missing"] / len(observed),
-                "quality_status": "good" if average_keypoint >= 0.35 and valid_ratio >= 0.70 else "needs_review",
+                "quality_status": "good" if average_keypoint >= 0.35 and valid_ratio >= 0.70 else "low_quality",
                 "include_in_export": 1, "exclude_reason": None,
             })
         artifact = {"schema_version": "pose-v1", "model_version": model_hash, "video_id": video["video_id"], "frames": frames}
         self.storage.write_json(self.storage.artifact_path(video["project_id"], "pose", video["video_id"], version), artifact)
-        has_annotations = bool(self.repository.list_segments(video["video_id"]))
         self.repository.replace_tracks(
             video["video_id"],
             track_rows,
             invalidate_derived=True,
-            mark_annotations=has_annotations,
         )
         self.storage.remove_artifacts(
             video["project_id"],

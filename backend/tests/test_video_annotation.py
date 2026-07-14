@@ -47,7 +47,7 @@ def test_segment_validation_overlap_revision_history_and_approval(tmp_path: Path
     assert updated["revision"] == 3
 
 
-def test_undo_redo_and_track_edits_preserve_labels_as_needs_review(tmp_path: Path) -> None:
+def test_undo_redo_and_track_edits_preserve_labels_as_labeled(tmp_path: Path) -> None:
     repository, _storage, service, video = setup_video(tmp_path)
     segment = service.save_segment(video["video_id"], 1, 10, 15, "falling", 0)["segment"]
     assert service.undo(video["video_id"], 1) == 2
@@ -56,8 +56,8 @@ def test_undo_redo_and_track_edits_preserve_labels_as_needs_review(tmp_path: Pat
     assert repository.list_segments(video["video_id"])[0]["segment_id"] == segment["segment_id"]
     service.merge_tracks(video["video_id"], 2, 1)
     preserved = repository.list_segments(video["video_id"])[0]
-    assert preserved["track_id"] == 2 and preserved["needs_review"] == 1
-    assert repository.get_video(video["video_id"])["annotation_status"] == "needs_review"
+    assert preserved["track_id"] == 2
+    assert repository.get_video(video["video_id"])["annotation_status"] == "labeled"
 
 
 def test_invalid_class_bounds_and_track_exclusion(tmp_path: Path) -> None:

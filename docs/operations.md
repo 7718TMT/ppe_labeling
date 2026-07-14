@@ -249,11 +249,10 @@ legacy jobs deterministically, and creates partial unique indexes for one
 active pipeline per video and one active model per project. The migration does
 not rewrite raw videos, annotations, or large cache files.
 
-Track edits invalidate only affected downstream artifacts and mark affected
-human segments `needs_review`; labels are never silently deleted. Editing an
-approved video clears approval until it is validated again. Threshold profile
-edits invalidate threshold caches only. External model versions and predictions
-remain separate.
+Track edits invalidate only affected downstream artifacts; labels are never
+silently deleted or moved into a review state. Editing an approved video clears
+approval until it is validated again. Threshold profile edits invalidate
+threshold caches only. External model versions and predictions remain separate.
 
 Joblib/pickle artifacts can execute code and require explicit trusted-local
 confirmation through the developer API. Model package paths, schema details,
@@ -263,6 +262,6 @@ schema/order, 60/12 window contract, 24 FPS, and adapter before Model processing
 is enabled. ONNX uses `onnxruntime`; joblib packages are never silently trusted.
 
 Export validation reports errors and unresolved/quality warnings. Generation
-uses a staging directory and publishes by atomic rename only after JSONL,
-Parquet, NPZ, suggestion audits, and the reproducibility manifest are complete.
+uses a staging directory and publishes by atomic rename only after annotation
+JSONL, labelled keypoint NPZ, and the reproducibility manifest are complete.
 Exports never create train/validation/test splits.

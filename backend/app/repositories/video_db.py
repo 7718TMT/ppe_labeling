@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS videos (
     folder_group TEXT,
     processing_status TEXT NOT NULL DEFAULT 'imported',
     annotation_status TEXT NOT NULL DEFAULT 'unlabeled',
-    quality_status TEXT NOT NULL DEFAULT 'needs_review',
+    quality_status TEXT NOT NULL DEFAULT 'unknown',
     include_in_export INTEGER NOT NULL DEFAULT 1 CHECK (include_in_export IN (0, 1)),
     exclude_reason TEXT,
     annotation_revision INTEGER NOT NULL DEFAULT 0,
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS video_tracks (
     avg_keypoint_confidence REAL NOT NULL DEFAULT 0,
     valid_frame_ratio REAL NOT NULL DEFAULT 0,
     missing_ankle_ratio REAL NOT NULL DEFAULT 1,
-    quality_status TEXT NOT NULL DEFAULT 'needs_review',
+    quality_status TEXT NOT NULL DEFAULT 'unknown',
     include_in_export INTEGER NOT NULL DEFAULT 1 CHECK (include_in_export IN (0, 1)),
     exclude_reason TEXT,
     revision INTEGER NOT NULL DEFAULT 1,
@@ -136,7 +136,6 @@ CREATE TABLE IF NOT EXISTS video_segments (
     quality_status TEXT NOT NULL DEFAULT 'good',
     include_in_export INTEGER NOT NULL DEFAULT 1 CHECK (include_in_export IN (0, 1)),
     exclude_reason TEXT,
-    needs_review INTEGER NOT NULL DEFAULT 0 CHECK (needs_review IN (0, 1)),
     annotation_version INTEGER NOT NULL,
     source_type TEXT NOT NULL DEFAULT 'manual',
     source_id TEXT,
@@ -172,7 +171,7 @@ CREATE TABLE IF NOT EXISTS generated_windows (
     label TEXT CHECK(label IN ('others', 'running', 'falling')),
     label_reason TEXT,
     quality_score REAL NOT NULL DEFAULT 0,
-    quality_status TEXT NOT NULL DEFAULT 'needs_review',
+    quality_status TEXT NOT NULL DEFAULT 'unlabeled',
     include_in_export INTEGER NOT NULL DEFAULT 0 CHECK (include_in_export IN (0, 1)),
     exclude_reason TEXT,
     window_config_version TEXT NOT NULL,
@@ -887,7 +886,6 @@ class VideoRepository:
         tracks: Sequence[dict[str, Any]],
         *,
         invalidate_derived: bool = False,
-        mark_annotations: bool = False,
     ) -> None:
         """Replace track summaries while optionally invalidating dependants."""
 
@@ -918,30 +916,6 @@ class VideoRepository:
                     SET feature_cache_version=NULL,
                         threshold_cache_version=NULL,
                         window_cache_version=NULL,
-                        updated_at=CURRENT_TIMESTAMP
-                    WHERE video_id=?
-                    """,
-                    (video_id,),
-                )
-            if mark_annotations:
-                connection.execute(
-                    """
-                    UPDATE video_segments
-                    SET needs_review=1,
-                        quality_status='needs_review',
-                        updated_at=CURRENT_TIMESTAMP
-                    WHERE video_id=?
-                    """,
-                    (video_id,),
-                )
-                connection.execute(
-                    """
-                    UPDATE videos
-                    SET annotation_status='needs_review',
-                        quality_status='needs_review',
-                        is_approved=0,
-                        approval_revision=NULL,
-                        approved_at=NULL,
                         updated_at=CURRENT_TIMESTAMP
                     WHERE video_id=?
                     """,
@@ -1054,7 +1028,7 @@ class VideoRepository:
     @staticmethod
     def _bump_annotation_revision(connection: sqlite3.Connection, video_id: str, revision: int) -> None:
         connection.execute(
-            "UPDATE videos SET annotation_revision=?,is_approved=0,approval_revision=NULL,approved_at=NULL,annotation_status='partially_labeled',window_cache_version=NULL,updated_at=CURRENT_TIMESTAMP WHERE video_id=?",
+            "UPDATE videos SET annotation_revision=?,is_approved=0,approval_revision=NULL,approved_at=NULL,annotation_status='labeled',window_cache_version=NULL,updated_at=CURRENT_TIMESTAMP WHERE video_id=?",
             (revision, video_id),
         )
         connection.execute("UPDATE generated_windows SET stale=1 WHERE video_id=?", (video_id,))
@@ -1098,7 +1072,7 @@ class VideoRepository:
             else:
                 columns = [
                     "segment_id", "video_id", "track_id", "start_frame", "end_frame", "label",
-                    "quality_status", "include_in_export", "exclude_reason", "needs_review",
+                    "quality_status", "include_in_export", "exclude_reason",
                     "annotation_version", "source_type", "source_id", "created_by", "created_at", "updated_at",
                 ]
                 connection.execute(

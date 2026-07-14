@@ -66,7 +66,7 @@ const HELP_SECTIONS: HelpSection[] = [
     title: 'Video status filters',
     content: [
       'System processing shows background work: Unprocessed has not started, Processing is queued or running, Ready can be annotated, and Failed needs retrying.',
-      'User labelling shows annotation progress: Unlabeled has no human segments, In progress needs review or approval, and Completed has been approved.',
+      'User labelling shows annotation progress: Unlabeled has no segments, Labeled segments are ground truth and editable, and Approved has been finalized for export.',
       'The two filters work together. Leave either one on All to ignore it, or choose both to find videos matching both states.',
       'Order sorts the filtered list by recent updates, name, duration, frame count, processing, or labelling status. Use its arrow to reverse the order.',
     ],

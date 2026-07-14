@@ -499,7 +499,7 @@ def test_worker_advances_atomically_with_persisted_target(
     assert repository.list_segments(video["video_id"])[0]["label"] == "others"
 
 
-def test_pose_replacement_preserves_manual_segments_as_needs_review(
+def test_pose_replacement_preserves_manual_segments_as_labeled(
     tmp_path: Path,
 ) -> None:
     repository = VideoRepository(tmp_path / "state.sqlite3")
@@ -533,18 +533,16 @@ def test_pose_replacement_preserves_manual_segments_as_needs_review(
         video_id,
         [_track()],
         invalidate_derived=True,
-        mark_annotations=True,
     )
 
     segment = repository.list_segments(video_id)[0]
     refreshed = repository.get_video(video_id)
     assert segment["segment_id"] == "kept"
     assert segment["label"] == "falling"
-    assert segment["needs_review"] == 1
-    assert segment["quality_status"] == "needs_review"
+    assert segment["quality_status"] == "good"
     assert refreshed["annotation_revision"] == 3
-    assert refreshed["annotation_status"] == "needs_review"
-    assert refreshed["is_approved"] == 0
+    assert refreshed["annotation_status"] == "approved"
+    assert refreshed["is_approved"] == 1
     assert refreshed["feature_cache_version"] is None
     assert refreshed["threshold_cache_version"] is None
     assert refreshed["window_cache_version"] is None

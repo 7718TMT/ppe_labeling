@@ -68,8 +68,8 @@ Annotation status is shown separately as:
 
 ```text
 Unlabeled
-In progress
-Completed
+Labeled
+Approved
 ```
 
 The browser has two filters above the cards:
@@ -78,8 +78,8 @@ The browser has two filters above the cards:
   started, Processing is queued or running, Ready can be annotated, and Failed
   needs retrying.
 - **User labelling** filters annotation progress: Unlabeled has no human
-  segments, In progress needs review or approval, and Completed has been
-  approved.
+  segments, Labeled segments are editable ground truth, and Approved has been
+  finalized for export.
 
 Leave either filter on **All** to ignore it. If both filters have a selection,
 only videos that match both states are shown. The selected video has a teal
@@ -294,7 +294,9 @@ overlay controls. It contains optional collapsible sections:
 - **Window review** includes or excludes deterministic 60-frame windows with
   stride 12;
 - **Motion details** shows generated read-only feature and quality information;
-- **Export dataset** validates and queues an atomic export.
+- **Export dataset** validates and queues an atomic export. When the background
+  job finishes, the browser automatically downloads one ZIP file; use
+  **Download ZIP** if the browser blocked the automatic download.
 
 Unresolved or low-quality windows do not create a fourth class. Mixed window
 priority is `falling > running > others`.
@@ -303,16 +305,13 @@ Exports can contain:
 
 ```text
 annotations.jsonl
-windows.parquet
-features.parquet
 keypoint_windows.npz
-threshold_suggestions.jsonl
-model_suggestions.jsonl
 manifest.json
 ```
 
-Exports preserve `video_id` and reproducibility metadata. They do not create
-train, validation, or test splits.
+This compact export preserves the labelled pose windows and reproducibility
+metadata needed for training. It does not create train, validation, or test
+splits.
 
 ## 12. Complete a video
 

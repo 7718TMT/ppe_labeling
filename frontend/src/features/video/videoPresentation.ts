@@ -1,7 +1,7 @@
 import type { ProcessingJob, VideoItem } from '../../types';
 
 export type UserVideoStatus = 'Unprocessed' | 'Processing' | 'Ready' | 'Failed';
-export type UserAnnotationStatus = 'Unlabeled' | 'In progress' | 'Completed';
+export type UserAnnotationStatus = 'Unlabeled' | 'Labeled' | 'Approved';
 
 const READY_STATUSES = new Set([
   'annotation_ready',
@@ -29,13 +29,13 @@ export function userVideoStatus(video: VideoItem, jobs: ProcessingJob[] = []): U
 
 /** Keep annotation progress separate from media processing state. */
 export function userAnnotationStatus(video: VideoItem): UserAnnotationStatus {
-  if (video.is_approved || ['approved', 'labeled'].includes(video.annotation_status)) {
-    return 'Completed';
+  if (video.is_approved || video.annotation_status === 'approved') {
+    return 'Approved';
   }
   if (video.annotation_status === 'unlabeled') {
     return 'Unlabeled';
   }
-  return 'In progress';
+  return 'Labeled';
 }
 
 /** Translate persistent worker stages into plain language. */

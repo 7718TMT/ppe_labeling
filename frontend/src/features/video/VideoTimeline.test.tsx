@@ -24,7 +24,6 @@ describe('VideoTimeline', () => {
           label: 'others',
           quality_status: 'good',
           include_in_export: 1,
-          needs_review: 0,
           source_type: 'manual',
         }]}
         suggestions={[{
@@ -68,7 +67,7 @@ describe('VideoTimeline', () => {
         segments={[{
           segment_id: 's1', track_id: 1, start_frame: 0, end_frame: 20,
           label: 'others', quality_status: 'good', include_in_export: 1,
-          needs_review: 0, source_type: 'manual',
+          source_type: 'manual',
         }]}
         suggestions={[]}
       />,

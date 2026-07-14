@@ -39,7 +39,7 @@ class VideoFeatureService:
                     float(track["valid_frame_ratio"]) < float(config["quality"]["min_valid_frame_ratio"])
                     or float(track["avg_keypoint_confidence"]) < float(config["quality"]["min_average_keypoint_confidence"])
                 )
-                status = "low_quality" if low_quality else "good" if label else "needs_review"
+                status = "low_quality" if low_quality else "good" if label else "unlabeled"
                 include = bool(label) and not low_quality and bool(track["include_in_export"])
                 generated.append({
                     "track_id": track_id, "start_frame": start, "end_frame": end,

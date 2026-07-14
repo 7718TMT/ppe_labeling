@@ -1,10 +1,10 @@
 import io
 import json
+import zipfile
 from pathlib import Path
 
 import joblib
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
 from backend.app.domain.errors import VideoValidationError
@@ -68,7 +68,7 @@ def test_trusted_joblib_predictions_and_suggestions_preserve_model_version(tmp_p
     assert repository.list_segments(video["video_id"])[0]["source_type"]=="manual"
 
 
-def test_atomic_export_contains_parquet_npz_audits_and_manifest(tmp_path: Path) -> None:
+def test_atomic_export_contains_training_samples_and_manifest(tmp_path: Path) -> None:
     repository,storage,project,video=setup_ready_project(tmp_path)
     service=VideoExportService(repository,storage,VideoFeatureService(repository,storage))
     assert service.validate(project["project_id"])["errors"]==[]
@@ -77,12 +77,14 @@ def test_atomic_export_contains_parquet_npz_audits_and_manifest(tmp_path: Path) 
     service.run_job({"stage":f"export:{export['export_id']}"},progress.append)
     completed=repository.get_export(export["export_id"])
     directory=Path(completed["artifact_path"])
-    expected={"annotations.jsonl","windows.parquet","features.parquet","keypoint_windows.npz","threshold_suggestions.jsonl","model_suggestions.jsonl","manifest.json"}
+    expected={"annotations.jsonl","keypoint_windows.npz","manifest.json"}
     assert expected=={path.name for path in directory.iterdir()}
-    assert pq.read_table(directory/"windows.parquet").num_rows==1
     arrays=np.load(directory/"keypoint_windows.npz")
     assert arrays["keypoints"].shape==(1,60,17,2)
     manifest=json.loads((directory/"manifest.json").read_text())
     assert manifest["class_map"]=={"others":0,"running":1,"falling":2}
     assert manifest["video_hashes"]=={video["video_id"]:"ready"}
     assert not (directory.parent/f".{export['export_id']}.staging").exists()
+    archive=service.export_archive(project["project_id"],export["export_id"])
+    with zipfile.ZipFile(archive) as output:
+        assert expected==set(output.namelist())

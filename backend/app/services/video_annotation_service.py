@@ -42,7 +42,6 @@ class VideoAnnotationService:
                 "quality_status": "good",
                 "include_in_export": 1,
                 "exclude_reason": None,
-                "needs_review": 0,
             },
             expected_revision,
             segment_id,
@@ -164,7 +163,7 @@ class VideoAnnotationService:
                 "end_frame": segment["end_frame"], "label": segment["label"],
                 "source_type": segment["source_type"], "source_id": segment["source_id"],
                 "quality_status": "good" if include else "excluded", "include_in_export": int(include),
-                "exclude_reason": None if include else reason, "needs_review": segment["needs_review"],
+                "exclude_reason": None if include else reason,
             },
             expected_revision,
             segment_id,
@@ -263,11 +262,10 @@ class VideoAnnotationService:
     def unapprove(self, video_id: str) -> dict[str, Any]:
         """Revoke approval so annotations can be revised.
 
-        Resets is_approved to 0 and annotation_status back to 'labeled'
-        (or 'needs_review' if any segment has needs_review set).
+        Resets is_approved to 0 and annotation_status back to 'labeled'.
         """
         segments = self.repository.list_segments(video_id)
-        status = "needs_review" if any(s["needs_review"] for s in segments) else "labeled" if segments else "unlabeled"
+        status = "labeled" if segments else "unlabeled"
         return self.repository.update_video(
             video_id,
             is_approved=0,
@@ -284,7 +282,6 @@ class VideoAnnotationService:
         elif not segments:
             errors.append("no segments have been labeled for this video.")
             
-        needs_review_count = 0
         for segment in segments:
             try:
                 self._validate_segment(
@@ -293,12 +290,6 @@ class VideoAnnotationService:
                 )
             except VideoValidationError as exc:
                 errors.append(f"{segment['segment_id']}: {exc}")
-            if segment["needs_review"]:
-                needs_review_count += 1
-                
-        if needs_review_count > 0:
-            errors.append(f"{needs_review_count} segment(s) still need review.")
-            
         return errors
 
     def merge_tracks(self, video_id: str, target_track_id: int, source_track_id: int) -> dict[str, Any]:
@@ -311,9 +302,9 @@ class VideoAnnotationService:
             start_frame=min(target["start_frame"], source["start_frame"]),
             end_frame=max(target["end_frame"], source["end_frame"]),
             valid_frame_count=int(target["valid_frame_count"]) + int(source["valid_frame_count"]),
-            quality_status="needs_review",
+            quality_status=target["quality_status"],
         )
-        self.repository.execute("UPDATE video_segments SET track_id=?,needs_review=1,quality_status='needs_review' WHERE video_id=? AND track_id=?", (target_track_id, video_id, source_track_id))
+        self.repository.execute("UPDATE video_segments SET track_id=? WHERE video_id=? AND track_id=?", (target_track_id, video_id, source_track_id))
         self.repository.execute("DELETE FROM video_tracks WHERE video_id=? AND track_id=?", (video_id, source_track_id))
         self._rewrite_pose_track_ids(video_id, source_track_id, target_track_id)
         self._invalidate_tracks(video_id, {target_track_id, source_track_id})
@@ -341,7 +332,7 @@ class VideoAnnotationService:
             "valid_frame_count", "gap_count", "avg_person_confidence", "avg_keypoint_confidence",
             "valid_frame_ratio", "missing_ankle_ratio", "quality_status", "include_in_export", "exclude_reason"
         }}
-        new_track.update({"track_id": new_id, "start_frame": frame, "end_frame": track["end_frame"], "quality_status": "needs_review"})
+        new_track.update({"track_id": new_id, "start_frame": frame, "end_frame": track["end_frame"]})
         with self.repository.connection() as connection, connection:
             fields = ["track_pk", "video_id", *new_track.keys()]
             from uuid import uuid4
@@ -349,9 +340,8 @@ class VideoAnnotationService:
                 f"INSERT INTO video_tracks({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})",
                 [uuid4().hex, video_id, *new_track.values()],
             )
-        self.repository.update_track(video_id, track_id, end_frame=frame - 1, quality_status="needs_review")
-        self.repository.execute("UPDATE video_segments SET track_id=?,needs_review=1,quality_status='needs_review' WHERE video_id=? AND track_id=? AND start_frame>=?", (new_id, video_id, track_id, frame))
-        self.repository.execute("UPDATE video_segments SET needs_review=1,quality_status='needs_review' WHERE video_id=? AND track_id=? AND start_frame<? AND end_frame>=?", (video_id, track_id, frame, frame))
+        self.repository.update_track(video_id, track_id, end_frame=frame - 1)
+        self.repository.execute("UPDATE video_segments SET track_id=? WHERE video_id=? AND track_id=? AND start_frame>=?", (new_id, video_id, track_id, frame))
         self._rewrite_pose_track_ids(video_id, track_id, new_id, from_frame=frame)
         self._invalidate_tracks(video_id, {track_id, new_id})
         return [self.repository.get_track(video_id, track_id), self.repository.get_track(video_id, new_id)]
@@ -371,7 +361,7 @@ class VideoAnnotationService:
         track = self.repository.update_track(
             video_id, track_id, include_in_export=int(include),
             exclude_reason=None if include else reason,
-            quality_status="needs_review" if include else "excluded",
+            quality_status="good" if include else "excluded",
         )
         self._invalidate_tracks(video_id, {track_id})
         return track
@@ -431,7 +421,7 @@ class VideoAnnotationService:
 
     def _refresh_annotation_status(self, video_id: str) -> None:
         segments = self.repository.list_segments(video_id)
-        status = "unlabeled" if not segments else "needs_review" if any(item["needs_review"] for item in segments) else "labeled"
+        status = "unlabeled" if not segments else "labeled"
         self.repository.update_video(video_id, annotation_status=status)
 
     def _invalidate_tracks(self, video_id: str, track_ids: set[int]) -> None:
@@ -441,7 +431,7 @@ class VideoAnnotationService:
         self.repository.execute(f"DELETE FROM threshold_suggestions WHERE video_id=? AND track_id IN ({placeholders})", values)
         self.repository.execute(f"DELETE FROM generated_windows WHERE video_id=? AND track_id IN ({placeholders})", values)
         self.repository.execute(f"DELETE FROM model_suggestions WHERE video_id=? AND track_id IN ({placeholders})", values)
-        self.repository.update_video(video_id, feature_cache_version=None, threshold_cache_version=None, window_cache_version=None, annotation_status="needs_review")
+        self.repository.update_video(video_id, feature_cache_version=None, threshold_cache_version=None, window_cache_version=None)
         self.storage.remove_artifacts(video["project_id"], video_id, ("features",))
 
     def _rewrite_pose_track_ids(self, video_id: str, old_id: int, new_id: int, from_frame: int = 0) -> None:

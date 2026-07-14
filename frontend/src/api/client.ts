@@ -244,6 +244,24 @@ export async function createVideoExport(projectId: string): Promise<any> {
   return (await api.post(`/video-projects/${projectId}/exports`)).data;
 }
 
+export interface VideoExportRecord {
+  export_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  created_at: string;
+  finished_at?: string | null;
+}
+
+export async function getVideoExports(projectId: string): Promise<VideoExportRecord[]> {
+  return (await api.get<VideoExportRecord[]>(`/video-projects/${projectId}/exports`)).data;
+}
+
+export function downloadVideoExport(projectId: string, exportId: string): void {
+  triggerBrowserDownload(
+    `/api/v1/video-projects/${encodeURIComponent(projectId)}/exports/${encodeURIComponent(exportId)}/download`,
+    `pose-export-${exportId}.zip`,
+  );
+}
+
 export async function mergeVideoTracks(projectId: string, videoId: string, target: number, source: number): Promise<VideoTrack> {
   return (await api.post(`/video-projects/${projectId}/videos/${videoId}/tracks/${target}/merge`, { source_track_id: source })).data;
 }
