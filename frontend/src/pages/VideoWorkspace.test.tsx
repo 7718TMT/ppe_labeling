@@ -134,14 +134,15 @@ describe('VideoWorkspace', () => {
 
   it('synchronizes track and segment controls without triggering shortcuts while typing', async () => {
     renderWorkspace();
-    expect(await screen.findByText('Track 1')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 1')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Full track' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Extend' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Copy prev' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Merge adj' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '+ Create Segment' }));
     fireEvent.click(screen.getByRole('button', { name: 'running' }));
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '10' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Create segment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add segment' }));
     await waitFor(() => expect(api.saveVideoSegment).toHaveBeenCalledWith(
       'p1',
       'v1',
@@ -155,8 +156,9 @@ describe('VideoWorkspace', () => {
   it('shows a recoverable revision conflict instead of silently overwriting', async () => {
     vi.mocked(api.saveVideoSegment).mockRejectedValueOnce(new Error('409 revision conflict'));
     renderWorkspace();
-    await screen.findByText('Track 1');
-    fireEvent.click(screen.getByRole('button', { name: 'Create segment' }));
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: '+ Create Segment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add segment' }));
     // Error message is shown in the status bar
     expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
@@ -164,7 +166,7 @@ describe('VideoWorkspace', () => {
   it('explains exhausted undo history without presenting a technical error', async () => {
     vi.mocked(api.videoHistoryAction).mockRejectedValueOnce(new Error('Nothing to undo'));
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(await screen.findByRole('status')).toHaveTextContent(
       'No earlier annotation changes are available to undo.',
@@ -175,8 +177,8 @@ describe('VideoWorkspace', () => {
 
   it('generates Threshold suggestions from the unified suggestion control', async () => {
     renderWorkspace();
-    await screen.findByText('Track 1');
-    fireEvent.click(screen.getByRole('button', { name: 'Suggestions: Threshold' }));
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestion' }));
     await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Threshold'));
     expect(await screen.findByRole('status')).toHaveTextContent('Threshold suggestion generation started');
   });
@@ -192,8 +194,8 @@ describe('VideoWorkspace', () => {
       priority: 100, progress: 0.5, target_mode: 'threshold', external_model_id: null,
     }]);
     renderWorkspace();
-    await screen.findByText('Track 1');
-    expect(screen.getByRole('button', { name: 'Generating: Threshold' })).toBeDisabled();
+    await screen.findByText('Worker 1');
+    expect(screen.getByRole('button', { name: 'Suggestion' })).toBeDisabled();
   });
 
   it('generates AI suggestions from the unified control without changing manual labels', async () => {
@@ -211,12 +213,12 @@ describe('VideoWorkspace', () => {
       }],
     });
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     // Segment title format is now 'running frames 2–10' (#2)
     expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'AI' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Suggestions: AI' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestion' }));
     await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Model'));
     expect(await screen.findByRole('status')).toHaveTextContent('AI suggestion generation started');
     expect(api.saveVideoSegment).not.toHaveBeenCalled();
@@ -247,8 +249,7 @@ describe('VideoWorkspace', () => {
       },
     }));
     renderWorkspace();
-    // Segment title format in the sidebar list uses label + frame range
-    fireEvent.click(await screen.findByTitle('running frames 2\u201310'));
+    fireEvent.click(await screen.findByRole('button', { name: /running.*2.*10/ }));
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '12' } });
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     await waitFor(() => expect(api.saveVideoSegment).toHaveBeenCalledWith(
@@ -260,9 +261,67 @@ describe('VideoWorkspace', () => {
     await waitFor(() => expect(screen.getByText('Saved')).toBeInTheDocument());
   });
 
+  it('returns to full-video mode and loops the whole video after deselecting a segment', async () => {
+    vi.mocked(api.getVideoSegments).mockResolvedValue({
+      revision: 0,
+      segments: [{
+        segment_id: 'manual-1', track_id: 1, start_frame: 2, end_frame: 10,
+        label: 'running', quality_status: 'good', include_in_export: 1,
+        needs_review: 0, source_type: 'manual',
+      }],
+    });
+    renderWorkspace();
+
+    const segmentCard = await screen.findByRole('button', { name: /running.*2.*10/ });
+    fireEvent.click(segmentCard);
+    expect(screen.getByRole('button', { name: 'Modify segment' })).toBeInTheDocument();
+    fireEvent.click(segmentCard);
+    expect(screen.queryByRole('button', { name: 'Modify segment' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Loop' }));
+    await waitFor(() => expect(document.querySelector('video')?.loop).toBe(true));
+    expect(screen.getByRole('button', { name: 'Loop' })).toHaveAttribute(
+      'title',
+      'Loop full video',
+    );
+  });
+
+  it('returns to full-video mode when Create Segment is selected again', async () => {
+    renderWorkspace();
+
+    const createCard = await screen.findByRole('button', { name: '+ Create Segment' });
+    fireEvent.click(createCard);
+    expect(screen.getByRole('button', { name: 'Add segment' })).toBeInTheDocument();
+    fireEvent.click(createCard);
+    expect(screen.queryByRole('button', { name: 'Add segment' })).not.toBeInTheDocument();
+  });
+
+  it('exits fullscreen from the fullscreen button without requiring Escape', async () => {
+    const fullscreenElement = document.createElement('main');
+    const exitFullscreen = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      value: fullscreenElement,
+    });
+    Object.defineProperty(document, 'exitFullscreen', {
+      configurable: true,
+      value: exitFullscreen,
+    });
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    fireEvent(document, new Event('fullscreenchange'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Exit fullscreen' }));
+    await waitFor(() => expect(exitFullscreen).toHaveBeenCalledTimes(1));
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      value: null,
+    });
+  });
+
   it('keeps global shortcuts inactive behind dialogs and focused controls', async () => {
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     const help = screen.getByRole('button', { name: 'Help' });
     help.focus();
     fireEvent.keyDown(help, { key: ' ' });
@@ -296,7 +355,7 @@ describe('VideoWorkspace', () => {
       }]);
       await Promise.resolve();
     });
-    expect(await screen.findByText('Track 1')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 1')).toBeInTheDocument();
   });
 
   it('shows suggestion overlay in the timeline (Suggestions tab removed)', async () => {
@@ -313,7 +372,7 @@ describe('VideoWorkspace', () => {
       probabilities: { falling: 0.82, running: 0.1, others: 0.08 },
     }]);
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     // Suggestions tab is removed (#4); suggestion is shown as overlay in timeline
     expect(screen.queryByRole('button', { name: 'suggestions' })).not.toBeInTheDocument();
     // Verify suggestions are still loaded (getSuggestions is called)
@@ -333,7 +392,7 @@ describe('VideoWorkspace', () => {
     // Segment title format in sidebar list uses em-dash (#2)
     expect(await screen.findByTitle('falling frames 5\u201315')).toBeInTheDocument();
     fireEvent.click(screen.getByText('shift-b.mp4'));
-    expect(await screen.findByText('Track 2')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 2')).toBeInTheDocument();
     fireEvent.click(screen.getByText('shift-a.mp4'));
     expect(await screen.findByTitle('falling frames 5\u201315')).toBeInTheDocument();
   });
@@ -354,7 +413,7 @@ describe('VideoWorkspace', () => {
       }]);
     renderWorkspace();
     expect(await screen.findByText('Process the video to detect worker tracks.')).toBeInTheDocument();
-    expect(await screen.findByText('Track 1', {}, { timeout: 3500 })).toBeInTheDocument();
+    expect(await screen.findByText('Worker 1', {}, { timeout: 7000 })).toBeInTheDocument();
     expect(api.getFeatures).toHaveBeenCalledTimes(2);
   });
 
@@ -362,11 +421,11 @@ describe('VideoWorkspace', () => {
     let resolveProcess: ((jobs: Awaited<ReturnType<typeof api.processVideo>>) => void) | undefined;
     vi.mocked(api.processVideo).mockImplementation(() => new Promise((resolve) => { resolveProcess = resolve; }));
     renderWorkspace();
-    await screen.findByText('Track 1');
-    fireEvent.click(screen.getByRole('button', { name: 'Suggestions: Threshold' }));
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestion' }));
     fireEvent.click(screen.getByText('shift-b.mp4'));
-    expect(await screen.findByText('Track 2')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Suggestions: Threshold' })).not.toBeDisabled();
+    expect(await screen.findByText('Worker 2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Suggestion' })).not.toBeDisabled();
     await act(async () => {
       resolveProcess?.([{
         job_id: 'a-job', video_id: 'v1', stage: 'canonicalize', status: 'queued', priority: 1000, progress: 0,
@@ -378,7 +437,7 @@ describe('VideoWorkspace', () => {
 
   it('offers only Annotate and Details tabs and a searchable Help guide', async () => {
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     // Suggestions tab is removed (#4)
     expect(screen.getByRole('button', { name: 'annotate' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'suggestions' })).not.toBeInTheDocument();
@@ -393,7 +452,7 @@ describe('VideoWorkspace', () => {
   it('keeps annotations usable when Model availability cannot be loaded', async () => {
     vi.mocked(api.getProcessingOptions).mockRejectedValue(new Error('model service unavailable'));
     renderWorkspace();
-    expect(await screen.findByText('Track 1')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 1')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
     expect(screen.getByRole('menuitemradio', { name: /AI/ })).toBeDisabled();
   });
@@ -408,7 +467,7 @@ describe('VideoWorkspace', () => {
     });
     vi.mocked(api.importVideos).mockResolvedValue([imported]);
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'AI' }));
     fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
@@ -417,7 +476,7 @@ describe('VideoWorkspace', () => {
 
   it('deletes project-owned video data through confirmation and selects the next video', async () => {
     renderWorkspace();
-    await screen.findByText('Track 1');
+    await screen.findByText('Worker 1');
     fireEvent.click(screen.getByRole('button', { name: 'Delete shift-a.mp4' }));
     expect(screen.getByRole('alertdialog')).toHaveTextContent('shift-a.mp4');
     // Updated delete dialog text: mentions managed copy and derived pose data
@@ -426,7 +485,7 @@ describe('VideoWorkspace', () => {
     await waitFor(() => expect(api.deleteVideo).toHaveBeenCalledWith('p1', 'v1'));
     await waitFor(() => expect(screen.queryByText('shift-a.mp4')).not.toBeInTheDocument());
     expect(screen.getByLabelText('Open shift-b.mp4')).toHaveAttribute('aria-current', 'true');
-    expect(await screen.findByText('Track 2')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 2')).toBeInTheDocument();
   });
 
   it('ignores late active-video responses during repeated switching', async () => {
@@ -444,14 +503,14 @@ describe('VideoWorkspace', () => {
     renderWorkspace();
     expect(await screen.findByText('shift-b.mp4')).toBeInTheDocument();
     fireEvent.click(screen.getByText('shift-b.mp4'));
-    expect(await screen.findByText('Track 2')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 2')).toBeInTheDocument();
     resolveFirstTracks?.([{
       track_id: 1, start_frame: 0, end_frame: 119, avg_keypoint_confidence: 0.9,
       valid_frame_ratio: 1, missing_ankle_ratio: 0, quality_status: 'good', include_in_export: 1,
     }]);
     await Promise.resolve();
-    expect(screen.queryByText('Track 1')).not.toBeInTheDocument();
+    expect(screen.queryByText('Worker 1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('shift-a.mp4'));
-    expect(await screen.findByText('Track 1')).toBeInTheDocument();
+    expect(await screen.findByText('Worker 1')).toBeInTheDocument();
   });
 });

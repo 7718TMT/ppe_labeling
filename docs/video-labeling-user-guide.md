@@ -72,21 +72,36 @@ In progress
 Completed
 ```
 
-Use the filter above the cards to focus on one of these states. The selected
-video has a teal border and highlight.
+The browser has two filters above the cards:
+
+- **System processing** filters the background pipeline: Unprocessed has not
+  started, Processing is queued or running, Ready can be annotated, and Failed
+  needs retrying.
+- **User labelling** filters annotation progress: Unlabeled has no human
+  segments, In progress needs review or approval, and Completed has been
+  approved.
+
+Leave either filter on **All** to ignore it. If both filters have a selection,
+only videos that match both states are shown. The selected video has a teal
+border and highlight.
+
+Use **Order** to sort the filtered list by recently updated, video name,
+duration, frame count, system processing, or user labelling. Its arrow changes
+between ascending and descending order. The default is recently updated with
+the newest video first.
 
 ## 4. Process a video
 
 The top toolbar has one split **Suggestions** control:
 
 ```text
-[ Suggestions: Threshold ] [ v ]
+[ Suggestion ] [ v ]
 ```
 
 or:
 
 ```text
-[ Suggestions: AI ] [ v ]
+[ Suggestion ] [ v ]
 ```
 
 1. Select the arrow only when you want to change the displayed source.
@@ -153,7 +168,7 @@ Player controls support:
 - backward or forward 10 frames;
 - an exact canonical frame number;
 - 0.25x, 0.5x, 1x, or 2x playback speed;
-- looping the selected segment;
+- looping the selected segment, or the full video when no segment is selected;
 - bounding-box visibility;
 - full screen.
 
@@ -171,7 +186,7 @@ Use **Timeline zoom** for long videos and scroll horizontally after zooming.
 Select a worker by either:
 
 - clicking its box in the video; or
-- selecting **Track N** in the **Annotate** tab.
+- selecting **Worker N** in the **Annotate** tab.
 
 The longest track is selected automatically when appropriate. Available tools:
 
@@ -197,21 +212,29 @@ falling
 To create a segment:
 
 1. Select a worker track.
-2. Move to the first frame and press `I`, or type it in **Start**.
-3. Move to the last frame and press `O`, or type it in **End**.
-4. Select **Others**, **Running**, or **Falling**.
-5. Select **Create segment** or press `Enter`.
+2. Select the **Create Segment** card below that track's segment cards.
+3. Move to the first frame and press `I`, or type it in **Start**.
+4. Move to the last frame and press `O`, or type it in **End**.
+5. Select **Others**, **Running**, or **Falling**.
+6. Select **Add segment** or press `Enter`.
 
-Human segments use solid timeline blocks. Select a block to edit its frames or
-class, drag its boundary sliders, and select **Update segment**.
+Human segments use solid timeline blocks and matching cards below the worker
+track. Select a timeline block or its segment card to reveal its editor below
+the card list; edit its frames or class, drag its boundary sliders, and select
+**Modify segment**.
+
+Select the same segment card, or the active **Create Segment** card, again to
+deselect it and return to full-video mode. With no segment selected, the
+**Loop** player control repeats the entire video; with a segment selected, it
+repeats only that segment.
 
 Edits to an existing segment autosave after a short pause. The toolbar reports
 **Unsaved changes**, **Saving**, then **Saved**. If autosave fails, keep the
 video open, resolve the displayed conflict or connection error, and select
-**Update segment** to retry; the unsaved draft remains visible meanwhile.
+**Modify segment** to retry; the unsaved draft remains visible meanwhile.
 
-Additional actions include **Full track**, **Split**, **Extend**, **Copy
-previous**, **Merge adjacent**, **Exclude/Include**, **Delete**, Undo, and Redo.
+Each selected segment card provides **Split at frame** and **Delete**. Undo and
+Redo remain available in the toolbar.
 
 The application rejects out-of-range frames, track-lifespan violations,
 conflicting same-track overlaps, invalid classes, and stale revision writes.

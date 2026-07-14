@@ -33,11 +33,13 @@ import {
   HelpCircle,
   Loader2,
   Maximize2,
+  Minimize2,
   PanelLeft,
   PanelRight,
   Pause,
   Play,
   Redo2,
+  Repeat2,
   Save,
   SkipBack,
   SkipForward,
@@ -174,6 +176,7 @@ export function VideoWorkspace() {
   const [segments, setSegments] = useState<VideoSegment[]>([]);
   const [revision, setRevision] = useState(0);
   const [selectedSegment, setSelectedSegment] = useState<VideoSegment>();
+  const [creatingSegment, setCreatingSegment] = useState(false);
   const [mergeSegmentId, setMergeSegmentId] = useState<string>();
   const [suggestions, setSuggestions] = useState<VideoSuggestion[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<VideoSuggestion>();
@@ -194,6 +197,7 @@ export function VideoWorkspace() {
   const [label, setLabel] = useState<HumanVideoLabel>('others');
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   /** showBoxes now controls BOTH bbox and skeleton (#13). */
   const [showBoxes, setShowBoxes] = useState(true);
   const [selectedOnly, setSelectedOnly] = useState(false);
@@ -216,6 +220,13 @@ export function VideoWorkspace() {
   frameRef.current = frame;
 
   useEffect(() => () => { activeIdRef.current = undefined; }, []);
+
+  useEffect(() => {
+    const synchronizeFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', synchronizeFullscreen);
+    synchronizeFullscreen();
+    return () => document.removeEventListener('fullscreenchange', synchronizeFullscreen);
+  }, []);
 
   useEffect(() => {
     setHistoryUnavailable(null);
@@ -249,8 +260,8 @@ export function VideoWorkspace() {
 
   useEffect(() => {
     let cancelled = false;
-    refreshShell().catch((reason) => !cancelled && setError(readableError(reason)));
-    const timer = window.setInterval(() => {
+    let timer: number | undefined;
+    const poll = () => {
       Promise.all([getVideoJobs(projectId), getVideos(projectId)])
         .then(([jobRows, videoRows]) => {
           if (cancelled) return;
@@ -260,10 +271,18 @@ export function VideoWorkspace() {
             if (!current) return videoRows[0] ?? null;
             return videoRows.find((item) => item.video_id === current.video_id) ?? videoRows[0] ?? null;
           });
+          const hasActiveJobs = jobRows.some((job) => ACTIVE_JOB_STATUSES.has(job.status));
+          timer = window.setTimeout(poll, hasActiveJobs ? 3000 : 30000);
         })
-        .catch(() => undefined);
-    }, 2000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+        .catch(() => { if (!cancelled) timer = window.setTimeout(poll, 30000); });
+    };
+    refreshShell()
+      .catch((reason) => !cancelled && setError(readableError(reason)))
+      .finally(() => { if (!cancelled) timer = window.setTimeout(poll, 3000); });
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [projectId, refreshShell]);
 
   const loadActive = useCallback(async (video: VideoItem) => {
@@ -282,6 +301,7 @@ export function VideoWorkspace() {
     setSelectedTrack(undefined);
     setMergeTrackIds(new Set());
     setSelectedSegment(undefined);
+    setCreatingSegment(false);
     setMergeSegmentId(undefined);
     setAutosaveFailedDraft(undefined);
     setSelectedSuggestion(undefined);
@@ -428,6 +448,22 @@ export function VideoWorkspace() {
     }
   }
 
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await containerRef.current?.requestFullscreen();
+      }
+    } catch {
+      setError('Fullscreen could not be changed.');
+    }
+  }
+
+  useEffect(() => {
+    if (player.current) player.current.loop = loop && !selectedSegment;
+  }, [loop, selectedSegment]);
+
   function synchronizePlayer() {
     const element = player.current;
     const currentVideo = active;
@@ -472,6 +508,7 @@ export function VideoWorkspace() {
           if (!segmentAtSave) return result.segment;
           return current?.segment_id === segmentAtSave.segment_id ? result.segment : current;
         });
+        setCreatingSegment(false);
         setAutosaveFailedDraft(undefined);
         if (!autosave) setMessage('Segment saved.');
         scheduleFeatureExtraction(); // #15
@@ -498,6 +535,7 @@ export function VideoWorkspace() {
         setRevision(result.revision);
         setSegments((current) => current.filter((item) => item.segment_id !== selectedSegment.segment_id));
         setSelectedSegment(undefined);
+        setCreatingSegment(false);
         setMessage('Segment deleted.');
         scheduleFeatureExtraction(); // #15
       }
@@ -518,7 +556,8 @@ export function VideoWorkspace() {
       if (activeIdRef.current !== videoId) return;
       setRevision(result.revision);
       setSegments(rows.segments);
-      setSelectedSegment(undefined);
+        setSelectedSegment(undefined);
+        setCreatingSegment(false);
       setHistoryUnavailable(null);
       setMessage(action === 'undo' ? 'Undone.' : 'Redone.');
     } catch (reason) {
@@ -646,6 +685,7 @@ export function VideoWorkspace() {
     setSegments(rows.segments);
     setRevision(rows.revision);
     setSelectedSegment(undefined);
+    setCreatingSegment(false);
   }
 
   async function reloadActive(video = active) {
@@ -654,7 +694,15 @@ export function VideoWorkspace() {
   }
 
   function chooseSegment(segment: VideoSegment) {
+    if (selectedSegment?.segment_id === segment.segment_id) {
+      setSelectedSegment(undefined);
+      setCreatingSegment(false);
+      setMergeSegmentId(undefined);
+      setSelectedSuggestion(undefined);
+      return;
+    }
     setSelectedSegment(segment);
+    setCreatingSegment(false);
     setMergeSegmentId(undefined);
     setSelectedSuggestion(undefined);
     setSelectedTrack(segment.track_id);
@@ -668,6 +716,7 @@ export function VideoWorkspace() {
   function chooseTrack(trackId: number) {
     setSelectedTrack(trackId);
     setSelectedSegment(undefined);
+    setCreatingSegment(false);
     setMergeSegmentId(undefined);
     setSelectedSuggestion(undefined);
   }
@@ -675,11 +724,30 @@ export function VideoWorkspace() {
   function chooseSuggestion(item: VideoSuggestion) {
     setSelectedSuggestion(item);
     setSelectedSegment(undefined);
+    setCreatingSegment(true);
     setSelectedTrack(item.track_id);
     setStart(item.start_frame);
     setEnd(item.end_frame);
     setLabel(item.suggested_label);
     seek(item.start_frame);
+    setTab('annotate');
+  }
+
+  function chooseCreateSegment() {
+    const track = tracks.find((item) => item.track_id === selectedTrack);
+    if (!track) return;
+    if (creatingSegment) {
+      setCreatingSegment(false);
+      setSelectedSuggestion(undefined);
+      return;
+    }
+    const initialFrame = Math.max(track.start_frame, Math.min(frame, track.end_frame));
+    setSelectedSegment(undefined);
+    setSelectedSuggestion(undefined);
+    setCreatingSegment(true);
+    setStart(initialFrame);
+    setEnd(initialFrame);
+    setLabel('others');
     setTab('annotate');
   }
 
@@ -762,15 +830,14 @@ export function VideoWorkspace() {
       await mergeMultipleVideoTracks(projectId, videoId, trackIdList);
       setMergeTrackIds(new Set());
       await reloadActive();
-      setMessage(`Merged ${trackIdList.length} tracks into Track ${trackIdList[0]}.`);
+      setMessage(`Merged ${trackIdList.length} workers into Worker ${trackIdList[0]}.`);
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(`Track merge failed. ${readableError(reason)}`);
     }
   }
 
   /**
-   * #11 — Called by VideoTimeline when user drags a segment boundary.
-   * Saves immediately; autosave debounce handles subsequent adjustments.
+   * #11 — Commits one locally previewed timeline-boundary resize on release.
    */
   async function handleSegmentResize(segmentId: string, newStart: number, newEnd: number) {
     const seg = segments.find((s) => s.segment_id === segmentId);
@@ -934,6 +1001,16 @@ export function VideoWorkspace() {
           {/* #5 — Source selector compact dropdown in navbar */}
           <button type="button" onClick={() => setHelpOpen(true)} className="h-8 px-2 border border-outline-variant rounded font-label text-label-sm flex items-center gap-1"><HelpCircle size={15} />Help</button>
 
+          {/* #9 — Export button replaces "Complete & Next". */}
+          <button
+            type="button"
+            disabled={!active}
+            onClick={() => setExportOpen(true)}
+            className="h-8 px-3 bg-surface-container text-on-surface border border-outline-variant rounded font-label text-label-sm flex items-center gap-2 disabled:opacity-40"
+          >
+            <Download size={15} /><span className="hidden sm:inline">Export</span>
+          </button>
+
           <SuggestionModeButton
             source={source}
             disabled={!active}
@@ -943,16 +1020,6 @@ export function VideoWorkspace() {
             onSourceChange={setSource}
             onGenerate={() => void generateSuggestions()}
           />
-
-          {/* #9 — Export Dataset button replaces "Complete & Next" */}
-          <button
-            type="button"
-            disabled={!active}
-            onClick={() => setExportOpen(true)}
-            className="h-8 px-3 bg-surface-container text-on-surface border border-outline-variant rounded font-label text-label-sm flex items-center gap-2 disabled:opacity-40"
-          >
-            <Download size={15} /><span className="hidden sm:inline">Export Dataset</span>
-          </button>
 
           <button type="button" aria-label="Toggle inspector" onClick={() => setRightOpen(!rightOpen)} className="toolbar-icon"><PanelRight size={18} /></button>
         </div>
@@ -1029,12 +1096,16 @@ export function VideoWorkspace() {
                 <select aria-label="Playback speed" defaultValue="1" onChange={(e) => { if (player.current) player.current.playbackRate = Number(e.target.value); }} className="h-8 bg-surface-container-lowest border border-outline-variant rounded px-2">
                   <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option>
                 </select>
-                <button type="button" onClick={() => setLoop(!loop)} className={`h-8 px-2 border rounded text-label-sm ${loop ? 'border-primary text-primary' : 'border-outline-variant'}`}>Loop</button>
+                <button type="button" aria-label="Loop" title={selectedSegment ? 'Loop selected segment' : 'Loop full video'} onClick={() => setLoop(!loop)} className={`toolbar-icon ${loop ? 'border-primary text-primary' : 'border-outline-variant'}`}>
+                  <Repeat2 size={17} />
+                </button>
                 {/* #13 — single toggle for bbox + skeleton */}
                 <button type="button" title={showBoxes ? 'Hide overlay' : 'Show overlay'} onClick={() => setShowBoxes(!showBoxes)} className="toolbar-icon">
                   {showBoxes ? <Eye size={16} /> : <EyeOff size={16} />}
                 </button>
-                <button type="button" title="Fullscreen" onClick={() => void (containerRef.current?.requestFullscreen())} className="toolbar-icon"><Maximize2 size={16} /></button>
+                <button type="button" aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} onClick={() => void toggleFullscreen()} className="toolbar-icon">
+                  {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
               </div>
 
               {/* #10 — VideoTimeline: no Windows row; segments from all/selected tracks */}
@@ -1073,7 +1144,7 @@ export function VideoWorkspace() {
                   {/* ── Worker track cards — #12: inline actions, #8: checkbox multi-select ── */}
                   <section>
                     <div className="flex items-center justify-between mb-2">
-                      <p className="font-label text-label-caps uppercase text-on-surface-variant">Worker tracks</p>
+                      <p className="font-label text-label-caps uppercase text-on-surface-variant">Workers</p>
                       {/* Multi-merge button (#8) */}
                       {mergeTrackIds.size >= 2 && (
                         <button
@@ -1099,7 +1170,7 @@ export function VideoWorkspace() {
                               {tracks.length > 1 && (
                                 <input
                                   type="checkbox"
-                                  aria-label={`Select Track ${track.track_id} for merge`}
+                                  aria-label={`Select Worker ${track.track_id} for merge`}
                                   checked={isChecked}
                                   onChange={(e) => {
                                     setMergeTrackIds((prev) => {
@@ -1117,7 +1188,7 @@ export function VideoWorkspace() {
                                 className="flex-1 text-left min-w-0"
                               >
                                 <div className="flex justify-between">
-                                  <span className="font-medium">Track {track.track_id}</span>
+                                  <span className="font-medium">Worker {track.track_id}</span>
                                   <span className="font-label text-label-sm">{Math.round(track.avg_keypoint_confidence * 100)}% pose</span>
                                 </div>
                                 <p className="text-[10px] text-on-surface-variant mt-0.5">Frames {track.start_frame}–{track.end_frame}</p>
@@ -1143,7 +1214,7 @@ export function VideoWorkspace() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (window.confirm('Delete this track and all its segments?')) {
+                                    if (window.confirm('Delete this worker and all its segments?')) {
                                       deleteVideoTrack(projectId, active.video_id, track.track_id)
                                         .then(() => reloadActive())
                                         .catch(e => setError(readableError(e)));
@@ -1166,37 +1237,65 @@ export function VideoWorkspace() {
                   </section>
 
                   {/* ── Segment editor ── */}
-                  <section className="border-t border-outline-variant pt-3">
-                    <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">Segment</p>
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <label className="text-label-sm">Start<input aria-label="Start" type="number" value={start} onChange={(e) => setStart(Number(e.target.value))} className="editor-input" /></label>
-                      <label className="text-label-sm">End<input aria-label="End" type="number" value={end} onChange={(e) => setEnd(Number(e.target.value))} className="editor-input" /></label>
-                    </div>
-                    {active && (
-                      <div className="grid grid-cols-2 gap-2 mt-2">
-                        <button type="button" onClick={() => setStart(frame)} className="h-8 border border-outline-variant hover:border-primary rounded font-label text-label-sm transition-colors">+ Start Point</button>
-                        <button type="button" onClick={() => setEnd(frame)} className="h-8 border border-outline-variant hover:border-primary rounded font-label text-label-sm transition-colors">+ End Point</button>
+                  {activeTrack && (
+                    <section className="border-t border-outline-variant pt-3">
+                      <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">Segments ({activeSegments.length})</p>
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {activeSegments.map((seg) => (
+                          <div key={seg.segment_id} className={`w-full rounded text-left border overflow-hidden ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>
+                            <button type="button" onClick={() => chooseSegment(seg)} className="w-full p-2 text-label-sm flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: LABEL_COLORS[seg.label] }} />
+                              <span className="capitalize font-medium">{seg.label}</span>
+                              <span className="text-on-surface-variant ml-auto">{seg.start_frame}–{seg.end_frame}</span>
+                            </button>
+                            {selectedSegment?.segment_id === seg.segment_id && (
+                              <div className="px-2 pb-2 flex gap-2">
+                                <button type="button" onClick={() => void removeSegment()} className="h-6 px-2 bg-error/10 border border-error/50 text-error rounded text-[11px] font-medium hover:bg-error/20 transition-colors">Delete</button>
+                                <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => {
+                                  if (!active) return;
+                                  splitVideoSegment(projectId, active.video_id, seg.segment_id, frame, revision)
+                                    .then(() => refreshSegments())
+                                    .catch(e => setError(readableError(e)));
+                                }} className="h-6 px-2 bg-surface-container border border-outline-variant rounded text-[11px] hover:border-primary/50 disabled:opacity-40 transition-colors">Split at frame</button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        <button type="button" onClick={chooseCreateSegment} className={`w-full rounded border border-dashed p-2 text-left text-label-sm font-medium ${creatingSegment ? 'border-primary bg-primary/10 text-primary' : 'border-outline-variant text-on-surface-variant hover:border-primary/50'}`}>
+                          + Create Segment
+                        </button>
                       </div>
-                    )}
 
-                    {/* Class selector */}
-                    <div className="grid grid-cols-3 gap-1 mt-2">
-                      {(['others', 'running', 'falling'] as HumanVideoLabel[]).map((value) => (
-                        <button type="button" key={value} onClick={() => setLabel(value)} className={`h-8 rounded border text-label-sm capitalize ${label === value ? 'border-primary bg-primary/10 text-primary' : 'border-outline-variant text-on-surface-variant hover:border-primary/50'}`} style={{ borderLeftWidth: label === value ? '1px' : '4px', borderLeftColor: LABEL_COLORS[value] }}>{value}</button>
-                      ))}
-                    </div>
-
-                    {/* Create/Update + Delete */}
-                    <div className="flex gap-2 mt-3">
-                      <button type="button" onClick={() => void saveSegment()} className="h-8 px-3 bg-primary-container text-on-primary-container rounded flex-1 font-label text-label-sm">
-                        {selectedSegment ? 'Update' : 'Create'} segment
-                      </button>
-                      {selectedSegment && (
-                        <button type="button" onClick={() => void removeSegment()} className="h-8 px-3 border border-error/50 text-error rounded font-label text-label-sm">Delete</button>
+                      {(selectedSegment || creatingSegment) && (
+                        <div className="mt-3 border-t border-outline-variant pt-3">
+                          <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">{selectedSegment ? 'Modify segment' : 'Create segment'}</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <label className="text-label-sm">Start<input aria-label="Start" type="number" value={start} onChange={(e) => setStart(Number(e.target.value))} className="editor-input" /></label>
+                            <label className="text-label-sm">End<input aria-label="End" type="number" value={end} onChange={(e) => setEnd(Number(e.target.value))} className="editor-input" /></label>
+                          </div>
+                          {active && (
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                              <button type="button" onClick={() => setStart(frame)} className="h-8 border border-outline-variant hover:border-primary rounded font-label text-label-sm transition-colors">+ Start Point</button>
+                              <button type="button" onClick={() => setEnd(frame)} className="h-8 border border-outline-variant hover:border-primary rounded font-label text-label-sm transition-colors">+ End Point</button>
+                            </div>
+                          )}
+                          <div className="grid grid-cols-3 gap-1 mt-2">
+                            {(['others', 'running', 'falling'] as HumanVideoLabel[]).map((value) => (
+                              <button type="button" key={value} onClick={() => setLabel(value)} className={`h-8 rounded border text-label-sm capitalize ${label === value ? 'border-primary bg-primary/10 text-primary' : 'border-outline-variant text-on-surface-variant hover:border-primary/50'}`} style={{ borderLeftWidth: label === value ? '1px' : '4px', borderLeftColor: LABEL_COLORS[value] }}>{value}</button>
+                            ))}
+                          </div>
+                          <div className="flex gap-2 mt-3">
+                            <button type="button" onClick={() => void saveSegment()} className="h-8 px-3 bg-primary-container text-on-primary-container rounded flex-1 font-label text-label-sm">
+                              {selectedSegment ? 'Modify segment' : 'Add segment'}
+                            </button>
+                            {selectedSegment && (
+                              <button type="button" onClick={() => void removeSegment()} className="h-8 px-3 border border-error/50 text-error rounded font-label text-label-sm">Delete</button>
+                            )}
+                          </div>
+                        </div>
                       )}
-                    </div>
-
-                  </section>
+                    </section>
+                  )}
 
                   {/* #3 — Fill unlabeled gaps */}
                   {activeTrack && (
@@ -1226,40 +1325,6 @@ export function VideoWorkspace() {
                   )}
 
                   {/* #1 — Segment list for the active track */}
-                  {activeTrack && activeSegments.length > 0 && (
-                    <section className="border-t border-outline-variant pt-3">
-                      <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">Segments ({activeSegments.length})</p>
-                      <div className="space-y-1 max-h-48 overflow-y-auto">
-                        {activeSegments.map((seg) => (
-                          <div key={seg.segment_id} className={`w-full rounded text-left border overflow-hidden ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>
-                            <button
-                              type="button"
-                              onClick={() => chooseSegment(seg)}
-                              className="w-full p-2 text-label-sm flex items-center gap-2"
-                            >
-                              <span
-                                className="w-2 h-2 rounded-full shrink-0"
-                                style={{ background: LABEL_COLORS[seg.label] }}
-                              />
-                              <span className="capitalize font-medium">{seg.label}</span>
-                              <span className="text-on-surface-variant ml-auto">{seg.start_frame}–{seg.end_frame}</span>
-                            </button>
-                            {selectedSegment?.segment_id === seg.segment_id && (
-                               <div className="px-2 pb-2 flex gap-2">
-                                 <button type="button" onClick={() => void removeSegment()} className="h-6 px-2 bg-error/10 border border-error/50 text-error rounded text-[11px] font-medium hover:bg-error/20 transition-colors">Delete</button>
-                                 <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => {
-                                    if (!active) return;
-                                    splitVideoSegment(projectId, active.video_id, seg.segment_id, frame, revision)
-                                      .then(() => refreshSegments())
-                                      .catch(e => setError(readableError(e)));
-                                 }} className="h-6 px-2 bg-surface-container border border-outline-variant rounded text-[11px] hover:border-primary/50 disabled:opacity-40 transition-colors">Split at frame</button>
-                               </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
                 </div>
               )}
 

@@ -30,7 +30,7 @@ describe('VideoBrowser', () => {
     expect(within(screen.getByLabelText('Open one.mp4')).getByText('Processing')).toBeInTheDocument();
     fireEvent.click(screen.getByText('one.mp4'));
     expect(select).toHaveBeenCalledWith(expect.objectContaining({ video_id: 'one' }));
-    fireEvent.change(screen.getByLabelText('Filter videos'), { target: { value: 'Failed' } });
+    fireEvent.change(screen.getByLabelText('Filter system processing status'), { target: { value: 'Failed' } });
     expect(screen.queryByText('one.mp4')).not.toBeInTheDocument();
     expect(screen.getByText('two.mp4')).toBeInTheDocument();
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -63,8 +63,38 @@ describe('VideoBrowser', () => {
     const viewport = container.querySelector('.overflow-y-auto') as HTMLDivElement;
     Object.defineProperty(viewport, 'scrollTop', { configurable: true, writable: true, value: 2200 });
     fireEvent.scroll(viewport);
-    fireEvent.change(screen.getByLabelText('Filter videos'), { target: { value: 'Failed' } });
+    fireEvent.change(screen.getByLabelText('Filter system processing status'), { target: { value: 'Failed' } });
     expect(viewport.scrollTop).toBe(0);
     expect(screen.getByText('video-0.mp4')).toBeInTheDocument();
+  });
+
+  it('combines system processing and user-labeling filters', () => {
+    const inProgress = { ...video('review', 'annotation_ready'), annotation_status: 'needs_review' };
+    render(
+      <VideoBrowser videos={[video('unlabeled'), inProgress, video('failed', 'failed')]} onSelect={vi.fn()} onImport={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText('Filter user labelling status'), { target: { value: 'In progress' } });
+    expect(screen.getByText('review.mp4')).toBeInTheDocument();
+    expect(screen.queryByText('unlabeled.mp4')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Filter system processing status'), { target: { value: 'Ready' } });
+    expect(screen.getByText('review.mp4')).toBeInTheDocument();
+    expect(screen.queryByText('failed.mp4')).not.toBeInTheDocument();
+  });
+
+  it('sorts filtered videos locally by the selected field and direction', () => {
+    const alpha = { ...video('alpha'), duration_seconds: 20, updated_at: '2026-01-02T00:00:00Z' };
+    const zeta = { ...video('zeta'), duration_seconds: 5, updated_at: '2026-01-03T00:00:00Z' };
+    render(<VideoBrowser videos={[zeta, alpha]} onSelect={vi.fn()} onImport={vi.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Order videos by'), { target: { value: 'filename' } });
+    expect(screen.getAllByRole('button', { name: /^Open / }).map((item) => item.getAttribute('aria-label')))
+      .toEqual(['Open zeta.mp4', 'Open alpha.mp4']);
+    fireEvent.click(screen.getByRole('button', { name: 'Sort descending' }));
+    expect(screen.getAllByRole('button', { name: /^Open / }).map((item) => item.getAttribute('aria-label')))
+      .toEqual(['Open alpha.mp4', 'Open zeta.mp4']);
+
+    fireEvent.change(screen.getByLabelText('Order videos by'), { target: { value: 'duration' } });
+    expect(screen.getAllByRole('button', { name: /^Open / }).map((item) => item.getAttribute('aria-label')))
+      .toEqual(['Open zeta.mp4', 'Open alpha.mp4']);
   });
 });

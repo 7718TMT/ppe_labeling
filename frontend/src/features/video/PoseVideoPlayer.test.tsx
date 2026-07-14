@@ -109,8 +109,8 @@ describe('PoseVideoPlayer', () => {
     const { onTimeUpdate, rerender } = renderPlayer();
     const player = document.querySelector('video') as HTMLVideoElement;
     expect(player).toHaveClass('w-full', 'h-full', 'object-contain');
-    // Bbox label now uses T{id} format (#14)
-    expect(screen.getByText('T7')).toBeInTheDocument();
+    expect(screen.getByText('W7')).toBeInTheDocument();
+    expect(screen.getByTestId('worker-label-7')).toHaveAttribute('width', '100');
 
     pauseSpy.mockClear();
     Object.defineProperty(player, 'paused', { configurable: true, value: false });
@@ -312,7 +312,6 @@ describe('PoseVideoPlayer', () => {
     const player = document.querySelector('video') as HTMLVideoElement;
     fireEvent.error(player);
     expect(onMediaError).toHaveBeenCalledOnce();
-    // Bbox label now shows T{id} format (#14)
-    expect(screen.getByText('T7')).toBeInTheDocument();
+    expect(screen.getByText('W7')).toBeInTheDocument();
   });
 });

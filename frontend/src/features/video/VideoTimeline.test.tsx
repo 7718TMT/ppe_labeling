@@ -50,5 +50,35 @@ describe('VideoTimeline', () => {
 
     // Selected segment should have ring class
     expect(segmentBtn).toHaveClass('ring-1');
+    expect(screen.getByText('W1')).toBeInTheDocument();
+    expect(screen.queryByText('QUALITY')).not.toBeInTheDocument();
+  });
+
+  it('previews a resize locally and commits only once on pointer release', () => {
+    const onSegmentResize = vi.fn();
+    render(
+      <VideoTimeline
+        frameCount={120}
+        currentFrame={20}
+        source="Threshold"
+        onFrame={vi.fn()}
+        onSegment={vi.fn()}
+        onSuggestion={vi.fn()}
+        onSegmentResize={onSegmentResize}
+        segments={[{
+          segment_id: 's1', track_id: 1, start_frame: 0, end_frame: 20,
+          label: 'others', quality_status: 'good', include_in_export: 1,
+          needs_review: 0, source_type: 'manual',
+        }]}
+        suggestions={[]}
+      />,
+    );
+
+    const handle = screen.getByLabelText('Drag segment end');
+    fireEvent.pointerDown(handle, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 1, pointerId: 1 });
+    expect(onSegmentResize).not.toHaveBeenCalled();
+    fireEvent.pointerUp(handle, { clientX: 1, pointerId: 1 });
+    expect(onSegmentResize).toHaveBeenCalledTimes(1);
   });
 });

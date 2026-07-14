@@ -237,6 +237,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                 {showBoxes && (
                   <>
                     <rect
+                      data-testid={`worker-label-${track.track_id}`}
                       x={track.bbox[0]}
                       y={track.bbox[1]}
                       width={track.bbox[2] - track.bbox[0]}
@@ -250,7 +251,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                     <rect
                       x={track.bbox[0]}
                       y={Math.max(0, track.bbox[1] - 22)}
-                      width={classLabel ? 120 : 72}
+                      width={track.bbox[2] - track.bbox[0]}
                       height={20}
                       fill={bboxFill}
                     />
@@ -262,7 +263,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       fill="#fff"
                       fontWeight="bold"
                     >
-                      {`T${track.track_id}${classLabel ? ` · ${classLabel}` : ''}`}
+                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}`}
                     </text>
                   </>
                 )}

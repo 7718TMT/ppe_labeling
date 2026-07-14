@@ -35,8 +35,11 @@ interface DragState {
   edge: 'start' | 'end';
   originX: number;
   originFrame: number;
+  originalStart: number;
+  originalEnd: number;
+  start: number;
+  end: number;
   frameCount: number;
-  containerLeft: number;
   containerWidth: number;
 }
 
@@ -57,7 +60,7 @@ interface Props {
   onSegment: (segment: VideoSegment) => void;
   /** Called when a suggestion block is clicked. */
   onSuggestion: (suggestion: VideoSuggestion) => void;
-  /** Called when the user drags a segment boundary (segment_id, newStart, newEnd). */
+  /** Called once when the user releases a resized segment boundary. */
   onSegmentResize?: (segmentId: string, start: number, end: number) => void;
 }
 
@@ -74,6 +77,9 @@ export function VideoTimeline({
   onSegmentResize,
 }: Props) {
   const [zoom, setZoom] = useState(1);
+  const [dragBounds, setDragBounds] = useState<{
+    segmentId: string; start: number; end: number;
+  }>();
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
 
@@ -112,31 +118,51 @@ export function VideoTimeline({
       originX: event.clientX,
       originFrame: edge === 'start' ? segment.start_frame : segment.end_frame,
       frameCount,
-      containerLeft: rect.left,
       containerWidth: rect.width,
+      originalStart: segment.start_frame,
+      originalEnd: segment.end_frame,
+      start: segment.start_frame,
+      end: segment.end_frame,
     };
-    (event.target as Element).setPointerCapture(event.pointerId);
+    const target = event.target as Element;
+    if (typeof target.setPointerCapture === 'function') {
+      target.setPointerCapture(event.pointerId);
+    }
   }
 
-  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+  function updateDragBounds(event: React.PointerEvent<HTMLButtonElement>) {
     const drag = dragRef.current;
     if (!drag || !onSegmentResize) return;
     const deltaX = event.clientX - drag.originX;
     const framesPerPx = (drag.frameCount - 1) / Math.max(1, drag.containerWidth);
     const deltaFrames = Math.round(deltaX * framesPerPx);
     const newFrame = Math.max(0, Math.min(drag.frameCount - 1, drag.originFrame + deltaFrames));
-    const seg = segments.find((s) => s.segment_id === drag.segmentId);
-    if (!seg) return;
     if (drag.edge === 'start') {
-      onSegmentResize(drag.segmentId, Math.min(newFrame, seg.end_frame - 1), seg.end_frame);
+      drag.start = Math.min(newFrame, drag.originalEnd - 1);
     } else {
-      onSegmentResize(drag.segmentId, seg.start_frame, Math.max(newFrame, seg.start_frame + 1));
+      drag.end = Math.max(newFrame, drag.originalStart + 1);
     }
+    setDragBounds({ segmentId: drag.segmentId, start: drag.start, end: drag.end });
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    updateDragBounds(event);
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLButtonElement>) {
     event.stopPropagation();
+    updateDragBounds(event);
+    const drag = dragRef.current;
+    if (drag && (drag.start !== drag.originalStart || drag.end !== drag.originalEnd)) {
+      onSegmentResize?.(drag.segmentId, drag.start, drag.end);
+    }
     dragRef.current = null;
+    setDragBounds(undefined);
+  }
+
+  function cancelSegmentDrag() {
+    dragRef.current = null;
+    setDragBounds(undefined);
   }
 
   // ── Derive per-track grouping ────────────────────────────────────────────────
@@ -199,7 +225,7 @@ export function VideoTimeline({
               return (
                 <div key={trackId} className="flex items-center gap-2 mb-1">
                   <span className="w-16 shrink-0 font-label text-[10px] text-on-surface-variant text-right pr-2">
-                    T{trackId}
+                    W{trackId}
                   </span>
                   <div
                     className="relative flex-1 h-8 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
@@ -209,6 +235,9 @@ export function VideoTimeline({
                     {trackSegments.map((seg) => {
                       const isSelected = selectedSegment === seg.segment_id;
                       const color = LABEL_COLORS[seg.label] ?? '#64748b';
+                      const displayedBounds = dragBounds?.segmentId === seg.segment_id
+                        ? dragBounds
+                        : { start: seg.start_frame, end: seg.end_frame };
                       return (
                         <button
                           key={seg.segment_id}
@@ -216,7 +245,7 @@ export function VideoTimeline({
                           title={`${seg.label} frames ${seg.start_frame}–${seg.end_frame}`}
                           onClick={(e) => { e.stopPropagation(); onSegment(seg); }}
                           className={`absolute top-1 bottom-1 rounded-sm group ${isSelected ? 'ring-1 ring-white z-10' : ''}`}
-                          style={{ ...blockStyle(seg.start_frame, seg.end_frame), background: color }}
+                          style={{ ...blockStyle(displayedBounds.start, displayedBounds.end), background: color }}
                         >
                           {/* Left drag handle */}
                           {onSegmentResize && (
@@ -227,6 +256,7 @@ export function VideoTimeline({
                               onPointerDown={(e) => startSegmentDrag(e as unknown as React.PointerEvent<HTMLButtonElement>, seg, 'start')}
                               onPointerMove={(e) => handlePointerMove(e as unknown as React.PointerEvent<HTMLButtonElement>)}
                               onPointerUp={(e) => handlePointerUp(e as unknown as React.PointerEvent<HTMLButtonElement>)}
+                              onPointerCancel={cancelSegmentDrag}
                             />
                           )}
                           {/* Class label text — shown when block is wide enough */}
@@ -242,6 +272,7 @@ export function VideoTimeline({
                               onPointerDown={(e) => startSegmentDrag(e as unknown as React.PointerEvent<HTMLButtonElement>, seg, 'end')}
                               onPointerMove={(e) => handlePointerMove(e as unknown as React.PointerEvent<HTMLButtonElement>)}
                               onPointerUp={(e) => handlePointerUp(e as unknown as React.PointerEvent<HTMLButtonElement>)}
+                              onPointerCancel={cancelSegmentDrag}
                             />
                           )}
                         </button>
@@ -278,12 +309,6 @@ export function VideoTimeline({
               );
             })
           )}
-
-          {/* Quality bar */}
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="w-16 shrink-0 font-label text-[10px] text-on-surface-variant text-right pr-2">QUALITY</span>
-            <div className="relative flex-1 h-2 bg-gradient-to-r from-error/60 via-amber-400/40 to-emerald-400/60" />
-          </div>
         </div>
       </div>
 

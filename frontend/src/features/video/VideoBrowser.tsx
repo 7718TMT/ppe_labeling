@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Film, Loader2, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Film, Loader2, Trash2, Upload } from 'lucide-react';
 
 import { videoThumbnailUrl } from '../../api/client';
 import type { ProcessingJob, VideoItem } from '../../types';
@@ -16,7 +16,22 @@ interface Props {
 }
 
 const ROW_HEIGHT = 106;
-const FILTERS = ['All', 'Unprocessed', 'Processing', 'Ready', 'Failed', 'Unlabeled', 'In progress', 'Completed'];
+const PROCESSING_FILTERS = ['All', 'Unprocessed', 'Processing', 'Ready', 'Failed'];
+const ANNOTATION_FILTERS = ['All', 'Unlabeled', 'In progress', 'Completed'];
+const ORDER_OPTIONS = [
+  ['updated', 'Recently updated'],
+  ['filename', 'Video name'],
+  ['duration', 'Duration'],
+  ['frames', 'Frame count'],
+  ['processing', 'System processing'],
+  ['annotation', 'User labelling'],
+] as const;
+
+type OrderField = typeof ORDER_OPTIONS[number][0];
+type OrderDirection = 'asc' | 'desc';
+
+const PROCESSING_ORDER = ['Unprocessed', 'Processing', 'Ready', 'Failed'];
+const ANNOTATION_ORDER = ['Unlabeled', 'In progress', 'Completed'];
 
 function formatDuration(seconds: number): string {
   const safe = Math.max(0, Math.round(seconds));
@@ -36,15 +51,44 @@ export function VideoBrowser({
 }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const scrollViewport = useRef<HTMLDivElement>(null);
-  const [filter, setFilter] = useState('All');
+  const [processingFilter, setProcessingFilter] = useState('All');
+  const [annotationFilter, setAnnotationFilter] = useState('All');
+  const [orderField, setOrderField] = useState<OrderField>('updated');
+  const [orderDirection, setOrderDirection] = useState<OrderDirection>('desc');
   const [scrollTop, setScrollTop] = useState(0);
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
+  function resetScroll() {
+    setScrollTop(0);
+    if (scrollViewport.current) scrollViewport.current.scrollTop = 0;
+  }
+
   const filtered = useMemo(() => {
-    if (filter === 'All') return videos;
-    return videos.filter((video) =>
-      userVideoStatus(video, jobs) === filter || userAnnotationStatus(video) === filter,
+    const matching = videos.filter((video) =>
+      (processingFilter === 'All' || userVideoStatus(video, jobs) === processingFilter)
+      && (annotationFilter === 'All' || userAnnotationStatus(video) === annotationFilter),
     );
-  }, [filter, jobs, videos]);
+    const multiplier = orderDirection === 'asc' ? 1 : -1;
+    return [...matching].sort((left, right) => {
+      let comparison: number;
+      if (orderField === 'filename') {
+        comparison = left.filename.localeCompare(right.filename, undefined, { numeric: true });
+      } else if (orderField === 'duration') {
+        comparison = left.duration_seconds - right.duration_seconds;
+      } else if (orderField === 'frames') {
+        comparison = left.canonical_frame_count - right.canonical_frame_count;
+      } else if (orderField === 'processing') {
+        comparison = PROCESSING_ORDER.indexOf(userVideoStatus(left, jobs))
+          - PROCESSING_ORDER.indexOf(userVideoStatus(right, jobs));
+      } else if (orderField === 'annotation') {
+        comparison = ANNOTATION_ORDER.indexOf(userAnnotationStatus(left))
+          - ANNOTATION_ORDER.indexOf(userAnnotationStatus(right));
+      } else {
+        comparison = Date.parse(left.updated_at) - Date.parse(right.updated_at);
+      }
+      if (comparison !== 0) return comparison * multiplier;
+      return left.filename.localeCompare(right.filename, undefined, { numeric: true }) * multiplier;
+    });
+  }, [annotationFilter, jobs, orderDirection, orderField, processingFilter, videos]);
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 2);
   const visible = filtered.slice(start, start + 12);
 
@@ -77,18 +121,64 @@ export function VideoBrowser({
             event.target.value = '';
           }}
         />
-        <select
-          aria-label="Filter videos"
-          value={filter}
-          onChange={(event) => {
-            setFilter(event.target.value);
-            setScrollTop(0);
-            if (scrollViewport.current) scrollViewport.current.scrollTop = 0;
-          }}
-          className="w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
-        >
-          {FILTERS.map((value) => <option key={value}>{value}</option>)}
-        </select>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
+            System processing
+            <select
+              aria-label="Filter system processing status"
+              value={processingFilter}
+              onChange={(event) => {
+                setProcessingFilter(event.target.value);
+                resetScroll();
+              }}
+              className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
+            >
+              {PROCESSING_FILTERS.map((value) => <option key={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
+            User labelling
+            <select
+              aria-label="Filter user labelling status"
+              value={annotationFilter}
+              onChange={(event) => {
+                setAnnotationFilter(event.target.value);
+                resetScroll();
+              }}
+              className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
+            >
+              {ANNOTATION_FILTERS.map((value) => <option key={value}>{value}</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="flex items-end gap-2">
+          <label className="min-w-0 flex-1 font-label text-[10px] text-on-surface-variant">
+            Order
+            <select
+              aria-label="Order videos by"
+              value={orderField}
+              onChange={(event) => {
+                setOrderField(event.target.value as OrderField);
+                resetScroll();
+              }}
+              className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
+            >
+              {ORDER_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            aria-label={orderDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+            title={orderDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+            onClick={() => {
+              setOrderDirection((current) => current === 'asc' ? 'desc' : 'asc');
+              resetScroll();
+            }}
+            className="w-8 h-8 rounded border border-outline-variant bg-surface-container-lowest flex items-center justify-center"
+          >
+            {orderDirection === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+          </button>
+        </div>
       </div>
       <div
         ref={scrollViewport}

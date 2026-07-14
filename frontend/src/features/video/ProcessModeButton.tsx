@@ -54,7 +54,7 @@ export function SuggestionModeButton({
         className="h-8 px-3 rounded-l bg-primary-container text-on-primary-container font-label text-label-sm font-bold flex items-center gap-2 disabled:opacity-40"
       >
         {generating ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
-        {generating ? `Generating: ${source}` : `Suggestions: ${source}`}
+        Suggestion
       </button>
       <button
         type="button"
