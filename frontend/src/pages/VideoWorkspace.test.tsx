@@ -333,6 +333,17 @@ describe('VideoWorkspace', () => {
     expect(api.saveVideoSegment).not.toHaveBeenCalled();
   });
 
+  it('shows the shortcut guide only while Alt is held', async () => {
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+
+    fireEvent.keyDown(window, { key: 'Alt' });
+    expect(screen.getByRole('region', { name: 'Keyboard shortcut guide' })).toBeInTheDocument();
+    expect(screen.getByText('Release Alt to close')).toBeInTheDocument();
+    fireEvent.keyUp(window, { key: 'Alt' });
+    expect(screen.queryByRole('region', { name: 'Keyboard shortcut guide' })).not.toBeInTheDocument();
+  });
+
   it('keeps delayed overlay chunks synchronized while frames advance', async () => {
     let resolveOverlay: ((rows: Awaited<ReturnType<typeof api.getPoseOverlay>>) => void) | undefined;
     vi.mocked(api.getPoseOverlay).mockImplementation(() => new Promise((resolve) => { resolveOverlay = resolve; }));

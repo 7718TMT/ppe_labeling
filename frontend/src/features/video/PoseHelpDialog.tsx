@@ -59,6 +59,7 @@ const HELP_SECTIONS: HelpSection[] = [
       'A accepts and R rejects the selected suggestion. 1, 2, and 3 select Others, Running, and Falling.',
       'Existing segment edits autosave after a short pause; watch Unsaved changes, Saving, and Saved in the toolbar.',
       'Ctrl+Z and Ctrl+Y undo and redo. Enter saves. N approves and opens the next video.',
+      'Hold Alt to display a temporary shortcut guide over the workspace.',
     ],
   },
   {

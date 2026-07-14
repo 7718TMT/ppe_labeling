@@ -342,7 +342,8 @@ saved work.
 ## 15. Keyboard shortcuts
 
 Shortcuts do not run while typing in an input, select, textarea, or editable
-control.
+control. Hold `Alt` to show a temporary on-screen reference; release it to
+close the guide.
 
 | Shortcut | Action |
 | --- | --- |

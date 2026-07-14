@@ -41,6 +41,8 @@ data/video_labeling/
 !weights/.gitkeep
 !weights/pose.pt
 
+docs/video-labeling-progress.md
+
 orange_range_preview.jpg
 
 AGENTS.md

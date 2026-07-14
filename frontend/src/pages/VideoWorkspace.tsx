@@ -81,6 +81,7 @@ import { PoseHelpDialog } from '../features/video/PoseHelpDialog';
 import { PoseVideoPlayer } from '../features/video/PoseVideoPlayer';
 import { SuggestionModeButton, type ProcessMode } from '../features/video/ProcessModeButton';
 import { ProcessingQueue } from '../features/video/ProcessingQueue';
+import { ShortcutGuideOverlay } from '../features/video/ShortcutGuideOverlay';
 import { VideoBrowser } from '../features/video/VideoBrowser';
 import { VideoTimeline } from '../features/video/VideoTimeline';
 import type {
@@ -210,6 +211,7 @@ export function VideoWorkspace() {
   const [pendingDelete, setPendingDelete] = useState<VideoItem>();
   const [deletingId, setDeletingId] = useState<string>();
   const [helpOpen, setHelpOpen] = useState(false);
+  const [shortcutGuideVisible, setShortcutGuideVisible] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -227,6 +229,28 @@ export function VideoWorkspace() {
     synchronizeFullscreen();
     return () => document.removeEventListener('fullscreenchange', synchronizeFullscreen);
   }, []);
+
+  useEffect(() => {
+    function showShortcutGuide(event: KeyboardEvent) {
+      if (event.key === 'Alt' && !event.repeat && !helpOpen && !pendingDelete && !exportOpen) {
+        setShortcutGuideVisible(true);
+      }
+    }
+    function hideShortcutGuide(event: KeyboardEvent) {
+      if (event.key === 'Alt') setShortcutGuideVisible(false);
+    }
+    function clearShortcutGuide() {
+      setShortcutGuideVisible(false);
+    }
+    window.addEventListener('keydown', showShortcutGuide);
+    window.addEventListener('keyup', hideShortcutGuide);
+    window.addEventListener('blur', clearShortcutGuide);
+    return () => {
+      window.removeEventListener('keydown', showShortcutGuide);
+      window.removeEventListener('keyup', hideShortcutGuide);
+      window.removeEventListener('blur', clearShortcutGuide);
+    };
+  }, [exportOpen, helpOpen, pendingDelete]);
 
   useEffect(() => {
     setHistoryUnavailable(null);
@@ -933,8 +957,11 @@ export function VideoWorkspace() {
   useEffect(() => {
     function key(event: KeyboardEvent) {
       if (helpOpen || pendingDelete) return;
-      const target = event.target as HTMLElement;
-      if (target.isContentEditable || target.closest('input, textarea, select, button, a, [contenteditable="true"]')) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (
+        target.isContentEditable
+        || target.closest('input, textarea, select, button, a, [contenteditable="true"]')
+      )) return;
       if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); void history('undo'); return; }
       if (event.ctrlKey && event.key.toLowerCase() === 'y') { event.preventDefault(); void history('redo'); return; }
       const actions: Record<string, () => void> = {
@@ -1387,6 +1414,7 @@ export function VideoWorkspace() {
 
       {/* ── Dialogs ── */}
       <PoseHelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <ShortcutGuideOverlay visible={shortcutGuideVisible} />
 
       {/* Export modal (#9) */}
       {exportOpen && (
