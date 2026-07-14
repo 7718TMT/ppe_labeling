@@ -53,7 +53,15 @@ Each compact video card shows:
 - duration and canonical frame count;
 - one simple processing status;
 - a separate annotation status;
-- a delete button.
+- a delete button and selection checkbox.
+
+Use the checkbox or `Ctrl`/`Cmd`-click a card to select multiple videos. Use
+**Delete selected** to remove them together; the same confirmation protects all
+selected videos.
+
+Use **Rename** beside **Import videos** to rename the whole project. Enter a
+prefix such as `fall_batch`; names become `fall_batch_00001`,
+`fall_batch_00002`, and so on, while each original video extension is kept.
 
 Processing status is limited to:
 
@@ -115,6 +123,12 @@ threshold workflow and AI queues the compatible model workflow. **Off** hides
 suggestions and disables generation; imports use Threshold while Off is active.
 The main button is disabled while the selected video already has active
 processing.
+
+When several videos are imported, the worker completes all stages for one
+video before starting the next. Each completed video changes to **Ready**
+immediately; it does not wait for the other imported videos. The processing
+queue shows both the current stage and an aggregate `remaining / total videos`
+progress bar for that import batch.
 
 When processing finishes, the generated segments appear in both the timeline's
 human-label bar and the segment group. Review, edit, delete, or approve them as
@@ -233,8 +247,11 @@ Edits to an existing segment autosave after a short pause. The toolbar reports
 video open, resolve the displayed conflict or connection error, and select
 **Modify segment** to retry; the unsaved draft remains visible meanwhile.
 
-Each selected segment card provides **Split at frame** and **Delete**. Undo and
-Redo remain available in the toolbar.
+Each selected segment card provides **Split**, **Expand**, and **Delete**. Use
+the segment checkbox or `Ctrl`/`Cmd`-click to select multiple segments, then
+use **Delete selected**. Checkbox-only selection does not add a card border;
+the border identifies the one segment currently open for editing. Undo and Redo
+remain available in the toolbar.
 
 The application rejects out-of-range frames, track-lifespan violations,
 conflicting same-track overlaps, invalid classes, and stale revision writes.
@@ -320,16 +337,19 @@ The application validates the video, records approval, and opens the next
 available video. Editing a completed video invalidates its prior approval so it
 can be reviewed again.
 
-## 13. Delete a video
+## 13. Delete videos, workers, or segments
 
-1. Select the trash button on the video card. It does not open the video.
-2. Confirm the dialog containing the exact video name.
-3. Wait for the success message.
+1. For one video, select its trash button. For multiple videos, workers, or
+   segments, tick their checkboxes or `Ctrl`/`Cmd`-click their cards.
+2. Select **Delete selected**, or press `Delete`/`Backspace` after selecting
+   the group. The key acts on the most recently selected type of card.
+3. Confirm video deletion, then wait for the success message.
 
 Deletion removes the project's owned media copy, thumbnail, pose/tracking
 caches, features, suggestions, annotations, windows, and processing jobs for
-that video. It does not delete an external source file and does not affect any
-other video. The next available video is selected automatically.
+each deleted video. It does not delete an external source file or affect other
+videos. The next available video is selected automatically. Deleting a worker
+also deletes its segments; deleting segments leaves their worker intact.
 
 ## 14. Use built-in Help
 
@@ -357,7 +377,8 @@ close the guide.
 | `M` | Select AI for the Suggestion button when available |
 | `S` | Turn automatic suggestion generation off |
 | `Esc` | Leave the selected segment and return to full-video mode |
-| `Delete` | Delete the selected segment |
+| `Ctrl`/`Cmd`+click or checkbox | Select multiple videos, workers, or segments |
+| `Delete` / `Backspace` | Delete the most recently selected group |
 | `X` | Exclude or restore the selected segment |
 | `Enter` | Create or update a segment |
 | `Ctrl+Z` / `Ctrl+Y` | Undo or redo |

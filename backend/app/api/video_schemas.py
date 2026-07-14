@@ -23,6 +23,12 @@ class VideoDeleteResponse(BaseModel):
     owned_copy_removed: bool
 
 
+class VideoRenamePayload(BaseModel):
+    """User-selected basename used for a project-wide video rename."""
+
+    prefix: str = Field(min_length=1, max_length=80)
+
+
 class JobControl(BaseModel):
     action: Literal["pause", "resume", "cancel", "retry", "prioritize"]
 

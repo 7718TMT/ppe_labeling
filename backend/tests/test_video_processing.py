@@ -68,6 +68,22 @@ def _create_video(
     )
 
 
+def test_project_video_rename_uses_prefix_sequence_and_keeps_extensions(tmp_path: Path) -> None:
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    service = VideoService(repository, storage)
+    project = service.create_project("Rename")
+    first = _create_video(repository, project["project_id"], "z-source")
+    second = _create_video(repository, project["project_id"], "a-source")
+    repository.update_video(second["video_id"], filename="a-source.avi")
+
+    renamed = service.rename_videos(project["project_id"], "fall_batch")
+
+    filenames = {video["video_id"]: video["filename"] for video in renamed}
+    assert filenames[first["video_id"]] == "fall_batch_00002.mp4"
+    assert filenames[second["video_id"]] == "fall_batch_00001.avi"
+
+
 def _model_values(artifact: Path) -> dict:
     return {
         "name": "Configured model",

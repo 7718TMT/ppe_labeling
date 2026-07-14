@@ -67,6 +67,7 @@ import {
   importVideos,
   mergeMultipleVideoTracks,
   processVideo,
+  renameVideos,
   saveVideoSegment,
   saveVideoWorkspaceState,
   setVideoSegmentInclusion,
@@ -100,6 +101,7 @@ import type {
 
 /** Right-sidebar tabs. Suggestions tab removed (#4). */
 type RightTab = 'annotate' | 'details';
+type SelectionScope = 'video' | 'worker' | 'segment';
 
 const ACTIVE_JOB_STATUSES = new Set(['queued', 'running', 'paused']);
 
@@ -171,11 +173,12 @@ export function VideoWorkspace() {
   const [active, setActive] = useState<VideoItem | null>(null);
   const [tracks, setTracks] = useState<VideoTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<number>();
-  /** Set of track IDs checked for multi-merge (#8). */
+  /** Set of worker IDs selected for merge or bulk deletion. */
   const [mergeTrackIds, setMergeTrackIds] = useState<Set<number>>(new Set());
   const [segments, setSegments] = useState<VideoSegment[]>([]);
   const [revision, setRevision] = useState(0);
   const [selectedSegment, setSelectedSegment] = useState<VideoSegment>();
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<Set<string>>(new Set());
   const [creatingSegment, setCreatingSegment] = useState(false);
   const [mergeSegmentId, setMergeSegmentId] = useState<string>();
   const [source, setSource] = useState<SuggestionSource>('Threshold');
@@ -205,8 +208,11 @@ export function VideoWorkspace() {
   const [saving, setSaving] = useState(false);
   const [autosaveFailedDraft, setAutosaveFailedDraft] = useState<string>();
   const [processingRequests, setProcessingRequests] = useState<Set<string>>(new Set());
-  const [pendingDelete, setPendingDelete] = useState<VideoItem>();
-  const [deletingId, setDeletingId] = useState<string>();
+  const [processingBatchVideoIds, setProcessingBatchVideoIds] = useState<Set<string>>(new Set());
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[]>([]);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [selectedVideoIds, setSelectedVideoIds] = useState<Set<string>>(new Set());
+  const [selectionScope, setSelectionScope] = useState<SelectionScope>();
   const [helpOpen, setHelpOpen] = useState(false);
   const [shortcutGuideVisible, setShortcutGuideVisible] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -229,7 +235,7 @@ export function VideoWorkspace() {
 
   useEffect(() => {
     function showShortcutGuide(event: KeyboardEvent) {
-      if (event.key === 'Alt' && !event.repeat && !helpOpen && !pendingDelete && !exportOpen) {
+      if (event.key === 'Alt' && !event.repeat && !helpOpen && pendingDeleteIds.length === 0 && !exportOpen) {
         setShortcutGuideVisible(true);
       }
     }
@@ -247,7 +253,7 @@ export function VideoWorkspace() {
       window.removeEventListener('keyup', hideShortcutGuide);
       window.removeEventListener('blur', clearShortcutGuide);
     };
-  }, [exportOpen, helpOpen, pendingDelete]);
+  }, [exportOpen, helpOpen, pendingDeleteIds.length]);
 
   useEffect(() => {
     setHistoryUnavailable(null);
@@ -278,6 +284,16 @@ export function VideoWorkspace() {
       return remembered === 'AI' && !options.model_available ? 'Off' : remembered;
     });
   }, [projectId]);
+
+  function beginProcessingBatch(videoIds: string[]) {
+    const activeVideoIds = new Set(
+      jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status) && job.video_id).map((job) => job.video_id as string),
+    );
+    setProcessingBatchVideoIds((current) => {
+      const currentHasActiveWork = [...current].some((videoId) => activeVideoIds.has(videoId));
+      return new Set(currentHasActiveWork ? [...current, ...videoIds] : videoIds);
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -539,6 +555,11 @@ export function VideoWorkspace() {
     deletingSegmentIdRef.current = deletingSegment.segment_id;
     setSegments((current) => current.filter((item) => item.segment_id !== deletingSegment.segment_id));
     setSelectedSegment(undefined);
+    setSelectedSegmentIds((current) => {
+      const next = new Set(current);
+      next.delete(deletingSegment.segment_id);
+      return next;
+    });
     setCreatingSegment(false);
     setMessage('Segment deleted.');
     savingRequestCountRef.current += 1;
@@ -562,6 +583,55 @@ export function VideoWorkspace() {
       }
       savingRequestCountRef.current = Math.max(0, savingRequestCountRef.current - 1);
       setSaving(savingRequestCountRef.current > 0);
+    }
+  }
+
+  async function removeSelectedSegments() {
+    if (!active) return;
+    const ids = selectedSegmentIds.size > 0
+      ? [...selectedSegmentIds]
+      : selectedSegment ? [selectedSegment.segment_id] : [];
+    if (ids.length === 0) return;
+    if (ids.length > 1 && !window.confirm(`Delete ${ids.length} selected segments?`)) return;
+    const videoId = active.video_id;
+    const deleted = segments.filter((segment) => ids.includes(segment.segment_id));
+    let nextRevision = revision;
+    setSegments((current) => current.filter((segment) => !ids.includes(segment.segment_id)));
+    setSelectedSegment(undefined);
+    setSelectedSegmentIds(new Set());
+    try {
+      for (const segment of deleted) {
+        const result = await deleteVideoSegment(projectId, videoId, segment.segment_id, nextRevision);
+        nextRevision = result.revision;
+      }
+      if (activeIdRef.current === videoId) {
+        setRevision(nextRevision);
+        setMessage(`${deleted.length} segment${deleted.length === 1 ? '' : 's'} deleted.`);
+        scheduleFeatureExtraction();
+      }
+    } catch (reason) {
+      if (activeIdRef.current === videoId) {
+        await refreshSegments();
+        setError(`Could not delete the selected segments. ${readableError(reason)}`);
+      }
+    }
+  }
+
+  async function removeSelectedTracks(trackIds?: number[]) {
+    if (!active) return;
+    const ids = trackIds ?? (mergeTrackIds.size > 0 ? [...mergeTrackIds] : selectedTrack === undefined ? [] : [selectedTrack]);
+    if (ids.length === 0) return;
+    if (!window.confirm(`Delete ${ids.length} worker${ids.length === 1 ? '' : 's'} and all of their segments?`)) return;
+    try {
+      await Promise.all(ids.map((trackId) => deleteVideoTrack(projectId, active.video_id, trackId)));
+      setMergeTrackIds(new Set());
+      setSelectedTrack(undefined);
+      setSelectedSegment(undefined);
+      setSelectedSegmentIds(new Set());
+      await reloadActive();
+      setMessage(`${ids.length} worker${ids.length === 1 ? '' : 's'} deleted.`);
+    } catch (reason) {
+      setError(`Could not delete the selected workers. ${readableError(reason)}`);
     }
   }
 
@@ -710,6 +780,7 @@ export function VideoWorkspace() {
   }
 
   function chooseSegment(segment: VideoSegment) {
+    setSelectionScope('segment');
     if (selectedSegment?.segment_id === segment.segment_id) {
       setSelectedSegment(undefined);
       setCreatingSegment(false);
@@ -728,6 +799,7 @@ export function VideoWorkspace() {
   }
 
   function chooseTrack(trackId: number) {
+    setSelectionScope('worker');
     setSelectedTrack(trackId);
     setSelectedSegment(undefined);
     setCreatingSegment(false);
@@ -765,6 +837,7 @@ export function VideoWorkspace() {
         ? await processVideo(projectId, videoId, mode, true)
         : await processVideo(projectId, videoId, mode);
       setJobs((current) => upsertJobRows(current, rows));
+      beginProcessingBatch([videoId]);
       if (activeIdRef.current === videoId) {
         setMessage(`${source} suggestion generation started.`);
       }
@@ -775,12 +848,26 @@ export function VideoWorkspace() {
     }
   }
 
-  async function confirmDeleteVideo() {
-    if (!pendingDelete || deletingId) return;
-    const target = pendingDelete;
-    const targetIndex = videos.findIndex((item) => item.video_id === target.video_id);
-    const deletingActive = activeIdRef.current === target.video_id;
-    setDeletingId(target.video_id);
+  function toggleVideoSelection(video: VideoItem) {
+    setSelectionScope('video');
+    setSelectedVideoIds((current) => {
+      const next = new Set(current);
+      if (next.has(video.video_id)) next.delete(video.video_id); else next.add(video.video_id);
+      return next;
+    });
+  }
+
+  function requestVideoDelete(video: VideoItem) {
+    setPendingDeleteIds([video.video_id]);
+  }
+
+  async function confirmDeleteVideos() {
+    if (pendingDeleteIds.length === 0 || deletingIds.size > 0) return;
+    const targets = videos.filter((video) => pendingDeleteIds.includes(video.video_id));
+    const activeTargetIndex = targets.findIndex((video) => video.video_id === activeIdRef.current);
+    const deletingActive = activeTargetIndex >= 0;
+    const activeIndex = videos.findIndex((video) => video.video_id === activeIdRef.current);
+    setDeletingIds(new Set(targets.map((video) => video.video_id)));
     setError('');
     if (deletingActive) {
       player.current?.pause();
@@ -790,19 +877,21 @@ export function VideoWorkspace() {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
     try {
-      await deleteImportedVideo(projectId, target.video_id);
-      const remaining = videos.filter((item) => item.video_id !== target.video_id);
-      const next = remaining[Math.min(targetIndex, Math.max(0, remaining.length - 1))] ?? null;
+      await Promise.all(targets.map((video) => deleteImportedVideo(projectId, video.video_id)));
+      const removed = new Set(targets.map((video) => video.video_id));
+      const remaining = videos.filter((item) => !removed.has(item.video_id));
+      const next = remaining[Math.min(activeIndex, Math.max(0, remaining.length - 1))] ?? null;
       setVideos(remaining);
-      setJobs((current) => current.filter((job) => job.video_id !== target.video_id));
+      setJobs((current) => current.filter((job) => !job.video_id || !removed.has(job.video_id)));
       if (deletingActive) setActive(next);
-      setPendingDelete(undefined);
-      setMessage(`${target.filename} was deleted.`);
+      setSelectedVideoIds(new Set());
+      setPendingDeleteIds([]);
+      setMessage(`${targets.length} video${targets.length === 1 ? '' : 's'} deleted.`);
     } catch (reason) {
-      if (deletingActive) setActive(target);
-      setError(`Could not delete ${target.filename}. ${readableError(reason)}`);
+      if (deletingActive) setActive(videos[activeIndex] ?? null);
+      setError(`Could not delete the selected videos. ${readableError(reason)}`);
     } finally {
-      setDeletingId(undefined);
+      setDeletingIds(new Set());
     }
   }
 
@@ -817,11 +906,24 @@ export function VideoWorkspace() {
         return [...current, ...rows.filter((item) => !existing.has(item.video_id))];
       });
       if (!active && rows[0]) setActive(rows[0]);
+      beginProcessingBatch(rows.map((video) => video.video_id));
       setMessage(`${rows.length} video${rows.length === 1 ? '' : 's'} imported and queued for processing.`);
       await refreshShell();
     } catch (reason) {
       setError(`Import failed. ${readableError(reason)}`);
     }
+  }
+
+  async function handleRenameVideos(prefix: string) {
+    if (!window.confirm(`Rename all ${videos.length} videos to ${prefix}_00001, ${prefix}_00002, and so on?`)) {
+      return;
+    }
+    const rows = await renameVideos(projectId, prefix);
+    setVideos(rows);
+    setActive((current) => current
+      ? rows.find((video) => video.video_id === current.video_id) ?? null
+      : null);
+    setMessage(`${rows.length} videos renamed with the prefix "${prefix}".`);
   }
 
   /**
@@ -956,7 +1058,7 @@ export function VideoWorkspace() {
 
   useEffect(() => {
     function key(event: KeyboardEvent) {
-      if (helpOpen || pendingDelete) return;
+      if (helpOpen || pendingDeleteIds.length > 0) return;
       const target = event.target;
       const editingText = target instanceof HTMLElement && (
         target.isContentEditable
@@ -972,9 +1074,19 @@ export function VideoWorkspace() {
         setMergeSegmentId(undefined);
         return;
       }
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedSegment) {
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectionScope === 'segment' && (selectedSegmentIds.size > 0 || selectedSegment)) {
         event.preventDefault();
-        void removeSegment();
+        void removeSelectedSegments();
+        return;
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectionScope === 'worker' && (mergeTrackIds.size > 0 || selectedTrack !== undefined)) {
+        event.preventDefault();
+        void removeSelectedTracks();
+        return;
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectionScope === 'video' && selectedVideoIds.size > 0) {
+        event.preventDefault();
+        setPendingDeleteIds([...selectedVideoIds]);
         return;
       }
       if (target instanceof HTMLElement && target.closest('button, a')) return;
@@ -1006,6 +1118,13 @@ export function VideoWorkspace() {
   const activeTrack = tracks.find((item) => item.track_id === selectedTrack);
   const selectedVideoIndex = videos.findIndex((item) => item.video_id === active?.video_id);
   const activeSegments = segments.filter((item) => selectedTrack === undefined || item.track_id === selectedTrack);
+  const activeProcessingVideoIds = new Set(
+    jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status) && job.video_id).map((job) => job.video_id as string),
+  );
+  const processingBatchIds = processingBatchVideoIds.size > 0
+    ? processingBatchVideoIds : activeProcessingVideoIds;
+  const processingBatchRemaining = [...processingBatchIds]
+    .filter((videoId) => activeProcessingVideoIds.has(videoId)).length;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1081,13 +1200,19 @@ export function VideoWorkspace() {
               videos={videos}
               jobs={jobs}
               selectedId={active?.video_id}
-              deletingId={deletingId}
+              selectedIds={selectedVideoIds}
+              deletingIds={deletingIds}
               onSelect={setActive}
+              onToggleSelection={toggleVideoSelection}
               onImport={(files) => void handleImport(files)}
-              onDelete={setPendingDelete}
+              onRename={handleRenameVideos}
+              onDelete={requestVideoDelete}
+              onDeleteSelected={() => setPendingDeleteIds([...selectedVideoIds])}
             />
             <ProcessingQueue
               jobs={jobs}
+              remainingVideos={processingBatchRemaining}
+              totalVideos={processingBatchIds.size}
               onControl={(job, action) => {
                 void controlVideoJob(projectId, job.job_id, action)
                   .then(refreshShell)
@@ -1191,6 +1316,15 @@ export function VideoWorkspace() {
                           <Check size={13} />Merge {mergeTrackIds.size}
                         </button>
                       )}
+                      {mergeTrackIds.size > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => void removeSelectedTracks()}
+                          className="h-7 px-2 border border-error/50 text-error rounded font-label text-label-sm"
+                        >
+                          Delete selected ({mergeTrackIds.size})
+                        </button>
+                      )}
                     </div>
                     <div className="space-y-1">
                       {tracks.map((track) => {
@@ -1209,6 +1343,7 @@ export function VideoWorkspace() {
                                   aria-label={`Select Worker ${track.track_id} for merge`}
                                   checked={isChecked}
                                   onChange={(e) => {
+                                    setSelectionScope('worker');
                                     setMergeTrackIds((prev) => {
                                       const next = new Set(prev);
                                       if (e.target.checked) next.add(track.track_id); else next.delete(track.track_id);
@@ -1220,7 +1355,18 @@ export function VideoWorkspace() {
                               )}
                               <button
                                 type="button"
-                                onClick={() => chooseTrack(track.track_id)}
+                                onClick={(event) => {
+                                  if (event.ctrlKey || event.metaKey) {
+                                    setSelectionScope('worker');
+                                    setMergeTrackIds((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(track.track_id)) next.delete(track.track_id); else next.add(track.track_id);
+                                      return next;
+                                    });
+                                    return;
+                                  }
+                                  chooseTrack(track.track_id);
+                                }}
                                 className="flex-1 text-left min-w-0"
                               >
                                 <div className="flex justify-between">
@@ -1250,11 +1396,9 @@ export function VideoWorkspace() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (window.confirm('Delete this worker and all its segments?')) {
-                                      deleteVideoTrack(projectId, active.video_id, track.track_id)
-                                        .then(() => reloadActive())
-                                        .catch(e => setError(readableError(e)));
-                                    }
+                                    setSelectionScope('worker');
+                                    setMergeTrackIds(new Set([track.track_id]));
+                                    void removeSelectedTracks([track.track_id]);
                                   }}
                                   className="panel-button flex-1 text-error border-error/50 hover:bg-error/10 hover:border-error"
                                 >
@@ -1275,15 +1419,50 @@ export function VideoWorkspace() {
                   {/* ── Segment editor ── */}
                   {activeTrack && (
                     <section className="border-t border-outline-variant pt-3">
-                      <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">Segments ({activeSegments.length})</p>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="font-label text-label-caps uppercase text-on-surface-variant">Segments ({activeSegments.length})</p>
+                        {selectedSegmentIds.size > 0 && (
+                          <button type="button" onClick={() => void removeSelectedSegments()} className="h-7 px-2 border border-error/50 text-error rounded font-label text-label-sm">
+                            Delete selected ({selectedSegmentIds.size})
+                          </button>
+                        )}
+                      </div>
                       <div className="space-y-1 max-h-48 overflow-y-auto">
-                        {activeSegments.map((seg) => (
+                        {activeSegments.map((seg) => {
+                          const isMultiSelected = selectedSegmentIds.has(seg.segment_id);
+                          return (
                           <div key={seg.segment_id} className={`w-full rounded text-left border overflow-hidden ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>
-                            <button type="button" onClick={() => chooseSegment(seg)} className="w-full p-2 text-label-sm flex items-center gap-2">
+                            <div className="w-full p-2 text-label-sm flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${seg.label} segment ${seg.start_frame} to ${seg.end_frame}`}
+                                checked={isMultiSelected}
+                                onChange={() => {
+                                  setSelectionScope('segment');
+                                  setSelectedSegmentIds((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(seg.segment_id)) next.delete(seg.segment_id); else next.add(seg.segment_id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <button type="button" onClick={(event) => {
+                                if (event.ctrlKey || event.metaKey) {
+                                  setSelectionScope('segment');
+                                  setSelectedSegmentIds((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(seg.segment_id)) next.delete(seg.segment_id); else next.add(seg.segment_id);
+                                    return next;
+                                  });
+                                  return;
+                                }
+                                chooseSegment(seg);
+                              }} className="flex-1 text-left flex items-center gap-2">
                               <span className="w-2 h-2 rounded-full shrink-0" style={{ background: LABEL_COLORS[seg.label] }} />
                               <span className="capitalize font-medium">{seg.label}</span>
                               <span className="text-on-surface-variant ml-auto">{seg.start_frame}–{seg.end_frame}</span>
-                            </button>
+                              </button>
+                            </div>
                             {selectedSegment?.segment_id === seg.segment_id && (
                               <div className="px-2 pb-2 flex gap-2">
                                 <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => {
@@ -1297,7 +1476,8 @@ export function VideoWorkspace() {
                               </div>
                             )}
                           </div>
-                        ))}
+                        );
+                        })}
                         <button type="button" onClick={chooseCreateSegment} className={`w-full rounded border border-dashed p-2 text-left text-label-sm font-medium ${creatingSegment ? 'border-primary bg-primary/10 text-primary' : 'border-outline-variant text-on-surface-variant hover:border-primary/50'}`}>
                           + Create Segment
                         </button>
@@ -1435,13 +1615,13 @@ export function VideoWorkspace() {
       )}
 
       {/* Delete confirmation */}
-      {pendingDelete && (
-        <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-4" onMouseDown={() => !deletingId && setPendingDelete(undefined)}>
+      {pendingDeleteIds.length > 0 && (
+        <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-4" onMouseDown={() => deletingIds.size === 0 && setPendingDeleteIds([])}>
           <section role="alertdialog" aria-modal="true" aria-labelledby="delete-video-title" onMouseDown={(e) => e.stopPropagation()} className="w-full max-w-md bg-surface-container-high border border-outline-variant rounded-lg p-5 shadow-2xl">
-            <div className="flex gap-3"><AlertTriangle className="text-error shrink-0" size={22} /><div><h2 id="delete-video-title" className="font-headline-sm">Delete {pendingDelete.filename}?</h2><p className="text-body-md text-on-surface-variant mt-2">This removes the managed copy, annotations, jobs, thumbnail, and derived pose data.</p></div></div>
+            <div className="flex gap-3"><AlertTriangle className="text-error shrink-0" size={22} /><div><h2 id="delete-video-title" className="font-headline-sm">{pendingDeleteIds.length === 1 ? `Delete ${videos.find((video) => video.video_id === pendingDeleteIds[0])?.filename ?? 'video'}?` : `Delete ${pendingDeleteIds.length} videos?`}</h2><p className="text-body-md text-on-surface-variant mt-2">This removes the managed copy, annotations, jobs, thumbnail, and derived pose data.</p></div></div>
             <div className="flex justify-end gap-2 mt-5">
-              <button type="button" disabled={Boolean(deletingId)} onClick={() => setPendingDelete(undefined)} className="h-8 px-3 border border-outline-variant rounded disabled:opacity-40">Cancel</button>
-              <button type="button" disabled={Boolean(deletingId)} onClick={() => void confirmDeleteVideo()} className="h-8 px-3 bg-error-container text-on-error-container rounded flex items-center gap-2 disabled:opacity-40">{deletingId && <Loader2 size={14} className="animate-spin" />}Delete video</button>
+              <button type="button" disabled={deletingIds.size > 0} onClick={() => setPendingDeleteIds([])} className="h-8 px-3 border border-outline-variant rounded disabled:opacity-40">Cancel</button>
+              <button type="button" disabled={deletingIds.size > 0} onClick={() => void confirmDeleteVideos()} className="h-8 px-3 bg-error-container text-on-error-container rounded flex items-center gap-2 disabled:opacity-40">{deletingIds.size > 0 && <Loader2 size={14} className="animate-spin" />}Delete video{pendingDeleteIds.length === 1 ? '' : 's'}</button>
             </div>
           </section>
         </div>

@@ -641,7 +641,9 @@ T             select threshold generation
 M             select model generation
 S             turn automatic suggestion generation off
 Esc           leave selected segment and return to full-video mode
-Delete        delete selected segment
+Ctrl/Cmd+click select multiple videos, workers, or segments
+Delete        delete the most recently selected group
+Backspace     delete the most recently selected group
 X             exclude selected segment/window
 Enter         save
 Ctrl+Z        undo

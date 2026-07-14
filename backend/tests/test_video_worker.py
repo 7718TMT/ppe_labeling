@@ -35,3 +35,20 @@ def test_pause_resume_cancel_retry_and_priority_are_persistent(tmp_path: Path) -
     assert service.control_job(job["job_id"], "cancel")["status"] == "cancelled"
     retried = service.control_job(job["job_id"], "retry")
     assert retried["status"] == "queued" and retried["retry_count"] == 1
+
+
+def test_pipeline_successor_runs_before_another_queued_video(tmp_path: Path) -> None:
+    """Keep a video's dependent stages together for prompt readiness."""
+
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    project = VideoService(repository, VideoStorageRepository(tmp_path / "storage")).create_project("Queue")
+    first = repository.enqueue_job(project["project_id"], "first", priority=100)
+    repository.enqueue_job(project["project_id"], "other", priority=100)
+
+    claimed = repository.claim_job("worker")
+    assert claimed and claimed["job_id"] == first["job_id"]
+    _completed, successor = repository.complete_job_and_enqueue_next(first["job_id"], "second")
+
+    assert successor and successor["priority"] == 101
+    next_claimed = repository.claim_job("worker")
+    assert next_claimed and next_claimed["job_id"] == successor["job_id"]

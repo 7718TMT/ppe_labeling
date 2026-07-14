@@ -35,6 +35,7 @@ from backend.app.api.video_schemas import (
     TrackMergePayload,
     TrackSplitPayload,
     VideoDeleteResponse,
+    VideoRenamePayload,
     WindowReviewPayload,
     WorkspaceStatePayload,
 )
@@ -135,6 +136,17 @@ def delete_video(
     service: VideoService = Depends(get_video_service),
 ) -> dict[str, Any]:
     return service.delete_video(project_id, video_id)
+
+
+@router.post("/{project_id}/videos/rename")
+def rename_videos(
+    project_id: str,
+    payload: VideoRenamePayload,
+    service: VideoService = Depends(get_video_service),
+) -> list[dict[str, Any]]:
+    """Rename every video display name in a project with one prefix."""
+
+    return service.rename_videos(project_id, payload.prefix)
 
 
 @router.get("/{project_id}/videos/{video_id}/overlay")

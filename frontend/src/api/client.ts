@@ -137,6 +137,10 @@ export async function deleteVideo(projectId: string, videoId: string): Promise<v
   await api.delete(`/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}`);
 }
 
+export async function renameVideos(projectId: string, prefix: string): Promise<VideoItem[]> {
+  return (await api.post(`/video-projects/${encodeURIComponent(projectId)}/videos/rename`, { prefix })).data;
+}
+
 export async function processVideo(
   projectId: string,
   videoId: string,

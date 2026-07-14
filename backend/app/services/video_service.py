@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -145,6 +146,25 @@ class VideoService:
             "deleted": True,
             "owned_copy_removed": True,
         }
+
+    def rename_videos(self, project_id: str, prefix: str) -> list[dict[str, Any]]:
+        """Rename every displayed video name using a stable numeric sequence."""
+
+        clean_prefix = prefix.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", clean_prefix):
+            raise VideoValidationError(
+                "Prefix must start with a letter or number and use only letters, numbers, hyphens, or underscores"
+            )
+        videos = sorted(
+            self.repository.list_videos(project_id),
+            key=lambda video: str(video["filename"]).casefold(),
+        )
+        filename_map = {
+            str(video["video_id"]): f"{clean_prefix}_{index:05d}{Path(str(video['filename'])).suffix.lower()}"
+            for index, video in enumerate(videos, start=1)
+        }
+        self.repository.rename_videos(project_id, filename_map)
+        return self.repository.list_videos(project_id)
 
     def overlay_range(self, project_id: str, video_id: str, start: int, end: int) -> list[dict[str, Any]]:
         video = self._project_video(project_id, video_id)

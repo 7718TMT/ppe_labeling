@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Film, Loader2, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Film, Loader2, Pencil, Trash2, Upload } from 'lucide-react';
 
 import { videoThumbnailUrl } from '../../api/client';
 import type { ProcessingJob, VideoItem } from '../../types';
@@ -9,10 +9,14 @@ interface Props {
   videos: VideoItem[];
   jobs?: ProcessingJob[];
   selectedId?: string;
-  deletingId?: string;
+  selectedIds?: Set<string>;
+  deletingIds?: Set<string>;
   onSelect: (video: VideoItem) => void;
+  onToggleSelection?: (video: VideoItem) => void;
   onImport: (files: File[]) => void;
+  onRename?: (prefix: string) => Promise<void>;
   onDelete?: (video: VideoItem) => void;
+  onDeleteSelected?: () => void;
 }
 
 const ROW_HEIGHT = 106;
@@ -44,10 +48,14 @@ export function VideoBrowser({
   videos,
   jobs = [],
   selectedId,
-  deletingId,
+  selectedIds = new Set(),
+  deletingIds = new Set(),
   onSelect,
+  onToggleSelection,
   onImport,
+  onRename,
   onDelete,
+  onDeleteSelected,
 }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const scrollViewport = useRef<HTMLDivElement>(null);
@@ -57,6 +65,10 @@ export function VideoBrowser({
   const [orderDirection, setOrderDirection] = useState<OrderDirection>('desc');
   const [scrollTop, setScrollTop] = useState(0);
   const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renamePrefix, setRenamePrefix] = useState('video');
+  const [renaming, setRenaming] = useState(false);
+  const [renameError, setRenameError] = useState('');
   function resetScroll() {
     setScrollTop(0);
     if (scrollViewport.current) scrollViewport.current.scrollTop = 0;
@@ -103,13 +115,24 @@ export function VideoBrowser({
       }}
     >
       <div className="p-3 border-b border-outline-variant space-y-2">
-        <button
-          type="button"
-          onClick={() => input.current?.click()}
-          className="w-full h-8 bg-primary-container text-on-primary-container rounded font-label text-label-sm font-bold flex items-center justify-center gap-2"
-        >
-          <Upload size={15} />Import videos
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="h-8 bg-primary-container text-on-primary-container rounded font-label text-label-sm font-bold flex items-center justify-center gap-2"
+          >
+            <Upload size={15} />Import videos
+          </button>
+          {onRename && (
+            <button
+              type="button"
+              onClick={() => { setRenameOpen((open) => !open); setRenameError(''); }}
+              className="h-8 border border-outline-variant rounded font-label text-label-sm flex items-center justify-center gap-2 hover:border-primary"
+            >
+              <Pencil size={14} />Rename
+            </button>
+          )}
+        </div>
         <input
           ref={input}
           className="hidden"
@@ -121,6 +144,41 @@ export function VideoBrowser({
             event.target.value = '';
           }}
         />
+        {renameOpen && onRename && (
+          <form
+            className="rounded border border-outline-variant bg-surface-container-low p-2 space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const prefix = renamePrefix.trim();
+              if (!prefix || renaming) return;
+              setRenaming(true);
+              setRenameError('');
+              void onRename(prefix).then(() => setRenameOpen(false)).catch((reason: unknown) => {
+                setRenameError(reason instanceof Error ? reason.message : 'Could not rename videos.');
+              }).finally(() => setRenaming(false));
+            }}
+          >
+            <label className="block font-label text-[10px] text-on-surface-variant">
+              Video name prefix
+              <input aria-label="Video name prefix" value={renamePrefix} onChange={(event) => setRenamePrefix(event.target.value)} className="editor-input mt-1" placeholder="e.g. fall-test" />
+            </label>
+            <p className="text-[10px] text-on-surface-variant">Names become {renamePrefix.trim() || 'prefix'}_00001, preserving extensions.</p>
+            {renameError && <p className="text-[10px] text-error">{renameError}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRenameOpen(false)} className="h-7 px-2 border border-outline-variant rounded text-label-sm">Cancel</button>
+              <button type="submit" disabled={renaming || !renamePrefix.trim()} className="h-7 px-2 bg-primary-container text-on-primary-container rounded text-label-sm disabled:opacity-40">{renaming ? 'Renaming…' : 'Rename all'}</button>
+            </div>
+          </form>
+        )}
+        {selectedIds.size > 0 && onDeleteSelected && (
+          <button
+            type="button"
+            onClick={onDeleteSelected}
+            className="w-full h-8 border border-error/50 text-error rounded font-label text-label-sm hover:bg-error/10"
+          >
+            Delete selected ({selectedIds.size})
+          </button>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
             System processing
@@ -189,9 +247,10 @@ export function VideoBrowser({
         <div style={{ height: filtered.length * ROW_HEIGHT, position: 'relative' }}>
           {visible.map((video, offset) => {
             const selected = selectedId === video.video_id;
+            const multiSelected = selectedIds.has(video.video_id);
             const processing = userVideoStatus(video, jobs);
             const annotation = userAnnotationStatus(video);
-            const deleting = deletingId === video.video_id;
+            const deleting = deletingIds.has(video.video_id);
             return (
               <div
                 key={video.video_id}
@@ -199,7 +258,14 @@ export function VideoBrowser({
                 tabIndex={0}
                 aria-label={`Open ${video.filename}`}
                 aria-current={selected ? 'true' : undefined}
-                onClick={() => !deleting && onSelect(video)}
+                onClick={(event) => {
+                  if (deleting) return;
+                  if ((event.ctrlKey || event.metaKey) && onToggleSelection) {
+                    onToggleSelection(video);
+                    return;
+                  }
+                  onSelect(video);
+                }}
                 onKeyDown={(event) => {
                   if (event.target !== event.currentTarget) return;
                   if (!deleting && ['Enter', ' '].includes(event.key)) {
@@ -208,7 +274,7 @@ export function VideoBrowser({
                   }
                 }}
                 className={`group absolute left-2 right-2 h-[98px] rounded border p-2 cursor-pointer transition-colors ${
-                  selected
+                  selected || multiSelected
                     ? 'border-primary bg-primary/10 ring-1 ring-primary/50'
                     : 'border-outline-variant bg-surface-container-lowest hover:border-on-surface-variant hover:bg-surface-container-high'
                 } ${video.is_approved ? 'border-l-4 border-l-emerald-500' : ''} ${deleting ? 'opacity-50 pointer-events-none' : ''}`}
@@ -230,6 +296,16 @@ export function VideoBrowser({
                   </div>
                   <div className="min-w-0 flex-1 flex flex-col">
                     <div className="flex items-start gap-1">
+                      {onToggleSelection && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${video.filename}`}
+                          checked={multiSelected}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={() => onToggleSelection(video)}
+                          className="mt-1 shrink-0"
+                        />
+                      )}
                       <span className="truncate text-body-md font-medium flex-1" title={video.filename}>{video.filename}</span>
                       {onDelete && (
                         <button

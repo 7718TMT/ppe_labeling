@@ -11,6 +11,7 @@ vi.mock('../api/client', () => ({
   controlVideoJob: vi.fn(),
   deleteVideo: vi.fn(),
   deleteVideoSegment: vi.fn(),
+  deleteVideoTrack: vi.fn(),
   extendVideoSegment: vi.fn(),
   getProcessingOptions: vi.fn(),
   getFeatures: vi.fn(),
@@ -544,6 +545,20 @@ describe('VideoWorkspace', () => {
     await waitFor(() => expect(screen.queryByText('shift-a.mp4')).not.toBeInTheDocument());
     expect(screen.getByLabelText('Open shift-b.mp4')).toHaveAttribute('aria-current', 'true');
     expect(await screen.findByText('Worker 2')).toBeInTheDocument();
+  });
+
+  it('deletes multiple checked videos through one confirmation', async () => {
+    vi.mocked(api.deleteVideo).mockResolvedValue(undefined);
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select shift-a.mp4' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select shift-b.mp4' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected (2)' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Delete 2 videos?');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete videos' }));
+    await waitFor(() => expect(api.deleteVideo).toHaveBeenCalledTimes(2));
+    expect(api.deleteVideo).toHaveBeenCalledWith('p1', 'v1');
+    expect(api.deleteVideo).toHaveBeenCalledWith('p1', 'v2');
   });
 
   it('ignores late active-video responses during repeated switching', async () => {

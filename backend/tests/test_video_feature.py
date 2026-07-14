@@ -93,6 +93,34 @@ def test_feature_cache_and_threshold_suggestions_are_separate_from_annotations(t
     assert repository.get_project(project["project_id"])["active_threshold_profile_id"]
 
 
+def test_threshold_falling_state_uses_fall_profile_exit_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A falling label must not be used as a nonexistent profile key."""
+
+    repository, storage, _project, video = setup_feature_video(tmp_path)
+    service = VideoFeatureService(repository, storage)
+    raw = {"avg_keypoint_confidence": 0.9, "valid_frame_ratio": 1.0}
+    entering = {
+        "fall_transition_score": 0.9, "fall_state_score": 0.7,
+        "final_lying_score_norm": 0.0, "running_score": 0.0,
+        "fall_inhibition_score": 0.0,
+    }
+    exiting = {**entering, "fall_transition_score": 0.0, "fall_state_score": 0.0}
+    records = [
+        {"track_id": 1, "start_frame": index * 12, "end_frame": index * 12 + 11,
+         "raw": raw, "transformed": entering if index < 2 else exiting,
+         "quality": {"status": "good"}}
+        for index in range(3)
+    ]
+    monkeypatch.setattr(service, "feature_range", lambda _video_id: records)
+
+    suggestions = service.generate_threshold_suggestions(video["video_id"])
+
+    assert suggestions
+    assert suggestions[0]["suggested_label"] == "falling"
+
+
 def test_pending_suggestions_become_editable_ground_truth_once(tmp_path: Path) -> None:
     repository, storage, project, video = setup_feature_video(tmp_path)
     profile_id = project["active_threshold_profile_id"]

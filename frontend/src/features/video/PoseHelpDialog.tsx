@@ -71,9 +71,11 @@ const HELP_SECTIONS: HelpSection[] = [
     ],
   },
   {
-    title: 'Delete a video',
+    title: 'Select and delete items',
     content: [
-      'Use the trash button on a video card. Confirm the named video before its project-owned copy, annotations, jobs, and derived data are removed.',
+      'Use a checkbox or Ctrl/Cmd-click to select multiple video, worker, or segment cards. Checked segment cards remain visually unchanged; the border indicates only the segment currently open for editing.',
+      'Use Delete selected, or press Delete/Backspace, to remove the most recently selected group. Deleting workers also removes their segments.',
+      'Use the trash button on a video card for one video. Video deletion always asks for confirmation before removing its project-owned copy, annotations, jobs, and derived data.',
     ],
   },
 ];

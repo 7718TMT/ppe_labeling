@@ -585,6 +585,18 @@ class VideoRepository:
             )
         return self._decode(row) or {}
 
+    def rename_videos(self, project_id: str, filename_map: dict[str, str]) -> None:
+        """Atomically update display filenames for videos in one project."""
+
+        with self.connection() as connection, connection:
+            for video_id, filename in filename_map.items():
+                updated = connection.execute(
+                    "UPDATE videos SET filename=?, updated_at=CURRENT_TIMESTAMP WHERE project_id=? AND video_id=?",
+                    (filename, project_id, video_id),
+                )
+                if updated.rowcount != 1:
+                    raise VideoResourceNotFoundError("Video not found in project")
+
     def replace_frame_mapping(self, video_id: str, mapping: Sequence[tuple[int, int, float]]) -> None:
         with self.connection() as connection, connection:
             connection.execute("DELETE FROM canonical_frame_mappings WHERE video_id=?", (video_id,))
@@ -803,7 +815,11 @@ class VideoRepository:
                         row["project_id"],
                         row["video_id"],
                         next_stage,
-                        max(0, int(row["priority"]) - 1),
+                        # Keep one video's dependent stages ahead of other
+                        # queued videos. This lets a completed pipeline become
+                        # annotation-ready immediately instead of processing
+                        # every video one stage at a time.
+                        int(row["priority"]) + 1,
                         row["target_mode"],
                         row["external_model_id"],
                     ),

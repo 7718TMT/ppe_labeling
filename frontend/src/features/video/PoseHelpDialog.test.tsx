@@ -13,14 +13,14 @@ describe('PoseHelpDialog', () => {
     expect(screen.getByText(/Space plays or pauses/)).toBeInTheDocument();
     expect(screen.getByText('Video status filters')).toBeInTheDocument();
     expect(screen.getByText(/The two filters work together/)).toBeInTheDocument();
-    expect(screen.getByText('Delete a video')).toBeInTheDocument();
+    expect(screen.getByText('Select and delete items')).toBeInTheDocument();
   });
 
   it('filters topics and closes with Escape', () => {
     const close = vi.fn();
     render(<PoseHelpDialog open onClose={close} />);
     fireEvent.change(screen.getByPlaceholderText(/Search workflow/), { target: { value: 'trash' } });
-    expect(screen.getByText('Delete a video')).toBeInTheDocument();
+    expect(screen.getByText('Select and delete items')).toBeInTheDocument();
     expect(screen.queryByText('Running')).not.toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(close).toHaveBeenCalledOnce();

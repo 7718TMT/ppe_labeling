@@ -176,13 +176,16 @@ class VideoFeatureService:
             records.sort(key=lambda item: item["start_frame"])
             current_state = None
             consecutive_exit = 0
+            state_config = lambda state: profile["fall" if state == "falling" else state]
             for index, record in enumerate(records):
                 raw, score = record["raw"], record["transformed"]
+                # Human label ``falling`` maps to the threshold profile's
+                # concise ``fall`` section.
                 quality_ok = raw["avg_keypoint_confidence"] >= profile["quality"]["min_average_keypoint_confidence"] and raw["valid_frame_ratio"] >= profile["quality"]["min_valid_frame_ratio"]
                 if not quality_ok:
                     if current_state:
                         consecutive_exit += 1
-                        if consecutive_exit >= profile[current_state].get("exit_consecutive", 3):
+                        if consecutive_exit >= state_config(current_state).get("exit_consecutive", 3):
                             current_state = None
                     continue
 
@@ -219,7 +222,7 @@ class VideoFeatureService:
 
                     if is_exit:
                         consecutive_exit += 1
-                        if consecutive_exit >= profile[current_state].get("exit_consecutive", 3):
+                        if consecutive_exit >= state_config(current_state).get("exit_consecutive", 3):
                             current_state = None
                     else:
                         consecutive_exit = 0
