@@ -11,11 +11,7 @@
  */
 
 import { useRef, useState } from 'react';
-import type {
-  GeneratedWindow,
-  HumanVideoLabel,
-  VideoSegment,
-} from '../../types';
+import type { HumanVideoLabel, VideoSegment } from '../../types';
 
 /** Hex color per label class matching the design palette. */
 const LABEL_COLORS: Record<HumanVideoLabel, string> = {
@@ -36,6 +32,9 @@ interface DragState {
   originalEnd: number;
   start: number;
   end: number;
+  /** Inclusive bounds that keep this segment clear of adjacent segments. */
+  minimumStart: number;
+  maximumEnd: number;
   frameCount: number;
   containerWidth: number;
 }
@@ -100,6 +99,12 @@ export function VideoTimeline({
     const container = containerRef.current;
     if (!container || !onSegmentResize) return;
     const rect = container.getBoundingClientRect();
+    const adjacent = segments
+      .filter((item) => item.track_id === segment.track_id && item.segment_id !== segment.segment_id)
+      .sort((left, right) => left.start_frame - right.start_frame);
+    const preceding = adjacent.filter((item) => item.end_frame < segment.start_frame);
+    const previous = preceding[preceding.length - 1];
+    const next = adjacent.find((item) => item.start_frame > segment.end_frame);
     dragRef.current = {
       segmentId: segment.segment_id,
       edge,
@@ -111,6 +116,8 @@ export function VideoTimeline({
       originalEnd: segment.end_frame,
       start: segment.start_frame,
       end: segment.end_frame,
+      minimumStart: Math.max(0, (previous?.end_frame ?? -1) + 1),
+      maximumEnd: Math.min(frameCount - 1, (next?.start_frame ?? frameCount) - 1),
     };
     const target = event.target as Element;
     if (typeof target.setPointerCapture === 'function') {
@@ -126,9 +133,9 @@ export function VideoTimeline({
     const deltaFrames = Math.round(deltaX * framesPerPx);
     const newFrame = Math.max(0, Math.min(drag.frameCount - 1, drag.originFrame + deltaFrames));
     if (drag.edge === 'start') {
-      drag.start = Math.min(newFrame, drag.originalEnd - 1);
+      drag.start = Math.max(drag.minimumStart, Math.min(newFrame, drag.originalEnd - 1));
     } else {
-      drag.end = Math.max(newFrame, drag.originalStart + 1);
+      drag.end = Math.min(drag.maximumEnd, Math.max(newFrame, drag.originalStart + 1));
     }
     setDragBounds({ segmentId: drag.segmentId, start: drag.start, end: drag.end });
   }

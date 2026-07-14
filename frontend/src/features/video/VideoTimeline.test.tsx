@@ -60,4 +60,29 @@ describe('VideoTimeline', () => {
     fireEvent.pointerUp(handle, { clientX: 1, pointerId: 1 });
     expect(onSegmentResize).toHaveBeenCalledTimes(1);
   });
+
+  it('stops a dragged boundary immediately before the next segment', () => {
+    const onSegmentResize = vi.fn();
+    render(
+      <VideoTimeline
+        frameCount={120}
+        currentFrame={20}
+        onFrame={vi.fn()}
+        onSegment={vi.fn()}
+        onSegmentResize={onSegmentResize}
+        segments={[
+          { segment_id: 's1', track_id: 1, start_frame: 0, end_frame: 20, label: 'others', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+          { segment_id: 's2', track_id: 1, start_frame: 40, end_frame: 80, label: 'running', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+        ]}
+      />,
+    );
+
+    const handles = screen.getAllByLabelText('Drag segment end');
+    const handle = handles[handles.length - 2];
+    fireEvent.pointerDown(handle, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 100, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 100, pointerId: 1 });
+
+    expect(onSegmentResize).toHaveBeenCalledWith('s1', 0, 39);
+  });
 });

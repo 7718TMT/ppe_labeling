@@ -353,9 +353,11 @@ close the guide.
 | `1` | Select `others` |
 | `2` | Select `running` |
 | `3` | Select `falling` |
-| `T` | Select Threshold for the Suggestion button |
-| `M` | Select AI for the Suggestion button when available |
-| `S` | Turn automatic suggestion generation off |
+| `T` | Show Threshold suggestions |
+| `M` | Show AI suggestions when available |
+| `S` | Turn suggestions off |
+| `A` | Accept the selected suggestion |
+| `R` | Reject the selected suggestion |
 | `X` | Exclude or restore the selected segment |
 | `Enter` | Create or update a segment |
 | `Ctrl+Z` / `Ctrl+Y` | Undo or redo |

@@ -383,7 +383,7 @@ class VideoAnnotationService:
             raise VideoValidationError("Segment range is outside track lifespan")
         for existing in self.repository.list_segments(video_id, track_id):
             if existing["segment_id"] != segment_id and start_frame <= int(existing["end_frame"]) and end_frame >= int(existing["start_frame"]):
-                raise VideoValidationError(f"Segment conflicts with {existing['segment_id']}")
+                raise VideoValidationError("This segment conflicts with another segment.")
 
     def _refresh_annotation_status(self, video_id: str) -> None:
         segments = self.repository.list_segments(video_id)

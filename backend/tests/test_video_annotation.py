@@ -34,7 +34,7 @@ def test_segment_validation_overlap_revision_history_and_approval(tmp_path: Path
     repository, _storage, service, video = setup_video(tmp_path)
     created = service.save_segment(video["video_id"], 1, 0, 30, "others", 0)
     assert created["revision"] == 1
-    with pytest.raises(VideoValidationError, match="conflicts"):
+    with pytest.raises(VideoValidationError, match="This segment conflicts with another segment"):
         service.save_segment(video["video_id"], 1, 20, 40, "running", 1)
     service.save_segment(video["video_id"], 2, 20, 40, "running", 1)
     with pytest.raises(RevisionConflictError):

@@ -803,6 +803,15 @@ export function VideoWorkspace() {
     const seg = segments.find((s) => s.segment_id === segmentId);
     if (!seg || !active) return;
     const videoId = active.video_id;
+    const optimisticSegment = { ...seg, start_frame: newStart, end_frame: newEnd };
+    setSegments((current) => current.map((item) =>
+      item.segment_id === segmentId ? optimisticSegment : item,
+    ).sort((left, right) => left.start_frame - right.start_frame));
+    if (selectedSegment?.segment_id === segmentId) {
+      setSelectedSegment(optimisticSegment);
+      setStart(newStart);
+      setEnd(newEnd);
+    }
     try {
       const result = await saveVideoSegment(projectId, videoId, {
         track_id: seg.track_id, start_frame: newStart, end_frame: newEnd,
@@ -820,7 +829,22 @@ export function VideoWorkspace() {
         setEnd(result.segment.end_frame);
       }
       scheduleFeatureExtraction(); // #15
-    } catch { /* drag resize failures are silent; the segment stays in its last valid state */ }
+    } catch {
+      if (activeIdRef.current !== videoId) return;
+      setSegments((current) => current.map((item) => (
+        item.segment_id === segmentId
+        && item.start_frame === newStart
+        && item.end_frame === newEnd
+          ? seg
+          : item
+      )).sort((left, right) => left.start_frame - right.start_frame));
+      if (selectedSegment?.segment_id === segmentId) {
+        setSelectedSegment(seg);
+        setStart(seg.start_frame);
+        setEnd(seg.end_frame);
+      }
+      setError('Could not save the segment boundary. The last valid range was restored.');
+    }
   }
 
   // ── Derived values for effects below ─────────────────────────────────────
