@@ -5,7 +5,7 @@ import type {
   ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
   ProcessingOptions,
   SuggestionSource, ThresholdProfile, VideoItem, VideoProject, VideoSegment,
-  VideoSuggestion, VideoTrack, VideoWorkspaceState, HumanVideoLabel,
+  VideoTrack, VideoWorkspaceState, HumanVideoLabel,
 } from '../types';
 
 const api = axios.create({
@@ -197,17 +197,6 @@ export async function getFeatures(projectId: string, videoId: string, trackId?: 
   return (await api.get<FeatureWindow[]>(`/video-projects/${projectId}/videos/${videoId}/features`, { params: { track_id: trackId } })).data;
 }
 
-export async function getSuggestions(projectId: string, videoId: string, source: SuggestionSource, trackId?: number): Promise<VideoSuggestion[]> {
-  if (source === 'Off') return [];
-  const key = source === 'Threshold' ? 'threshold' : 'model';
-  return (await api.get<VideoSuggestion[]>(`/video-projects/${projectId}/videos/${videoId}/suggestions/${key}`, { params: { track_id: trackId } })).data;
-}
-
-export async function reviewSuggestion(projectId: string, videoId: string, source: SuggestionSource, suggestionId: string, action: string, revision: number, changes?: Record<string, unknown>): Promise<any> {
-  const key = source === 'Threshold' ? 'threshold' : 'model';
-  return (await api.post(`/video-projects/${projectId}/videos/${videoId}/suggestions/${key}/${suggestionId}/review`, { action, expected_revision: revision, changes })).data;
-}
-
 export async function approveVideo(projectId: string, videoId: string): Promise<VideoItem> {
   return (await api.post<VideoItem>(`/video-projects/${projectId}/videos/${videoId}/approve`)).data;
 }
@@ -300,10 +289,6 @@ export async function runExternalModel(projectId: string, videoId: string, model
 
 export async function unloadExternalModel(projectId: string, modelId: string): Promise<ExternalModel> {
   return (await api.post<ExternalModel>(`/video-projects/${projectId}/models/${modelId}/unload`)).data;
-}
-
-export async function generateThresholdSuggestions(projectId: string, videoId: string): Promise<VideoSuggestion[]> {
-  return (await api.post<VideoSuggestion[]>(`/video-projects/${projectId}/videos/${videoId}/threshold-suggestions/generate`)).data;
 }
 
 export async function splitVideoSegment(projectId: string, videoId: string, segmentId: string, frame: number, revision: number): Promise<VideoSegment[]> {

@@ -15,7 +15,6 @@ vi.mock('../api/client', () => ({
   getProcessingOptions: vi.fn(),
   getFeatures: vi.fn(),
   getPoseOverlay: vi.fn(),
-  getSuggestions: vi.fn(),
   getVideoJobs: vi.fn(),
   getVideoProject: vi.fn(),
   getVideoSegments: vi.fn(),
@@ -27,7 +26,6 @@ vi.mock('../api/client', () => ({
   mergeVideoSegments: vi.fn(),
   mergeVideoTracks: vi.fn(),
   processVideo: vi.fn(),
-  reviewSuggestion: vi.fn(),
   saveVideoSegment: vi.fn(),
   saveVideoWorkspaceState: vi.fn(),
   setVideoSegmentInclusion: vi.fn(),
@@ -101,7 +99,6 @@ describe('VideoWorkspace', () => {
     }]);
     vi.mocked(api.getVideoSegments).mockResolvedValue({ revision: 0, segments: [] });
     vi.mocked(api.getFeatures).mockResolvedValue([]);
-    vi.mocked(api.getSuggestions).mockResolvedValue([]);
     vi.mocked(api.getPoseOverlay).mockResolvedValue([]);
     vi.mocked(api.saveVideoWorkspaceState).mockResolvedValue({
       video_id: 'v1', track_id: 1, frame_index: 0, suggestion_source: 'Threshold',
@@ -368,25 +365,10 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByText('Worker 1')).toBeInTheDocument();
   });
 
-  it('shows suggestion overlay in the timeline (Suggestions tab removed)', async () => {
-    vi.mocked(api.getSuggestions).mockResolvedValue([{
-      suggestion_id: 'suggestion-1',
-      track_id: 1,
-      start_frame: 4,
-      end_frame: 9,
-      suggested_label: 'falling',
-      confidence: 0.82,
-      review_status: 'pending',
-      triggered_conditions: ['Rapid loss of balance'],
-      supporting_features: { torso_angle_score: 0.8 },
-      probabilities: { falling: 0.82, running: 0.1, others: 0.08 },
-    }]);
+  it('does not request or render legacy suggestion overlays', async () => {
     renderWorkspace();
     await screen.findByText('Worker 1');
-    // Suggestions tab is removed (#4); suggestion is shown as overlay in timeline
     expect(screen.queryByRole('button', { name: 'suggestions' })).not.toBeInTheDocument();
-    // Verify suggestions are still loaded (getSuggestions is called)
-    await waitFor(() => expect(api.getSuggestions).toHaveBeenCalled());
   });
 
   it('reloads a saved segment after switching to another video and back', async () => {

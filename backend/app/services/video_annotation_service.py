@@ -59,13 +59,6 @@ class VideoAnnotationService:
     def history(self, video_id: str) -> list[dict[str, Any]]:
         return self.repository.list_history(video_id)
 
-    def suggestions(self, source: str, video_id: str, track_id: int | None = None) -> list[dict[str, Any]]:
-        table = "threshold_suggestions" if source == "threshold" else "model_suggestions"
-        return [
-            suggestion for suggestion in self.repository.list_suggestions(table, video_id, track_id)
-            if suggestion["review_status"] == "pending"
-        ]
-
     def materialize_suggestions(self, video_id: str, source: str) -> list[dict[str, Any]]:
         """Create editable ground-truth segments from a new suggestion set.
 
@@ -375,33 +368,6 @@ class VideoAnnotationService:
         self._invalidate_tracks(video_id, {track_id})
         self._refresh_annotation_status(video_id)
         return {"status": "success"}
-
-    def review_suggestion(
-        self,
-        source: str,
-        suggestion_id: str,
-        action: str,
-        expected_revision: int,
-        changes: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        table = "threshold_suggestions" if source == "threshold" else "model_suggestions"
-        if action == "reject":
-            return {"suggestion": self.repository.review_suggestion(table, suggestion_id, "rejected")}
-        if action not in {"accept", "modify"}:
-            raise VideoValidationError("Suggestion action must be accept, modify, or reject")
-        suggestion = self.repository.one(f"SELECT * FROM {table} WHERE suggestion_id=?", (suggestion_id,))
-        if suggestion is None:
-            raise VideoResourceNotFoundError("Suggestion not found")
-        payload = {
-            "track_id": suggestion["track_id"], "start_frame": suggestion["start_frame"],
-            "end_frame": suggestion["end_frame"], "label": suggestion["suggested_label"], **(changes or {}),
-        }
-        segment = self.save_segment(
-            suggestion["video_id"], int(payload["track_id"]), int(payload["start_frame"]), int(payload["end_frame"]),
-            str(payload["label"]), expected_revision, source_type=source, source_id=suggestion_id,
-        )
-        reviewed = self.repository.review_suggestion(table, suggestion_id, "modified" if action == "modify" or changes else "accepted")
-        return {"suggestion": reviewed, **segment}
 
     def _validate_segment(
         self, video_id: str, track_id: int, start_frame: int, end_frame: int,

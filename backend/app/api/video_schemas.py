@@ -101,11 +101,6 @@ class ReassignPayload(RevisionPayload):
     target_track_id: int = Field(ge=0)
 
 
-class SuggestionReviewPayload(RevisionPayload):
-    action: Literal["accept", "modify", "reject"]
-    changes: dict[str, Any] | None = None
-
-
 class ThresholdProfilePayload(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     config: dict[str, Any]

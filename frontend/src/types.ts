@@ -108,19 +108,6 @@ export interface VideoSegment {
   source_id?: string | null;
 }
 
-export interface VideoSuggestion {
-  suggestion_id: string;
-  track_id: number;
-  start_frame: number;
-  end_frame: number;
-  suggested_label: 'running' | 'falling';
-  confidence: number;
-  review_status: 'pending' | 'accepted' | 'modified' | 'rejected';
-  triggered_conditions?: string[];
-  supporting_features?: Record<string, number>;
-  probabilities?: Record<string, number>;
-}
-
 export interface GeneratedWindow {
   window_id: string;
   track_id: number;

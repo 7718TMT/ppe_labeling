@@ -30,7 +30,6 @@ from backend.app.api.video_schemas import (
     SegmentInclusionPayload,
     SegmentSplitPayload,
     SegmentWrite,
-    SuggestionReviewPayload,
     ThresholdProfilePayload,
     TrackMergeMultiplePayload,
     TrackMergePayload,
@@ -378,21 +377,6 @@ def save_profile(project_id: str, payload: ThresholdProfilePayload, service: Vid
 @router.post("/{project_id}/threshold-profiles/restore-default")
 def restore_profile(project_id: str, service: VideoFeatureService = Depends(get_video_feature_service)) -> dict[str, Any]:
     return service.restore_default_profile(project_id)
-
-
-@router.post("/{project_id}/videos/{video_id}/threshold-suggestions/generate")
-def generate_threshold(project_id: str, video_id: str, profile_id: str | None = None, service: VideoFeatureService = Depends(get_video_feature_service)) -> list[dict[str, Any]]:
-    return service.generate_threshold_suggestions(video_id, profile_id)
-
-
-@router.get("/{project_id}/videos/{video_id}/suggestions/{source}")
-def list_suggestions(project_id: str, video_id: str, source: str, track_id: int | None = None, service: VideoAnnotationService = Depends(get_video_annotation_service)) -> list[dict[str, Any]]:
-    return service.suggestions(source, video_id, track_id)
-
-
-@router.post("/{project_id}/videos/{video_id}/suggestions/{source}/{suggestion_id}/review")
-def review_suggestion(project_id: str, video_id: str, source: str, suggestion_id: str, payload: SuggestionReviewPayload, service: VideoAnnotationService = Depends(get_video_annotation_service)) -> dict[str, Any]:
-    return service.review_suggestion(source, suggestion_id, payload.action, payload.expected_revision, payload.changes)
 
 
 @router.post("/{project_id}/models/import")

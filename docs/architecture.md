@@ -154,7 +154,7 @@ transactional SQLite data; keypoint matrices, feature arrays, model artifacts,
 and export files remain project-scoped filesystem artifacts.
 
 When a Threshold or Model stage completes for an initially unlabeled video, the
-worker materializes its accepted suggestions as editable video segments. The
+worker materializes generated source records as editable video segments. The
 segments retain their suggestion ID and source for provenance; regeneration does
 not replace existing annotations.
 

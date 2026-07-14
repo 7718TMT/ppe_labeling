@@ -2,10 +2,9 @@
  * VideoTimeline — multi-layer temporal timeline for pose video labeling.
  *
  * Design decisions:
- * - The "LABEL" bar replaces the old "HUMAN" bar. Pending suggestions are rendered
- *   as translucent overlay blocks on the same row (visually distinct via opacity /
- *   dashed border) so the annotator sees suggestions in context.
- * - Windows and a separate Suggestions row are removed per UX spec (#10, #5).
+ * - The "LABEL" bar renders saved annotation segments only. Generated
+ *   suggestions are materialized as editable segments instead of an overlay.
+ * - Windows and the legacy Suggestions overlay are removed.
  * - When multiple tracks exist each track gets its own LABEL bar, stacked vertically.
  * - Segment blocks support drag-resize handles on their left/right edges (#11).
  * - Each block shows the class label when wide enough (#2).
@@ -15,9 +14,7 @@ import { useRef, useState } from 'react';
 import type {
   GeneratedWindow,
   HumanVideoLabel,
-  SuggestionSource,
   VideoSegment,
-  VideoSuggestion,
 } from '../../types';
 
 /** Hex color per label class matching the design palette. */
@@ -48,18 +45,12 @@ interface Props {
   currentFrame: number;
   /** All human segments (may span multiple tracks). */
   segments: VideoSegment[];
-  /** Pending suggestions from the active source. */
-  suggestions: VideoSuggestion[];
-  /** Currently active suggestion source. */
-  source: SuggestionSource;
   /** segment_id of the currently selected segment (for highlight ring). */
   selectedSegment?: string;
   /** Called when the user clicks a position in the timeline. */
   onFrame: (frame: number) => void;
   /** Called when the user clicks a segment block. */
   onSegment: (segment: VideoSegment) => void;
-  /** Called when a suggestion block is clicked. */
-  onSuggestion: (suggestion: VideoSuggestion) => void;
   /** Called once when the user releases a resized segment boundary. */
   onSegmentResize?: (segmentId: string, start: number, end: number) => void;
 }
@@ -68,12 +59,9 @@ export function VideoTimeline({
   frameCount,
   currentFrame,
   segments,
-  suggestions,
-  source,
   selectedSegment,
   onFrame,
   onSegment,
-  onSuggestion,
   onSegmentResize,
 }: Props) {
   const [zoom, setZoom] = useState(1);
@@ -171,9 +159,6 @@ export function VideoTimeline({
   const trackIds = [...new Set(segments.map((s) => s.track_id))].sort((a, b) => a - b);
   const effectiveTracks = trackIds.length > 0 ? trackIds : [];
 
-  /** Pending suggestions to overlay on the label bar. */
-  const pendingSuggestions = suggestions.filter((s) => s.review_status === 'pending');
-
   return (
     <section
       className="bg-surface-container border-t border-outline-variant p-3 select-none"
@@ -221,7 +206,6 @@ export function VideoTimeline({
           ) : (
             effectiveTracks.map((trackId) => {
               const trackSegments = segments.filter((s) => s.track_id === trackId);
-              const trackSuggestions = pendingSuggestions.filter((s) => s.track_id === trackId);
               return (
                 <div key={trackId} className="flex items-center gap-2 mb-1">
                   <span className="w-16 shrink-0 font-label text-[10px] text-on-surface-variant text-right pr-2">
@@ -276,26 +260,6 @@ export function VideoTimeline({
                             />
                           )}
                         </button>
-                      );
-                    })}
-
-                    {/* Suggestion overlays (translucent, on top of human segments) */}
-                    {trackSuggestions.map((sug) => {
-                      const color = LABEL_COLORS[sug.suggested_label] ?? '#64748b';
-                      const borderStyle = source === 'AI' ? 'border-dashed' : 'border-solid';
-                      return (
-                        <button
-                          key={sug.suggestion_id}
-                          type="button"
-                          title={`${source} suggestion: ${sug.suggested_label} ${Math.round(sug.confidence * 100)}% — frames ${sug.start_frame}–${sug.end_frame}`}
-                          onClick={(e) => { e.stopPropagation(); onSuggestion(sug); }}
-                          className={`absolute top-0.5 bottom-0.5 border-2 ${borderStyle} z-10 rounded-sm`}
-                          style={{
-                            ...blockStyle(sug.start_frame, sug.end_frame),
-                            borderColor: color,
-                            backgroundColor: `${color}30`,
-                          }}
-                        />
                       );
                     })}
 

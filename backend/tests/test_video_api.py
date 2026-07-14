@@ -106,7 +106,6 @@ def test_real_endpoint_workflow_windows_features_suggestions_and_export_validati
     assert client.post(f"/api/v1/video-projects/{project_id}/videos/{video_id}/segments",json={"track_id":1,"start_frame":0,"end_frame":59,"label":"others","expected_revision":0}).status_code==200
     windows=client.post(f"/api/v1/video-projects/{project_id}/videos/{video_id}/windows/generate").json();assert windows[0]["label"]=="others"
     generated=client.post(f"/api/v1/video-projects/{project_id}/videos/{video_id}/features/generate");assert generated.status_code==200 and generated.json()["windows"]
-    suggestions=client.post(f"/api/v1/video-projects/{project_id}/videos/{video_id}/threshold-suggestions/generate");assert suggestions.status_code==200
     assert client.post(f"/api/v1/video-projects/{project_id}/videos/{video_id}/approve").status_code==200
     validation=client.get(f"/api/v1/video-projects/{project_id}/exports/validate").json();assert validation["errors"]==[]
     queued=client.post(f"/api/v1/video-projects/{project_id}/exports").json();assert queued["queued"] is True

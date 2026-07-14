@@ -567,9 +567,9 @@ reject
 hide
 ```
 
-Accepting a suggestion creates or updates a human segment. Initial processing
-also accepts its non-conflicting suggestions automatically for an unlabeled
-video; the source suggestion remains stored for provenance.
+Initial processing materializes non-conflicting source records as editable
+segments for an unlabeled video. The source record remains stored for
+provenance; annotators edit the resulting segment directly.
 
 ---
 
@@ -637,12 +637,9 @@ O             set segment end
 2             running
 3             falling
 
-T             show threshold suggestions
-M             show model suggestions
-S             turn suggestions off
-
-A             accept selected suggestion
-R             reject selected suggestion
+T             select threshold generation
+M             select model generation
+S             turn automatic suggestion generation off
 X             exclude selected segment/window
 Enter         save
 Ctrl+Z        undo
@@ -1358,18 +1355,9 @@ Copy the suggestion into the human annotation layer.
 
 Create an editable human segment from the suggestion, then allow boundary/class changes.
 
-### Reject
-
-Keep the suggestion record and rejection status so it does not immediately reappear unchanged.
-
 ### Bulk actions
 
-- accept selected high-confidence suggestions,
-- reject selected suggestions,
-- accept all suggestions for the active track,
-- clear decisions for regeneration.
-
-Bulk acceptance should require explicit confirmation.
+- regenerate editable segments only for an initially unlabeled video.
 
 ---
 
@@ -1686,7 +1674,8 @@ The route naming may follow the existing codebase, but the following capabilitie
 - validate compatibility,
 - run inference on video/batch,
 - list window predictions,
-- list/accept/modify/reject merged suggestions.
+- generate source records internally, then materialize editable segments for
+  initially unlabeled videos.
 
 There is intentionally no model-training API.
 

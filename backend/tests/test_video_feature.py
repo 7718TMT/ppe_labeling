@@ -122,7 +122,6 @@ def test_pending_suggestions_become_editable_ground_truth_once(tmp_path: Path) -
     assert segments[0]["source_type"] == "auto_default"
     assert repository.get_video(video["video_id"])["annotation_status"] == "labeled"
     assert repository.list_suggestions("threshold_suggestions", video["video_id"])[0]["review_status"] == "accepted"
-    assert VideoAnnotationService(repository, storage).suggestions("threshold", video["video_id"]) == []
     assert VideoAnnotationService(repository, storage).materialize_suggestions(video["video_id"], "threshold") == []
 
 

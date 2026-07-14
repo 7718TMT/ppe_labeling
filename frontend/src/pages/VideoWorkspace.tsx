@@ -4,7 +4,8 @@
  * Key UX changes vs previous version:
  * #1  Multi-segment: create/manage multiple segments per track independently.
  * #3  Fill-gaps: per-track button fills unlabeled ranges with a chosen class.
- * #4  Suggestion tab removed; suggestions are overlaid on the LABEL bar.
+ * #4  Generated suggestions are materialized as editable segments; the LABEL
+ *     bar renders those segments only.
  * #5  Source selector (Off/Threshold/AI) lives as a compact dropdown in the navbar.
  * #7  After import, the pipeline is auto-queued (backend handles it); no extra call needed.
  * #8  Multi-track merge: checkbox-based selection on track cards, Merge button appears.
@@ -57,7 +58,6 @@ import {
   getProcessingOptions,
   getFeatures,
   getPoseOverlay,
-  getSuggestions,
   getVideoJobs,
   getVideoProject,
   getVideoSegments,
@@ -66,7 +66,6 @@ import {
   importVideos,
   mergeMultipleVideoTracks,
   processVideo,
-  reviewSuggestion,
   saveVideoSegment,
   saveVideoWorkspaceState,
   setVideoSegmentInclusion,
@@ -95,7 +94,6 @@ import type {
   VideoItem,
   VideoProject,
   VideoSegment,
-  VideoSuggestion,
   VideoTrack,
 } from '../types';
 
@@ -152,7 +150,6 @@ export function VideoWorkspace() {
   const activeIdRef = useRef<string>();
   const frameRef = useRef(0);
   const activeLoadRef = useRef(0);
-  const suggestionLoadRef = useRef(0);
   const projectRef = useRef<VideoProject | null>(null);
   const processingTransitionRef = useRef<{ videoId?: string; active: boolean }>({ active: false });
   const pendingMediaSeekRef = useRef<{ videoId: string; seconds: number }>();
@@ -179,8 +176,6 @@ export function VideoWorkspace() {
   const [selectedSegment, setSelectedSegment] = useState<VideoSegment>();
   const [creatingSegment, setCreatingSegment] = useState(false);
   const [mergeSegmentId, setMergeSegmentId] = useState<string>();
-  const [suggestions, setSuggestions] = useState<VideoSuggestion[]>([]);
-  const [selectedSuggestion, setSelectedSuggestion] = useState<VideoSuggestion>();
   const [source, setSource] = useState<SuggestionSource>('Threshold');
   const [processingOptions, setProcessingOptions] = useState<ProcessingOptions>({
     threshold_available: true,
@@ -320,7 +315,6 @@ export function VideoWorkspace() {
     setOverlayCacheRevision((c) => c + 1);
     setTracks([]);
     setSegments([]);
-    setSuggestions([]);
     setFeatures([]);
     setSelectedTrack(undefined);
     setMergeTrackIds(new Set());
@@ -328,7 +322,6 @@ export function VideoWorkspace() {
     setCreatingSegment(false);
     setMergeSegmentId(undefined);
     setAutosaveFailedDraft(undefined);
-    setSelectedSuggestion(undefined);
     setFrame(0);
     setStart(0);
     setEnd(0);
@@ -378,23 +371,11 @@ export function VideoWorkspace() {
       pendingMediaSeekRef.current = undefined;
       setTracks([]);
       setSegments([]);
-      setSuggestions([]);
       setFeatures([]);
       setOverlay(undefined);
       setPlaying(false);
     }
   }, [active?.video_id, loadActive]);
-
-  useEffect(() => {
-    const generation = suggestionLoadRef.current + 1;
-    suggestionLoadRef.current = generation;
-    setSelectedSuggestion(undefined);
-    if (!active || source === 'Off') { setSuggestions([]); return; }
-    const videoId = active.video_id;
-    getSuggestions(projectId, videoId, source, selectedTrack)
-      .then((rows) => { if (generation === suggestionLoadRef.current && activeIdRef.current === videoId) setSuggestions(rows); })
-      .catch(() => { if (generation === suggestionLoadRef.current && activeIdRef.current === videoId) setSuggestions([]); });
-  }, [active?.video_id, source, selectedTrack, projectId]);
 
   useEffect(() => {
     if (!active) { setOverlay(undefined); return; }
@@ -632,34 +613,6 @@ export function VideoWorkspace() {
     }
   }
 
-  async function suggestionAction(action: 'accept' | 'modify' | 'reject') {
-    if (!active || !selectedSuggestion || source === 'Off') return;
-    const videoId = active.video_id;
-    try {
-      const changes = action === 'modify'
-        ? { track_id: selectedTrack, start_frame: start, end_frame: end, label }
-        : undefined;
-      const result = await reviewSuggestion(projectId, videoId, source, selectedSuggestion.suggestion_id, action, revision, changes);
-      if (activeIdRef.current !== videoId) return;
-      if (result.revision) setRevision(result.revision);
-      if (result.segment) {
-        setSegments((current) => [
-          ...current.filter((item) => item.segment_id !== result.segment.segment_id),
-          result.segment,
-        ]);
-      }
-      setSuggestions((current) => current.map((item) =>
-        item.suggestion_id === selectedSuggestion.suggestion_id
-          ? { ...item, review_status: action === 'modify' ? 'modified' : action === 'accept' ? 'accepted' : 'rejected' }
-          : item,
-      ));
-      setSelectedSuggestion(undefined);
-      setMessage(action === 'reject' ? 'Suggestion rejected.' : 'Suggestion applied to labels.');
-    } catch (reason) {
-      if (activeIdRef.current === videoId) setError(readableError(reason));
-    }
-  }
-
   async function toggleSegmentInclusion() {
     if (!active || !selectedSegment) return;
     const videoId = active.video_id;
@@ -722,13 +675,11 @@ export function VideoWorkspace() {
       setSelectedSegment(undefined);
       setCreatingSegment(false);
       setMergeSegmentId(undefined);
-      setSelectedSuggestion(undefined);
       return;
     }
     setSelectedSegment(segment);
     setCreatingSegment(false);
     setMergeSegmentId(undefined);
-    setSelectedSuggestion(undefined);
     setSelectedTrack(segment.track_id);
     setStart(segment.start_frame);
     setEnd(segment.end_frame);
@@ -742,19 +693,6 @@ export function VideoWorkspace() {
     setSelectedSegment(undefined);
     setCreatingSegment(false);
     setMergeSegmentId(undefined);
-    setSelectedSuggestion(undefined);
-  }
-
-  function chooseSuggestion(item: VideoSuggestion) {
-    setSelectedSuggestion(item);
-    setSelectedSegment(undefined);
-    setCreatingSegment(true);
-    setSelectedTrack(item.track_id);
-    setStart(item.start_frame);
-    setEnd(item.end_frame);
-    setLabel(item.suggested_label);
-    seek(item.start_frame);
-    setTab('annotate');
   }
 
   function chooseCreateSegment() {
@@ -762,12 +700,10 @@ export function VideoWorkspace() {
     if (!track) return;
     if (creatingSegment) {
       setCreatingSegment(false);
-      setSelectedSuggestion(undefined);
       return;
     }
     const initialFrame = Math.max(track.start_frame, Math.min(frame, track.end_frame));
     setSelectedSegment(undefined);
-    setSelectedSuggestion(undefined);
     setCreatingSegment(true);
     setStart(initialFrame);
     setEnd(initialFrame);
@@ -905,15 +841,11 @@ export function VideoWorkspace() {
     setOverlay(undefined);
     setOverlayCacheRevision((c) => c + 1);
 
-    const suggestionRequest = source === 'Off'
-      ? Promise.resolve([] as VideoSuggestion[])
-      : getSuggestions(projectId, videoId, source, selectedTrack);
     Promise.all([
       getVideoTracks(projectId, videoId),
       getVideoSegments(projectId, videoId),
       getFeatures(projectId, videoId),
-      suggestionRequest,
-    ]).then(([trackRows, segmentData, featureRows, suggestionRows]) => {
+    ]).then(([trackRows, segmentData, featureRows]) => {
       if (activeIdRef.current !== videoId) return;
       setTracks(trackRows);
       setSelectedTrack((current) => {
@@ -926,11 +858,10 @@ export function VideoWorkspace() {
         ? segmentData.segments.find((s) => s.segment_id === current.segment_id)
         : undefined);
       setFeatures(featureRows);
-      setSuggestions(suggestionRows);
     }).catch(() => {
       if (activeIdRef.current === videoId) setError('Processing finished, but its new results could not be loaded.');
     });
-  }, [active?.video_id, activeProcessing, projectId, selectedTrack, source]);
+  }, [active?.video_id, activeProcessing, projectId]);
 
   // ── Autosave ────────────────────────────────────────────────────────────────
 
@@ -976,8 +907,6 @@ export function VideoWorkspace() {
         t: () => setSource('Threshold'),
         m: () => modelAvailable && setSource('AI'),
         s: () => setSource('Off'),
-        a: () => void suggestionAction('accept'),
-        r: () => void suggestionAction('reject'),
         x: () => void toggleSegmentInclusion(),
         Enter: () => void saveSegment(),
       };
@@ -1140,12 +1069,9 @@ export function VideoWorkspace() {
                 frameCount={active.canonical_frame_count}
                 currentFrame={frame}
                 segments={segments}
-                suggestions={suggestions}
-                source={source}
                 selectedSegment={selectedSegment?.segment_id}
                 onFrame={seek}
                 onSegment={chooseSegment}
-                onSuggestion={chooseSuggestion}
                 onSegmentResize={handleSegmentResize}
               />
             </>

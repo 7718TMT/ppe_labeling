@@ -9,7 +9,6 @@ const SHORTCUTS = [
   ['I / O', 'Set segment start / end'],
   ['1 / 2 / 3', 'Others / Running / Falling'],
   ['T / M / S', 'Threshold / AI / Off'],
-  ['A / R', 'Accept / reject suggestion'],
   ['X', 'Exclude or restore segment'],
   ['Enter', 'Add or modify segment'],
   ['Ctrl + Z / Y', 'Undo / redo'],
