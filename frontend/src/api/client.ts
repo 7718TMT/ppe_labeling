@@ -12,6 +12,18 @@ const api = axios.create({
   baseURL: '/api/v1',
 });
 
+// Surface human-readable backend error messages instead of generic HTTP status text.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const detail = error.response?.data?.detail;
+    if (detail && typeof detail === 'string') {
+      return Promise.reject(new Error(detail));
+    }
+    return Promise.reject(error);
+  },
+);
+
 export async function getTasks(): Promise<TaskInfo[]> {
   const response = await api.get<TaskInfo[]>('/tasks');
   return response.data;
@@ -241,7 +253,15 @@ export async function splitVideoTrack(projectId: string, videoId: string, trackI
 }
 
 export async function setVideoTrackInclusion(projectId: string, videoId: string, trackId: number, include: boolean, reason?: string): Promise<VideoTrack> {
-  return (await api.put(`/video-projects/${projectId}/videos/${videoId}/tracks/${trackId}/inclusion`, { include, reason })).data;
+  const response = await api.put<VideoTrack>(`/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/tracks/${trackId}/inclusion`, {
+    include,
+    reason: reason || null,
+  });
+  return response.data;
+}
+
+export async function deleteVideoTrack(projectId: string, videoId: string, trackId: number): Promise<void> {
+  await api.delete(`/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/tracks/${trackId}`);
 }
 
 export async function reviewWindow(projectId: string, videoId: string, windowId: string, include: boolean, reason?: string): Promise<GeneratedWindow> {

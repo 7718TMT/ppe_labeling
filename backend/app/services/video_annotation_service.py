@@ -62,7 +62,87 @@ class VideoAnnotationService:
 
     def suggestions(self, source: str, video_id: str, track_id: int | None = None) -> list[dict[str, Any]]:
         table = "threshold_suggestions" if source == "threshold" else "model_suggestions"
-        return self.repository.list_suggestions(table, video_id, track_id)
+        return [
+            suggestion for suggestion in self.repository.list_suggestions(table, video_id, track_id)
+            if suggestion["review_status"] == "pending"
+        ]
+
+    def materialize_suggestions(self, video_id: str, source: str) -> list[dict[str, Any]]:
+        """Create editable ground-truth segments from a new suggestion set.
+
+        Automatic materialization is intentionally limited to an unlabeled video.
+        It gives newly imported videos an editable first pass while ensuring a
+        later regeneration never replaces a reviewer's existing annotations.
+        """
+        if source not in {"threshold", "model"}:
+            raise VideoValidationError("Suggestion source must be threshold or model")
+        if self.repository.list_segments(video_id):
+            return []
+
+        table = "threshold_suggestions" if source == "threshold" else "model_suggestions"
+        candidates = [
+            suggestion for suggestion in self.repository.list_suggestions(table, video_id)
+            if suggestion["review_status"] == "pending"
+        ]
+        selected: list[dict[str, Any]] = []
+        for suggestion in sorted(candidates, key=lambda item: (-float(item["confidence"]), int(item["start_frame"]))):
+            overlaps = any(
+                int(suggestion["track_id"]) == int(current["track_id"])
+                and int(suggestion["start_frame"]) <= int(current["end_frame"])
+                and int(suggestion["end_frame"]) >= int(current["start_frame"])
+                for current in selected
+            )
+            if not overlaps:
+                selected.append(suggestion)
+
+        segments_to_create: list[dict[str, Any]] = []
+        selected_by_track: dict[int, list[dict[str, Any]]] = {}
+        for suggestion in selected:
+            selected_by_track.setdefault(int(suggestion["track_id"]), []).append(suggestion)
+        for track in self.repository.list_tracks(video_id):
+            track_id = int(track["track_id"])
+            cursor = int(track["start_frame"])
+            for suggestion in sorted(selected_by_track.get(track_id, []), key=lambda item: int(item["start_frame"])):
+                start_frame = int(suggestion["start_frame"])
+                end_frame = int(suggestion["end_frame"])
+                if cursor < start_frame:
+                    segments_to_create.append({
+                        "track_id": track_id, "start_frame": cursor,
+                        "end_frame": start_frame - 1, "label": "others",
+                        "source_type": "auto_default", "source_id": None,
+                    })
+                segments_to_create.append({
+                    "track_id": track_id, "start_frame": start_frame,
+                    "end_frame": end_frame, "label": suggestion["suggested_label"],
+                    "source_type": source, "source_id": str(suggestion["suggestion_id"]),
+                })
+                cursor = end_frame + 1
+            if cursor <= int(track["end_frame"]):
+                segments_to_create.append({
+                    "track_id": track_id, "start_frame": cursor,
+                    "end_frame": int(track["end_frame"]), "label": "others",
+                    "source_type": "auto_default", "source_id": None,
+                })
+
+        created: list[dict[str, Any]] = []
+        revision = int(self.repository.get_video(video_id)["annotation_revision"])
+        for segment in segments_to_create:
+            result = self.save_segment(
+                video_id,
+                int(segment["track_id"]),
+                int(segment["start_frame"]),
+                int(segment["end_frame"]),
+                str(segment["label"]),
+                revision,
+                source_type=str(segment["source_type"]),
+                source_id=segment["source_id"],
+            )
+            revision = int(result["revision"])
+            created.append(result["segment"])
+
+        for suggestion in selected:
+            self.repository.review_suggestion(table, str(suggestion["suggestion_id"]), "accepted")
+        return created
 
     def delete_segment(self, video_id: str, segment_id: str, expected_revision: int) -> int:
         revision = self.repository.delete_segment(video_id, segment_id, expected_revision)
@@ -196,7 +276,16 @@ class VideoAnnotationService:
 
     def validate_video(self, video_id: str) -> list[str]:
         errors: list[str] = []
-        for segment in self.repository.list_segments(video_id):
+        segments = self.repository.list_segments(video_id)
+        tracks = self.repository.list_tracks(video_id, include_excluded=False)
+        
+        if not tracks:
+            errors.append("no worker tracks detected. Process the video first.")
+        elif not segments:
+            errors.append("no segments have been labeled for this video.")
+            
+        needs_review_count = 0
+        for segment in segments:
             try:
                 self._validate_segment(
                     video_id, int(segment["track_id"]), int(segment["start_frame"]),
@@ -205,9 +294,11 @@ class VideoAnnotationService:
             except VideoValidationError as exc:
                 errors.append(f"{segment['segment_id']}: {exc}")
             if segment["needs_review"]:
-                errors.append(f"{segment['segment_id']}: needs review")
-        if not self.repository.list_segments(video_id):
-            errors.append("at least one human segment is required")
+                needs_review_count += 1
+                
+        if needs_review_count > 0:
+            errors.append(f"{needs_review_count} segment(s) still need review.")
+            
         return errors
 
     def merge_tracks(self, video_id: str, target_track_id: int, source_track_id: int) -> dict[str, Any]:
@@ -284,6 +375,16 @@ class VideoAnnotationService:
         )
         self._invalidate_tracks(video_id, {track_id})
         return track
+
+    def delete_track(self, video_id: str, track_id: int) -> dict[str, Any]:
+        """Delete a worker track and all its segments."""
+        self.repository.get_track(video_id, track_id)
+        with self.repository.connection() as connection, connection:
+            connection.execute("DELETE FROM video_segments WHERE video_id=? AND track_id=?", (video_id, track_id))
+            connection.execute("DELETE FROM video_tracks WHERE video_id=? AND track_id=?", (video_id, track_id))
+        self._invalidate_tracks(video_id, {track_id})
+        self._refresh_annotation_status(video_id)
+        return {"status": "success"}
 
     def review_suggestion(
         self,

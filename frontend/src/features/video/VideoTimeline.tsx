@@ -287,12 +287,7 @@ export function VideoTimeline({
         </div>
       </div>
 
-      {/* Frame labels */}
-      <div className="font-label text-label-sm text-on-surface-variant flex justify-between mt-2">
-        <span>Frame 0</span>
-        <span>Current {currentFrame}</span>
-        <span>Frame {frameCount - 1}</span>
-      </div>
+
     </section>
   );
 }

@@ -143,8 +143,8 @@ project      -> export:<id>   (on request)
 Each video pipeline persists its requested `target_mode`; Model pipelines also
 pin `external_model_id` independently of the stage name. SQLite schema v2 adds
 those fields and partial unique indexes for one active pipeline per video and
-one active model per project. A fresh import remains unprocessed until the
-annotator uses the Process control.
+one active model per project. Imports enqueue the workflow selected by the
+annotator's Suggestions control.
 
 API requests enqueue these stages and never run full-video inference or export
 generation. Workers persist progress, errors, and control requests, publish
@@ -152,6 +152,11 @@ cache files atomically, and return orphaned `running` jobs to `queued` on worker
 startup. Structured track/segment/window/history/model/export state is
 transactional SQLite data; keypoint matrices, feature arrays, model artifacts,
 and export files remain project-scoped filesystem artifacts.
+
+When a Threshold or Model stage completes for an initially unlabeled video, the
+worker materializes its accepted suggestions as editable video segments. The
+segments retain their suggestion ID and source for provenance; regeneration does
+not replace existing annotations.
 
 The React/Vite video routes reuse the image application's toolbar, tonal panel,
 typography, spacing, focus, feedback, and responsive-collapse conventions. The

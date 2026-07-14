@@ -135,6 +135,10 @@ describe('VideoWorkspace', () => {
   it('synchronizes track and segment controls without triggering shortcuts while typing', async () => {
     renderWorkspace();
     expect(await screen.findByText('Track 1')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Full track' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Extend' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy prev' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge adj' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'running' }));
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create segment' }));
@@ -157,17 +161,27 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
 
-  it('uses one-click Threshold processing and remembers the selected mode per project', async () => {
+  it('explains exhausted undo history without presenting a technical error', async () => {
+    vi.mocked(api.videoHistoryAction).mockRejectedValueOnce(new Error('Nothing to undo'));
     renderWorkspace();
     await screen.findByText('Track 1');
-    fireEvent.click(screen.getByRole('button', { name: 'Process: Threshold' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'No earlier annotation changes are available to undo.',
+    );
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('generates Threshold suggestions from the unified suggestion control', async () => {
+    renderWorkspace();
+    await screen.findByText('Track 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestions: Threshold' }));
     await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Threshold'));
-    expect(await screen.findByRole('status')).toHaveTextContent('Threshold processing started');
-    expect(sessionStorage.getItem('pose-process-mode:p1')).toBe('Threshold');
+    expect(await screen.findByRole('status')).toHaveTextContent('Threshold suggestion generation started');
   });
 
   it('shows the actual persisted mode for an active pipeline', async () => {
-    sessionStorage.setItem('pose-process-mode:p1', 'Model');
     vi.mocked(api.getProcessingOptions).mockResolvedValue({
       threshold_available: true,
       model_available: true,
@@ -179,10 +193,10 @@ describe('VideoWorkspace', () => {
     }]);
     renderWorkspace();
     await screen.findByText('Track 1');
-    expect(screen.getByRole('button', { name: 'Processing: Threshold' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Generating: Threshold' })).toBeDisabled();
   });
 
-  it('runs Model processing from the split control without changing manual labels', async () => {
+  it('generates AI suggestions from the unified control without changing manual labels', async () => {
     vi.mocked(api.getProcessingOptions).mockResolvedValue({
       threshold_available: true,
       model_available: true,
@@ -200,14 +214,13 @@ describe('VideoWorkspace', () => {
     await screen.findByText('Track 1');
     // Segment title format is now 'running frames 2–10' (#2)
     expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose processing mode' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Model' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Process: Model' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'AI' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestions: AI' }));
     await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Model'));
-    expect(await screen.findByRole('status')).toHaveTextContent('Model processing started');
+    expect(await screen.findByRole('status')).toHaveTextContent('AI suggestion generation started');
     expect(api.saveVideoSegment).not.toHaveBeenCalled();
     expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();
-    expect(sessionStorage.getItem('pose-process-mode:p1')).toBe('Model');
   });
 
   it('autosaves edits to an existing segment and reports the real save state', async () => {
@@ -350,17 +363,17 @@ describe('VideoWorkspace', () => {
     vi.mocked(api.processVideo).mockImplementation(() => new Promise((resolve) => { resolveProcess = resolve; }));
     renderWorkspace();
     await screen.findByText('Track 1');
-    fireEvent.click(screen.getByRole('button', { name: 'Process: Threshold' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestions: Threshold' }));
     fireEvent.click(screen.getByText('shift-b.mp4'));
     expect(await screen.findByText('Track 2')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Process: Threshold' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Suggestions: Threshold' })).not.toBeDisabled();
     await act(async () => {
       resolveProcess?.([{
         job_id: 'a-job', video_id: 'v1', stage: 'canonicalize', status: 'queued', priority: 1000, progress: 0,
       }]);
       await Promise.resolve();
     });
-    expect(screen.queryByText('Threshold processing started.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Threshold suggestion generation started.')).not.toBeInTheDocument();
   });
 
   it('offers only Annotate and Details tabs and a searchable Help guide', async () => {
@@ -381,8 +394,25 @@ describe('VideoWorkspace', () => {
     vi.mocked(api.getProcessingOptions).mockRejectedValue(new Error('model service unavailable'));
     renderWorkspace();
     expect(await screen.findByText('Track 1')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose processing mode' }));
-    expect(screen.getByRole('menuitemradio', { name: /Model/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
+    expect(screen.getByRole('menuitemradio', { name: /AI/ })).toBeDisabled();
+  });
+
+  it('imports videos using the method selected by the suggestion control', async () => {
+    const imported = makeVideo('v3', 'new-video.mp4');
+    const file = new File(['video'], 'new-video.mp4', { type: 'video/mp4' });
+    vi.mocked(api.getProcessingOptions).mockResolvedValue({
+      threshold_available: true,
+      model_available: true,
+      model_message: null,
+    });
+    vi.mocked(api.importVideos).mockResolvedValue([imported]);
+    renderWorkspace();
+    await screen.findByText('Track 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'AI' }));
+    fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    await waitFor(() => expect(api.importVideos).toHaveBeenCalledWith('p1', [file], 'Model'));
   });
 
   it('deletes project-owned video data through confirmation and selects the next video', async () => {

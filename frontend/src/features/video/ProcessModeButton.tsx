@@ -2,30 +2,32 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Loader2, Wand2 } from 'lucide-react';
 
 export type ProcessMode = 'Threshold' | 'Model';
+export type SuggestionMode = 'Off' | 'Threshold' | 'AI';
 
-interface ProcessModeButtonProps {
-  mode: ProcessMode;
+interface SuggestionModeButtonProps {
+  source: SuggestionMode;
   disabled?: boolean;
-  processing?: boolean;
+  generating?: boolean;
   modelAvailable: boolean;
   modelUnavailableReason?: string;
-  onModeChange: (mode: ProcessMode) => void;
-  onProcess: () => void;
+  onSourceChange: (source: SuggestionMode) => void;
+  onGenerate: () => void;
 }
 
-/** Run the selected suggestion workflow without making users reopen a menu. */
-export function ProcessModeButton({
-  mode,
+/** Select, show, and generate one suggestion source from a single control. */
+export function SuggestionModeButton({
+  source,
   disabled = false,
-  processing = false,
+  generating = false,
   modelAvailable,
   modelUnavailableReason = 'Model suggestions are not available for this project.',
-  onModeChange,
-  onProcess,
-}: ProcessModeButtonProps) {
+  onSourceChange,
+  onGenerate,
+}: SuggestionModeButtonProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
-  const modeBlocked = mode === 'Model' && !modelAvailable;
+  const sourceBlocked = source === 'AI' && !modelAvailable;
+  const generationUnavailable = source === 'Off' || sourceBlocked;
 
   useEffect(() => {
     function close(event: MouseEvent) {
@@ -46,20 +48,20 @@ export function ProcessModeButton({
     <div ref={root} className="relative flex">
       <button
         type="button"
-        disabled={disabled || processing || modeBlocked}
-        title={modeBlocked ? modelUnavailableReason : `Process with ${mode} suggestions`}
-        onClick={onProcess}
+        disabled={disabled || generating || generationUnavailable}
+        title={sourceBlocked ? modelUnavailableReason : source === 'Off' ? 'Select Threshold or AI to generate suggestions.' : `Generate ${source} suggestions for the selected video.`}
+        onClick={onGenerate}
         className="h-8 px-3 rounded-l bg-primary-container text-on-primary-container font-label text-label-sm font-bold flex items-center gap-2 disabled:opacity-40"
       >
-        {processing ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
-        {processing ? `Processing: ${mode}` : `Process: ${mode}`}
+        {generating ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
+        {generating ? `Generating: ${source}` : `Suggestions: ${source}`}
       </button>
       <button
         type="button"
-        aria-label="Choose processing mode"
+        aria-label="Choose suggestion source"
         aria-haspopup="menu"
         aria-expanded={open}
-        disabled={disabled || processing}
+        disabled={generating}
         onClick={() => setOpen((current) => !current)}
         className="h-8 w-8 rounded-r border-l border-on-primary-container/30 bg-primary-container text-on-primary-container flex items-center justify-center disabled:opacity-40"
       >
@@ -68,29 +70,38 @@ export function ProcessModeButton({
       {open && (
         <div
           role="menu"
-          aria-label="Processing mode"
+          aria-label="Suggestion source"
           className="absolute right-0 top-9 z-50 min-w-44 rounded border border-outline-variant bg-surface-container-high p-1 shadow-xl"
         >
           <button
             type="button"
             role="menuitemradio"
-            aria-checked={mode === 'Threshold'}
-            onClick={() => { onModeChange('Threshold'); setOpen(false); }}
-            className={`w-full rounded px-3 py-2 text-left text-label-sm ${mode === 'Threshold' ? 'bg-primary/10 text-primary' : 'hover:bg-surface-container-highest'}`}
+            aria-checked={source === 'Threshold'}
+            onClick={() => { onSourceChange('Threshold'); setOpen(false); }}
+            className={`w-full rounded px-3 py-2 text-left text-label-sm ${source === 'Threshold' ? 'bg-primary/10 text-primary' : 'hover:bg-surface-container-highest'}`}
           >
             Threshold
           </button>
           <button
             type="button"
             role="menuitemradio"
-            aria-checked={mode === 'Model'}
+            aria-checked={source === 'AI'}
             disabled={!modelAvailable}
             title={!modelAvailable ? modelUnavailableReason : undefined}
-            onClick={() => { onModeChange('Model'); setOpen(false); }}
-            className={`w-full rounded px-3 py-2 text-left text-label-sm disabled:opacity-40 ${mode === 'Model' ? 'bg-primary/10 text-primary' : 'hover:bg-surface-container-highest'}`}
+            onClick={() => { onSourceChange('AI'); setOpen(false); }}
+            className={`w-full rounded px-3 py-2 text-left text-label-sm disabled:opacity-40 ${source === 'AI' ? 'bg-primary/10 text-primary' : 'hover:bg-surface-container-highest'}`}
           >
-            Model
+            AI
             {!modelAvailable && <span className="block text-[10px] text-on-surface-variant">Unavailable</span>}
+          </button>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={source === 'Off'}
+            onClick={() => { onSourceChange('Off'); setOpen(false); }}
+            className={`w-full rounded px-3 py-2 text-left text-label-sm ${source === 'Off' ? 'bg-primary/10 text-primary' : 'hover:bg-surface-container-highest'}`}
+          >
+            Off
           </button>
         </div>
       )}

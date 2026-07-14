@@ -10,13 +10,38 @@ from backend.app.domain.errors import (
     ModelCompatibilityError,
     VideoProcessingConflictError,
 )
-from backend.app.domain.video import FEATURE_SCHEMA_VERSION, WINDOW_CONFIG_VERSION
+from backend.app.domain.video import (
+    FEATURE_SCHEMA_VERSION,
+    TRACKING_CACHE_VERSION,
+    WINDOW_CONFIG_VERSION,
+)
 from backend.app.repositories.video_db import SCHEMA_V1, VideoRepository
 from backend.app.repositories.video_storage import VideoStorageRepository
 from backend.app.services.video_feature_service import VideoFeatureService
 from backend.app.services.video_model_service import VideoModelService
 from backend.app.services.video_service import VideoService
-from backend.app.services.video_worker import VideoWorker
+from backend.app.services.video_worker import (
+    DEDICATED_REID_MODEL_PATH,
+    DEDICATED_REID_TRACKER_CONFIG,
+    DEDICATED_REID_TRACKER_VERSION,
+    VideoWorker,
+)
+
+
+def test_dedicated_reid_tracker_profile_uses_separate_encoder() -> None:
+    """The checked-in profile must select the dedicated appearance encoder."""
+
+    from ultralytics.utils import YAML
+
+    profile = YAML.load(DEDICATED_REID_TRACKER_CONFIG)
+
+    assert DEDICATED_REID_TRACKER_VERSION == "botsort-dedicated-reid-v3"
+    assert profile["tracker_type"] == "botsort"
+    assert profile["with_reid"] is True
+    assert profile["model"] == "weights/reid.pt"
+    assert DEDICATED_REID_MODEL_PATH.name == "reid.pt"
+    assert profile["track_buffer"] == 72
+    assert profile["track_low_thresh"] == 0.05
 
 
 def _create_video(
@@ -79,6 +104,40 @@ def _track(track_id: int = 1) -> dict:
         "include_in_export": 1,
         "exclude_reason": None,
     }
+
+
+def test_worker_materializes_completed_threshold_suggestions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    project = VideoService(repository, storage).create_project("Automatic labels")
+    video = _create_video(repository, project["project_id"])
+    repository.replace_tracks(video["video_id"], [_track()])
+    repository.replace_threshold_suggestions(
+        video["video_id"],
+        project["active_threshold_profile_id"],
+        [{
+            "track_id": 1, "start_frame": 10, "end_frame": 30,
+            "suggested_label": "falling", "confidence": 0.92,
+            "triggered_conditions_json": "[\"fall_transition\"]",
+            "supporting_features_json": "{}", "quality_status": "good",
+            "review_status": "pending", "artifact_key": "fall-10-30",
+        }],
+    )
+    repository.enqueue_pipeline_job(
+        project["project_id"], video["video_id"], "threshold", "threshold", None, 100
+    )
+    worker = VideoWorker(repository, storage, tmp_path / "pose.pt", VideoFeatureService(repository, storage))
+    monkeypatch.setattr(worker, "_threshold", lambda _job, progress: progress(0.9))
+
+    completed = worker.run_once()
+
+    assert completed and completed["status"] == "completed"
+    segments = repository.list_segments(video["video_id"])
+    assert [(item["start_frame"], item["end_frame"], item["label"]) for item in segments] == [
+        (0, 9, "others"), (10, 30, "falling"), (31, 59, "others"),
+    ]
+    assert segments[1]["source_type"] == "threshold"
+    assert repository.get_video(video["video_id"])["annotation_status"] == "labeled"
 
 
 def test_v2_migration_normalizes_jobs_and_enforces_active_uniqueness(
@@ -193,7 +252,7 @@ def test_mode_aware_queue_uses_durable_readiness_and_pins_model(
     repository.update_video(
         video_id,
         pose_cache_version="pose-v1",
-        tracking_cache_version="track-v1",
+        tracking_cache_version=TRACKING_CACHE_VERSION,
     )
     features = service.queue_pipeline(project_id, video_id, "threshold")[0]
     assert features["stage"] == "features"
@@ -208,6 +267,11 @@ def test_mode_aware_queue_uses_durable_readiness_and_pins_model(
         ),
         {"windows": []},
     )
+    repository.update_video(video_id, tracking_cache_version="botsort-v1")
+    stale_tracking = service.queue_pipeline(project_id, video_id, "threshold")[0]
+    assert stale_tracking["stage"] == "pose_track"
+    repository.update_job(stale_tracking["job_id"], status="cancelled")
+    repository.update_video(video_id, tracking_cache_version=TRACKING_CACHE_VERSION)
     storage.canonical_path(project_id, video_id).unlink()
     repository.update_video(
         video_id,

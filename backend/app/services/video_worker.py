@@ -12,9 +12,22 @@ from typing import Any, Callable
 import cv2
 
 from backend.app.domain.errors import ModelUnavailableError, VideoValidationError
+from backend.app.domain.video import TRACKING_CACHE_VERSION
 from backend.app.repositories.video_db import VideoRepository
 from backend.app.repositories.video_storage import VideoStorageRepository
 from backend.app.services.video_feature_service import VideoFeatureService
+from backend.app.services.video_annotation_service import VideoAnnotationService
+
+
+DEDICATED_REID_TRACKER_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "inference"
+    / "botsort_dedicated_reid.yaml"
+)
+DEDICATED_REID_MODEL_PATH = (
+    Path(__file__).resolve().parents[3] / "weights" / "reid.pt"
+)
+DEDICATED_REID_TRACKER_VERSION = TRACKING_CACHE_VERSION
 
 
 class JobInterrupted(Exception):
@@ -41,6 +54,7 @@ class VideoWorker:
         self.storage = storage
         self.pose_model_path = pose_model_path
         self.feature_service = feature_service
+        self.annotation_service = VideoAnnotationService(repository, storage)
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}"
         self.extra_handlers = extra_handlers or {}
 
@@ -72,6 +86,13 @@ class VideoWorker:
                     self.extra_handlers[prefix](job, progress)
                 else:
                     raise VideoValidationError(f"Unsupported worker stage: {stage}")
+            if stage in {"threshold", "model"}:
+                created = self.annotation_service.materialize_suggestions(
+                    job["video_id"],
+                    "threshold" if stage == "threshold" else "model",
+                )
+                if created:
+                    self.feature_service.generate_windows(job["video_id"])
             self.repository.complete_job_and_enqueue_next(
                 job["job_id"],
                 self._next_stage(job),
@@ -123,11 +144,11 @@ class VideoWorker:
         self.repository.update_video(video["video_id"], processing_status="probed", last_error=None)
 
     def _pose_track(self, job: dict[str, Any], progress: Callable[[float], None]) -> None:
-        """Run YOLO-Pose inference with BoT-SORT tracking for robust re-ID after falls.
+        """Run YOLO-Pose tracking with dedicated appearance re-identification.
 
-        BoT-SORT uses appearance features + Kalman motion to recover track identity after
-        occlusion or abrupt motion (e.g. a person falling). Falls back to tuned ByteTrack
-        parameters if botsort.yaml is unavailable in the installed Ultralytics version.
+        The repository-owned BoT-SORT profile keeps lost tracks for three seconds
+        and runs a separate appearance encoder on each person crop. This is more
+        resilient to a fall-and-rotation than native detector embeddings.
         """
         if not self.pose_model_path.is_file():
             raise ModelUnavailableError(
@@ -143,32 +164,20 @@ class VideoWorker:
         version = f"pose-v1-{model_hash}"
         model = YOLO(str(self.pose_model_path))
 
-        # Prefer BoT-SORT which maintains appearance re-ID through fall occlusions.
-        # If botsort.yaml is absent (older Ultralytics), fall back to ByteTrack with
-        # looser thresholds that tolerate the brief detection gap during a fall.
-        try:
-            import importlib.resources as _pkg_resources  # noqa: PLC0415 – lazy import
-            _ul_path = Path(str(_pkg_resources.files("ultralytics")))
-            _botsort_cfg = _ul_path / "cfg" / "trackers" / "botsort.yaml"
-            tracker_cfg = "botsort.yaml" if _botsort_cfg.is_file() else None
-        except Exception:
-            tracker_cfg = None
-
-        if tracker_cfg:
-            tracking_version = "botsort-v1"
-            results = model.track(
-                source=str(canonical), stream=True, persist=True,
-                tracker=tracker_cfg, conf=0.25, verbose=False,
+        if not DEDICATED_REID_TRACKER_CONFIG.is_file():
+            raise VideoValidationError(
+                "Dedicated ReID BoT-SORT tracker configuration is missing"
             )
-        else:
-            # Tuned ByteTrack: lower track_high_thresh and longer lost-frame budget
-            # so identity survives the detection gap during a fall.
-            tracking_version = "bytetrack-v1-tuned"
-            results = model.track(
-                source=str(canonical), stream=True, persist=True,
-                tracker="bytetrack.yaml", conf=0.20,
-                verbose=False,
+        if not DEDICATED_REID_MODEL_PATH.is_file():
+            raise ModelUnavailableError(
+                "Dedicated ReID weights are missing at "
+                f"{DEDICATED_REID_MODEL_PATH}."
             )
+        tracking_version = DEDICATED_REID_TRACKER_VERSION
+        results = model.track(
+            source=str(canonical), stream=True, persist=True,
+            tracker=str(DEDICATED_REID_TRACKER_CONFIG), conf=0.20, verbose=False,
+        )
         frames: list[dict[str, Any]] = []
         summaries: dict[int, dict[str, Any]] = {}
         total = int(video["canonical_frame_count"])

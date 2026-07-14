@@ -13,6 +13,7 @@ SUGGESTION_LABELS = ("running", "falling")
 CANONICAL_FPS = 24
 FEATURE_SCHEMA_VERSION = "v1"
 WINDOW_CONFIG_VERSION = "60-12-24-v1"
+TRACKING_CACHE_VERSION = "botsort-dedicated-reid-v3"
 
 DEFAULT_PROJECT_CONFIG: dict[str, Any] = {
     "class_map": {"others": 0, "running": 1, "falling": 2},
@@ -23,7 +24,10 @@ DEFAULT_PROJECT_CONFIG: dict[str, Any] = {
         "detection_confidence": 0.25,
         "keypoint_confidence": 0.10,
     },
-    "tracking": {"tracker": "bytetrack", "tracker_config_version": "v1"},
+    "tracking": {
+        "tracker": "botsort",
+        "tracker_config_version": TRACKING_CACHE_VERSION,
+    },
     "window": {"length_frames": 60, "stride_frames": 12, "final_period_frames": 24},
     "window_labeling": {
         "falling_min_overlap_frames": 8,

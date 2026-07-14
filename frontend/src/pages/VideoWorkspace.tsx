@@ -51,7 +51,7 @@ import {
   createVideoExport,
   deleteVideo as deleteImportedVideo,
   deleteVideoSegment,
-  extendVideoSegment,
+  deleteVideoTrack,
   getProcessingOptions,
   getFeatures,
   getPoseOverlay,
@@ -62,9 +62,7 @@ import {
   getVideoTracks,
   getVideos,
   importVideos,
-  labelFullVideoTrack,
   mergeMultipleVideoTracks,
-  mergeVideoSegments,
   processVideo,
   reviewSuggestion,
   saveVideoSegment,
@@ -79,7 +77,7 @@ import {
 import { ExportPanel } from '../features/video/ExportPanel';
 import { PoseHelpDialog } from '../features/video/PoseHelpDialog';
 import { PoseVideoPlayer } from '../features/video/PoseVideoPlayer';
-import { ProcessModeButton, type ProcessMode } from '../features/video/ProcessModeButton';
+import { SuggestionModeButton, type ProcessMode } from '../features/video/ProcessModeButton';
 import { ProcessingQueue } from '../features/video/ProcessingQueue';
 import { VideoBrowser } from '../features/video/VideoBrowser';
 import { VideoTimeline } from '../features/video/VideoTimeline';
@@ -109,14 +107,6 @@ const LABEL_COLORS: Record<HumanVideoLabel, string> = {
   running: '#3b82f6',
   falling: '#ef4444',
 };
-
-function processModeKey(projectId: string): string {
-  return `pose-process-mode:${projectId}`;
-}
-
-function initialProcessMode(projectId: string): ProcessMode {
-  return sessionStorage.getItem(processModeKey(projectId)) === 'Model' ? 'Model' : 'Threshold';
-}
 
 function upsertJobRows(current: ProcessingJob[], incoming: ProcessingJob[]): ProcessingJob[] {
   const rows = new Map(current.map((job) => [job.job_id, job]));
@@ -188,7 +178,6 @@ export function VideoWorkspace() {
   const [suggestions, setSuggestions] = useState<VideoSuggestion[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<VideoSuggestion>();
   const [source, setSource] = useState<SuggestionSource>('Threshold');
-  const [processMode, setProcessMode] = useState<ProcessMode>(() => initialProcessMode(projectId));
   const [processingOptions, setProcessingOptions] = useState<ProcessingOptions>({
     threshold_available: true,
     model_available: false,
@@ -220,12 +209,17 @@ export function VideoWorkspace() {
   const [exportOpen, setExportOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [historyUnavailable, setHistoryUnavailable] = useState<'undo' | 'redo' | null>(null);
 
   projectRef.current = project;
   activeIdRef.current = active?.video_id;
   frameRef.current = frame;
 
   useEffect(() => () => { activeIdRef.current = undefined; }, []);
+
+  useEffect(() => {
+    setHistoryUnavailable(null);
+  }, [revision]);
 
   const refreshShell = useCallback(async () => {
     const [projectData, videoRows, jobRows, options] = await Promise.all([
@@ -402,8 +396,6 @@ export function VideoWorkspace() {
     return () => window.clearTimeout(timer);
   }, [active?.video_id, selectedTrack, frame, source, projectId]);
 
-  useEffect(() => { sessionStorage.setItem(processModeKey(projectId), processMode); }, [processMode, projectId]);
-
   /** #15 — Auto-trigger feature extraction after 5 s of no segment changes. */
   const scheduleFeatureExtraction = useCallback(() => {
     if (featureAutoTimerRef.current) window.clearTimeout(featureAutoTimerRef.current);
@@ -527,9 +519,21 @@ export function VideoWorkspace() {
       setRevision(result.revision);
       setSegments(rows.segments);
       setSelectedSegment(undefined);
+      setHistoryUnavailable(null);
       setMessage(action === 'undo' ? 'Undone.' : 'Redone.');
     } catch (reason) {
-      if (activeIdRef.current === videoId) setError(readableError(reason));
+      if (activeIdRef.current === videoId) {
+        const msg = readableError(reason);
+        if (/nothing to undo/i.test(msg)) {
+          setHistoryUnavailable('undo');
+          setMessage('No earlier annotation changes are available to undo.');
+        } else if (/nothing to redo/i.test(msg)) {
+          setHistoryUnavailable('redo');
+          setMessage('No undone annotation changes are available to redo.');
+        } else {
+          setError(msg);
+        }
+      }
     }
   }
 
@@ -679,17 +683,17 @@ export function VideoWorkspace() {
     setTab('annotate');
   }
 
-  async function handleProcess() {
-    if (!active) return;
+  async function generateSuggestions() {
+    if (!active || source === 'Off') return;
     const videoId = active.video_id;
+    const mode: ProcessMode = source === 'AI' ? 'Model' : 'Threshold';
     setProcessingRequests((current) => new Set(current).add(videoId));
     setError('');
     try {
-      const rows = await processVideo(projectId, videoId, processMode);
+      const rows = await processVideo(projectId, videoId, mode);
       setJobs((current) => upsertJobRows(current, rows));
       if (activeIdRef.current === videoId) {
-        setSource(processMode === 'Threshold' ? 'Threshold' : 'AI');
-        setMessage(`${processMode} processing started.`);
+        setMessage(`${source} suggestion generation started.`);
       }
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(`Processing could not start. ${readableError(reason)}`);
@@ -733,7 +737,8 @@ export function VideoWorkspace() {
     if (files.length === 0) return;
     setError('');
     try {
-      const rows = await importVideos(projectId, files, processMode); // #7: pass mode
+      const mode: ProcessMode = source === 'AI' ? 'Model' : 'Threshold';
+      const rows = await importVideos(projectId, files, mode);
       setVideos((current) => {
         const existing = new Set(current.map((item) => item.video_id));
         return [...current, ...rows.filter((item) => !existing.has(item.video_id))];
@@ -893,12 +898,6 @@ export function VideoWorkspace() {
 
   const modelAvailable = processingOptions.model_available;
   const activeTrack = tracks.find((item) => item.track_id === selectedTrack);
-  const activePipelineJob = active && jobs.find(
-    (job) => job.video_id === active.video_id && ACTIVE_JOB_STATUSES.has(job.status),
-  );
-  const displayedProcessMode: ProcessMode = activePipelineJob?.target_mode === 'model'
-    ? 'Model'
-    : activePipelineJob?.target_mode === 'threshold' ? 'Threshold' : processMode;
   const selectedVideoIndex = videos.findIndex((item) => item.video_id === active?.video_id);
   const activeSegments = segments.filter((item) => selectedTrack === undefined || item.track_id === selectedTrack);
 
@@ -920,8 +919,8 @@ export function VideoWorkspace() {
         </div>
 
         <div className="hidden lg:flex items-center gap-1">
-          <button type="button" title="Undo" onClick={() => void history('undo')} className="toolbar-icon"><Undo2 size={17} /></button>
-          <button type="button" title="Redo" onClick={() => void history('redo')} className="toolbar-icon"><Redo2 size={17} /></button>
+          <button type="button" aria-label="Undo" disabled={historyUnavailable === 'undo'} title={historyUnavailable === 'undo' ? 'No changes available to undo' : 'Undo'} onClick={() => void history('undo')} className="toolbar-icon disabled:opacity-30"><Undo2 size={17} /></button>
+          <button type="button" aria-label="Redo" disabled={historyUnavailable === 'redo'} title={historyUnavailable === 'redo' ? 'No changes available to redo' : 'Redo'} onClick={() => void history('redo')} className="toolbar-icon disabled:opacity-30"><Redo2 size={17} /></button>
           <button type="button" title="Previous video" disabled={selectedVideoIndex <= 0} onClick={() => setActive(videos[selectedVideoIndex - 1])} className="toolbar-icon disabled:opacity-30"><ChevronLeft size={17} /></button>
           <button type="button" title="Next video" disabled={selectedVideoIndex < 0 || selectedVideoIndex >= videos.length - 1} onClick={() => setActive(videos[selectedVideoIndex + 1])} className="toolbar-icon disabled:opacity-30"><ChevronRight size={17} /></button>
         </div>
@@ -933,27 +932,16 @@ export function VideoWorkspace() {
           </span>
 
           {/* #5 — Source selector compact dropdown in navbar */}
-          <select
-            aria-label="Suggestion source"
-            value={source}
-            onChange={(e) => setSource(e.target.value as SuggestionSource)}
-            className="h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 font-label text-label-sm"
-          >
-            <option value="Off">Suggestions: Off</option>
-            <option value="Threshold">Suggestions: Threshold</option>
-            <option value="AI" disabled={!modelAvailable}>Suggestions: AI</option>
-          </select>
-
           <button type="button" onClick={() => setHelpOpen(true)} className="h-8 px-2 border border-outline-variant rounded font-label text-label-sm flex items-center gap-1"><HelpCircle size={15} />Help</button>
 
-          <ProcessModeButton
-            mode={displayedProcessMode}
+          <SuggestionModeButton
+            source={source}
             disabled={!active}
-            processing={Boolean(active && processingRequests.has(active.video_id)) || activeProcessing}
+            generating={Boolean(active && processingRequests.has(active.video_id)) || activeProcessing}
             modelAvailable={modelAvailable}
             modelUnavailableReason={processingOptions.model_message ?? 'Model suggestions are unavailable.'}
-            onModeChange={setProcessMode}
-            onProcess={() => void handleProcess()}
+            onSourceChange={setSource}
+            onGenerate={() => void generateSuggestions()}
           />
 
           {/* #9 — Export Dataset button replaces "Complete & Next" */}
@@ -1152,6 +1140,19 @@ export function VideoWorkspace() {
                                 >
                                   {track.include_in_export ? 'Exclude' : 'Restore'}
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (window.confirm('Delete this track and all its segments?')) {
+                                      deleteVideoTrack(projectId, active.video_id, track.track_id)
+                                        .then(() => reloadActive())
+                                        .catch(e => setError(readableError(e)));
+                                    }
+                                  }}
+                                  className="panel-button flex-1 text-error border-error/50 hover:bg-error/10 hover:border-error"
+                                >
+                                  Delete
+                                </button>
                               </div>
                             )}
                           </div>
@@ -1167,21 +1168,21 @@ export function VideoWorkspace() {
                   {/* ── Segment editor ── */}
                   <section className="border-t border-outline-variant pt-3">
                     <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">Segment</p>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2 mt-2">
                       <label className="text-label-sm">Start<input aria-label="Start" type="number" value={start} onChange={(e) => setStart(Number(e.target.value))} className="editor-input" /></label>
                       <label className="text-label-sm">End<input aria-label="End" type="number" value={end} onChange={(e) => setEnd(Number(e.target.value))} className="editor-input" /></label>
                     </div>
                     {active && (
-                      <>
-                        <input aria-label="Drag start boundary" type="range" min={activeTrack?.start_frame ?? 0} max={activeTrack?.end_frame ?? active.canonical_frame_count - 1} value={start} onChange={(e) => setStart(Math.min(Number(e.target.value), end))} onPointerUp={() => selectedSegment && void saveSegment()} className="w-full mt-2" />
-                        <input aria-label="Drag end boundary" type="range" min={activeTrack?.start_frame ?? 0} max={activeTrack?.end_frame ?? active.canonical_frame_count - 1} value={end} onChange={(e) => setEnd(Math.max(Number(e.target.value), start))} onPointerUp={() => selectedSegment && void saveSegment()} className="w-full" />
-                      </>
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <button type="button" onClick={() => setStart(frame)} className="h-8 border border-outline-variant hover:border-primary rounded font-label text-label-sm transition-colors">+ Start Point</button>
+                        <button type="button" onClick={() => setEnd(frame)} className="h-8 border border-outline-variant hover:border-primary rounded font-label text-label-sm transition-colors">+ End Point</button>
+                      </div>
                     )}
 
                     {/* Class selector */}
                     <div className="grid grid-cols-3 gap-1 mt-2">
                       {(['others', 'running', 'falling'] as HumanVideoLabel[]).map((value) => (
-                        <button type="button" key={value} onClick={() => setLabel(value)} className={`h-8 rounded border text-label-sm capitalize ${label === value ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>{value}</button>
+                        <button type="button" key={value} onClick={() => setLabel(value)} className={`h-8 rounded border text-label-sm capitalize ${label === value ? 'border-primary bg-primary/10 text-primary' : 'border-outline-variant text-on-surface-variant hover:border-primary/50'}`} style={{ borderLeftWidth: label === value ? '1px' : '4px', borderLeftColor: LABEL_COLORS[value] }}>{value}</button>
                       ))}
                     </div>
 
@@ -1195,42 +1196,6 @@ export function VideoWorkspace() {
                       )}
                     </div>
 
-                    {/* #17 — Rearranged action buttons: cleaner two-row grid */}
-                    {active && activeTrack && (
-                      <div className="grid grid-cols-3 gap-1 mt-2">
-                        <button type="button" className="panel-button" onClick={() => void labelFullVideoTrack(projectId, active.video_id, activeTrack.track_id, label, revision).then(() => refreshSegments()).catch((r) => setError(readableError(r)))}>Full track</button>
-                        <button type="button" disabled={!selectedSegment} className="panel-button disabled:opacity-40" onClick={() => selectedSegment && void splitVideoSegment(projectId, active.video_id, selectedSegment.segment_id, frame, revision).then(() => refreshSegments()).catch((r) => setError(readableError(r)))}>Split</button>
-                        <button type="button" disabled={!selectedSegment} className="panel-button disabled:opacity-40" onClick={() => selectedSegment && void extendVideoSegment(projectId, active.video_id, selectedSegment.segment_id, revision).then(() => refreshSegments()).catch((r) => setError(readableError(r)))}>Extend</button>
-                        <button type="button" className="panel-button" onClick={() => {
-                          const previous = segments.filter((item) => item.track_id === activeTrack.track_id && item.end_frame < start).sort((a, b) => b.end_frame - a.end_frame)[0];
-                          if (previous) setLabel(previous.label);
-                        }}>Copy prev</button>
-                        <button
-                          type="button"
-                          disabled={!selectedSegment}
-                          className="panel-button disabled:opacity-40"
-                          onClick={() => {
-                            const adjacent = segments.filter((item) =>
-                              selectedSegment
-                              && item.segment_id !== selectedSegment.segment_id
-                              && item.track_id === selectedSegment.track_id
-                              && item.label === selectedSegment.label
-                              && (item.end_frame + 1 === selectedSegment.start_frame || selectedSegment.end_frame + 1 === item.start_frame),
-                            );
-                            if (selectedSegment && adjacent[0]) {
-                              void mergeVideoSegments(projectId, active.video_id, [selectedSegment.segment_id, adjacent[0].segment_id], revision)
-                                .then(() => refreshSegments())
-                                .catch((r) => setError(readableError(r)));
-                            }
-                          }}
-                        >
-                          Merge adj
-                        </button>
-                        <button type="button" disabled={!selectedSegment} className="panel-button disabled:opacity-40" onClick={() => void toggleSegmentInclusion()}>
-                          {selectedSegment?.include_in_export ? 'Exclude' : 'Include'}
-                        </button>
-                      </div>
-                    )}
                   </section>
 
                   {/* #3 — Fill unlabeled gaps */}
@@ -1266,21 +1231,31 @@ export function VideoWorkspace() {
                       <p className="font-label text-label-caps uppercase text-on-surface-variant mb-2">Segments ({activeSegments.length})</p>
                       <div className="space-y-1 max-h-48 overflow-y-auto">
                         {activeSegments.map((seg) => (
-                          <button
-                            key={seg.segment_id}
-                            type="button"
-                            onClick={() => chooseSegment(seg)}
-                            className={`w-full p-2 rounded text-left border text-label-sm ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}
-                          >
-                            <div className="flex items-center gap-2">
+                          <div key={seg.segment_id} className={`w-full rounded text-left border overflow-hidden ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>
+                            <button
+                              type="button"
+                              onClick={() => chooseSegment(seg)}
+                              className="w-full p-2 text-label-sm flex items-center gap-2"
+                            >
                               <span
                                 className="w-2 h-2 rounded-full shrink-0"
                                 style={{ background: LABEL_COLORS[seg.label] }}
                               />
                               <span className="capitalize font-medium">{seg.label}</span>
                               <span className="text-on-surface-variant ml-auto">{seg.start_frame}–{seg.end_frame}</span>
-                            </div>
-                          </button>
+                            </button>
+                            {selectedSegment?.segment_id === seg.segment_id && (
+                               <div className="px-2 pb-2 flex gap-2">
+                                 <button type="button" onClick={() => void removeSegment()} className="h-6 px-2 bg-error/10 border border-error/50 text-error rounded text-[11px] font-medium hover:bg-error/20 transition-colors">Delete</button>
+                                 <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => {
+                                    if (!active) return;
+                                    splitVideoSegment(projectId, active.video_id, seg.segment_id, frame, revision)
+                                      .then(() => refreshSegments())
+                                      .catch(e => setError(readableError(e)));
+                                 }} className="h-6 px-2 bg-surface-container border border-outline-variant rounded text-[11px] hover:border-primary/50 disabled:opacity-40 transition-colors">Split at frame</button>
+                               </div>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </section>
@@ -1327,10 +1302,10 @@ export function VideoWorkspace() {
                 <button
                   type="button"
                   onClick={() => void handleApproveToggle()}
-                  className={`w-full h-9 rounded font-label text-label-sm font-bold flex items-center justify-center gap-2 ${
+                  className={`w-full h-9 rounded font-label text-label-sm font-bold flex items-center justify-center gap-2 transition-colors ${
                     active.is_approved
-                      ? 'bg-surface-container text-on-surface border border-outline-variant'
-                      : 'bg-primary-container text-on-primary-container'
+                      ? 'bg-error/10 text-error border border-error/50 hover:bg-error/20'
+                      : 'bg-primary-container text-on-primary-container hover:brightness-110'
                   }`}
                 >
                   {active.is_approved ? (

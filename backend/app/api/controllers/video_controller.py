@@ -244,6 +244,11 @@ def set_track_inclusion(project_id: str, video_id: str, track_id: int, payload: 
     return service.set_track_inclusion(video_id, track_id, payload.include, payload.reason)
 
 
+@router.delete("/{project_id}/videos/{video_id}/tracks/{track_id}")
+def delete_track(project_id: str, video_id: str, track_id: int, service: VideoAnnotationService = Depends(get_video_annotation_service)) -> dict[str, Any]:
+    return service.delete_track(video_id, track_id)
+
+
 @router.get("/{project_id}/videos/{video_id}/segments")
 def list_segments(project_id: str, video_id: str, track_id: int | None = None, service: VideoAnnotationService = Depends(get_video_annotation_service)) -> dict[str, Any]:
     return service.segment_snapshot(video_id, track_id)

@@ -19,6 +19,7 @@ from backend.app.domain.errors import (
 )
 from backend.app.domain.video import (
     FEATURE_SCHEMA_VERSION,
+    TRACKING_CACHE_VERSION,
     WINDOW_CONFIG_VERSION,
     canonical_frame_mapping,
     project_config,
@@ -300,7 +301,7 @@ class VideoService:
         pose_version = video.get("pose_cache_version")
         pose_ready = bool(
             pose_version
-            and video.get("tracking_cache_version")
+            and video.get("tracking_cache_version") == TRACKING_CACHE_VERSION
             and self.storage.artifact_path(
                 project_id,
                 "pose",
@@ -310,6 +311,8 @@ class VideoService:
         )
         feature_version = video.get("feature_cache_version")
         feature_ready = bool(
+            pose_ready
+            and
             feature_version == FEATURE_SCHEMA_VERSION
             and video.get("window_cache_version") == WINDOW_CONFIG_VERSION
             and self.storage.artifact_path(

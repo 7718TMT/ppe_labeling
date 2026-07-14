@@ -91,3 +91,49 @@ def test_feature_cache_and_threshold_suggestions_are_separate_from_annotations(t
     service.generate_threshold_suggestions(video["video_id"])
     assert repository.list_segments(video["video_id"]) == before
     assert repository.get_project(project["project_id"])["active_threshold_profile_id"]
+
+
+def test_pending_suggestions_become_editable_ground_truth_once(tmp_path: Path) -> None:
+    repository, storage, project, video = setup_feature_video(tmp_path)
+    profile_id = project["active_threshold_profile_id"]
+    repository.replace_threshold_suggestions(
+        video["video_id"],
+        profile_id,
+        [{
+            "track_id": 1, "start_frame": 12, "end_frame": 48,
+            "suggested_label": "running", "confidence": 0.91,
+            "triggered_conditions_json": "[\"sustained_running_score\"]",
+            "supporting_features_json": "{}", "quality_status": "good",
+            "review_status": "pending", "artifact_key": "running-12-48",
+        }],
+    )
+
+    created = VideoAnnotationService(repository, storage).materialize_suggestions(
+        video["video_id"], "threshold"
+    )
+
+    assert len(created) == 3
+    segments = repository.list_segments(video["video_id"])
+    assert [(item["start_frame"], item["end_frame"], item["label"]) for item in segments] == [
+        (0, 11, "others"), (12, 48, "running"), (49, 119, "others"),
+    ]
+    assert segments[1]["source_type"] == "threshold"
+    assert segments[1]["source_id"]
+    assert segments[0]["source_type"] == "auto_default"
+    assert repository.get_video(video["video_id"])["annotation_status"] == "labeled"
+    assert repository.list_suggestions("threshold_suggestions", video["video_id"])[0]["review_status"] == "accepted"
+    assert VideoAnnotationService(repository, storage).suggestions("threshold", video["video_id"]) == []
+    assert VideoAnnotationService(repository, storage).materialize_suggestions(video["video_id"], "threshold") == []
+
+
+def test_tracks_receive_an_others_segment_when_no_suggestions_are_generated(tmp_path: Path) -> None:
+    repository, storage, _project, video = setup_feature_video(tmp_path)
+
+    created = VideoAnnotationService(repository, storage).materialize_suggestions(
+        video["video_id"], "threshold"
+    )
+
+    assert [(item["start_frame"], item["end_frame"], item["label"]) for item in created] == [
+        (0, 119, "others"),
+    ]
+    assert repository.get_video(video["video_id"])["annotation_status"] == "labeled"

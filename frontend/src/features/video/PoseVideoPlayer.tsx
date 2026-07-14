@@ -223,9 +223,9 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
             const isActive = track.track_id === selectedTrack;
             // Look up the class label at the current frame for bbox annotation (#14)
             const classLabel = segmentLabelAt(currentSegments, track.track_id, currentFrame);
-            const classColor = classLabel ? LABEL_COLORS[classLabel] : undefined;
-            const bboxStroke = isActive ? '#57f1db' : '#f59e0b';
-            const bboxFill = isActive ? '#2dd4bf' : '#b45309';
+            const baseColor = classLabel ? LABEL_COLORS[classLabel] : '#64748b';
+            const bboxStroke = isActive ? baseColor : `${baseColor}cc`;
+            const bboxFill = baseColor;
 
             return (
               <g
@@ -252,14 +252,14 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       y={Math.max(0, track.bbox[1] - 22)}
                       width={classLabel ? 120 : 72}
                       height={20}
-                      fill={classColor ?? bboxFill}
+                      fill={bboxFill}
                     />
                     {/* Label text: TRACK N · class (#14) */}
                     <text
                       x={track.bbox[0] + 4}
                       y={Math.max(14, track.bbox[1] - 6)}
                       fontSize="11"
-                      fill="#09100e"
+                      fill="#fff"
                       fontWeight="bold"
                     >
                       {`T${track.track_id}${classLabel ? ` · ${classLabel}` : ''}`}
@@ -276,7 +276,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       y1={track.keypoints[start][1]}
                       x2={track.keypoints[end][0]}
                       y2={track.keypoints[end][1]}
-                      stroke={isActive ? '#57f1db' : '#fbbf24'}
+                      stroke={isActive ? baseColor : `${baseColor}bb`}
                       strokeWidth="2"
                       vectorEffect="non-scaling-stroke"
                     />

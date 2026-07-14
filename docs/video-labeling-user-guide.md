@@ -4,8 +4,11 @@ This guide is for annotators using the Pose module. The same application also
 contains the PPE and Sign image-labeling modules.
 
 Pose is a labeling-only workflow. It does not train models, split datasets, or
-evaluate model performance. Threshold and Model results are suggestions only;
-they never become human labels until an annotator accepts or modifies them.
+evaluate model performance. After processing an initially unlabeled video, the
+selected Threshold or AI results are automatically added as editable ground-
+truth segments. Remaining detected-track ranges are labeled `others`, so every
+track has an initial complete label timeline. Suggestion provenance is retained
+for audit.
 
 ## 1. Start the complete application
 
@@ -74,27 +77,36 @@ video has a teal border and highlight.
 
 ## 4. Process a video
 
-The top toolbar has a split control:
+The top toolbar has one split **Suggestions** control:
 
 ```text
-[ Process: Threshold ] [ v ]
+[ Suggestions: Threshold ] [ v ]
 ```
 
 or:
 
 ```text
-[ Process: Model ] [ v ]
+[ Suggestions: AI ] [ v ]
 ```
 
-1. Select the arrow only when you want to change mode.
-2. Choose **Threshold** or **Model**.
-3. Select the main button to start immediately with the displayed mode.
+1. Select the arrow only when you want to change the displayed source.
+2. Choose **Threshold**, **AI**, or **Off**.
+3. With Threshold or AI selected, select the main button to generate
+   suggestions for the current video with that method.
 
-The choice is remembered for the current browser session and project. The main
-button is disabled while the selected video already has active processing.
+The selected source is remembered for the project. It also determines the
+method automatically queued for videos imported next: Threshold queues the
+threshold workflow and AI queues the compatible model workflow. **Off** hides
+suggestions and disables generation; imports use Threshold while Off is active.
+The main button is disabled while the selected video already has active
+processing.
+
+When processing finishes, the generated segments appear in both the timeline's
+human-label bar and the segment group. Review, edit, delete, or approve them as
+needed; they are included as ground-truth annotations even before review.
 
 - **Threshold** generates falling and running suggestions from motion rules.
-- **Model** uses the compatible pretrained model configured by the application
+- **AI** uses the compatible pretrained model configured by the application
   administrator.
 
 If Model is unavailable, its option is disabled with a short explanation. Model
@@ -112,6 +124,14 @@ Generating suggestions
 
 Use its controls to pause, resume, cancel, or retry a failed job. Processing one
 video does not block labeling another ready video.
+
+For fast falls and rotations, the worker uses a heavier BoT-SORT profile with a
+dedicated appearance encoder. It keeps an interrupted worker track alive for up
+to three seconds and compares 512-value appearance embeddings before it creates
+a new ID. A reprocessed video records this profile as
+`botsort-dedicated-reid-v3`. This improves continuity but does not replace
+reviewer track-merge and split controls when people overlap or leave the camera
+view.
 
 ## 5. Understand the workspace
 

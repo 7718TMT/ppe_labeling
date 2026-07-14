@@ -121,7 +121,7 @@ export function VideoBrowser({
                   selected
                     ? 'border-primary bg-primary/10 ring-1 ring-primary/50'
                     : 'border-outline-variant bg-surface-container-lowest hover:border-on-surface-variant hover:bg-surface-container-high'
-                } ${deleting ? 'opacity-50 pointer-events-none' : ''}`}
+                } ${video.is_approved ? 'border-l-4 border-l-emerald-500' : ''} ${deleting ? 'opacity-50 pointer-events-none' : ''}`}
                 style={{ top: (start + offset) * ROW_HEIGHT + 4 }}
               >
                 <div className="flex gap-2 h-full">
@@ -152,7 +152,7 @@ export function VideoBrowser({
                             onDelete(video);
                           }}
                           onKeyDown={(event) => event.stopPropagation()}
-                          className="w-7 h-7 -mt-1 -mr-1 rounded flex items-center justify-center text-on-surface-variant hover:text-error hover:bg-error-container/20 disabled:opacity-40"
+                          className="w-7 h-7 -mt-1 -mr-1 rounded flex items-center justify-center text-error hover:bg-error/10 disabled:opacity-40"
                         >
                           {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                         </button>

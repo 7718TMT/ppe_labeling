@@ -199,3 +199,55 @@ was unavailable. Manually verify at desktop and narrow widths:
 - Motion details intentionally remain a read-only compact score/heatmap view
   under Details; numeric threshold and model configuration stays out of the
   annotator interface as required by this UX pass.
+
+## Unified suggestion control (2026-07-14)
+
+- [x] Replaced the separate source selector and Process split button with one
+  Suggestions split control.
+- [x] Its selected Threshold or AI source both controls the visible suggestion
+  overlay and starts generation for the active video; Off remains display-only.
+- [x] New video imports automatically queue the selected Threshold or AI method
+  (Threshold is used when the display source is Off).
+- [x] Frontend component and workspace tests: `54 passed`; production build
+  passed. The build check also exposed and corrected a stale split-segment
+  callback that referenced undefined identifiers.
+
+## Automatic suggestion materialization (2026-07-14)
+
+- [x] Changed the requested workflow so completed Threshold or AI suggestions
+  automatically create editable, exportable ground-truth segments for an
+  initially unlabeled video.
+- [x] Segments retain their source and suggestion ID; later regeneration does
+  not overwrite reviewer-created or edited segments.
+- [x] Every detected track receives a complete initial timeline: accepted
+  Threshold/AI segments where available and `others` for uncovered ranges.
+- [x] Focused backend verification: `15 passed` across feature, processing, and
+  worker-materialization coverage.
+- [x] Full verification: backend `97 passed`; frontend `54 passed`; frontend
+  production build passed.
+
+## Clear exhausted-history feedback (2026-07-14)
+
+- [x] Undo and redo exhaustion now produces a plain-language workspace message
+  and disables that unavailable action until the annotation history changes.
+- [x] Frontend verification: `55 passed`; production build passed.
+
+## Fast-fall tracking continuity (2026-07-14)
+
+- [x] Replaced the default motion-only tracking profile with repository-owned
+  BoT-SORT `botsort-dedicated-reid-v3`.
+- [x] Replaced native detector embeddings with a dedicated 512-dimension
+  Ultralytics appearance encoder at `weights/reid.pt`; tuned recovery,
+  association, and the 72-frame lost-track buffer for fall-and-rotation motion.
+- [x] Older tracking caches are treated as stale, so the next processing run
+  re-tracks an existing video before regenerating its features and suggestions.
+- [x] The dedicated encoder loads and produces a 512-dimension embedding.
+- [x] Focused processing tests: `10 passed`; full backend suite: `98 passed`.
+
+## Segment action simplification (2026-07-14)
+
+- [x] Removed the redundant Full track, Split, Extend, Copy prev, Merge adj,
+  and Include/Exclude action group from the annotation panel.
+- [x] Kept the per-segment-card split and delete actions as the primary editing
+  controls.
+- [x] Frontend tests: `55 passed`; production build passed.
