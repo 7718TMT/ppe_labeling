@@ -141,10 +141,11 @@ export async function processVideo(
   projectId: string,
   videoId: string,
   mode: 'Threshold' | 'Model',
+  overwriteLabels = false,
 ): Promise<ProcessingJob[]> {
   return (await api.post<ProcessingJob[]>(
     `/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/process`,
-    { mode: mode.toLowerCase(), priority: 1000 },
+    { mode: mode.toLowerCase(), priority: 1000, ...(overwriteLabels ? { overwrite_labels: true } : {}) },
   )).data;
 }
 

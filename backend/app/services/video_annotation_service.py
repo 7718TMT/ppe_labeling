@@ -175,12 +175,24 @@ class VideoAnnotationService:
         return revision
 
     def extend_segment(self, video_id: str, segment_id: str, expected_revision: int) -> dict[str, Any]:
-        segment = next((item for item in self.repository.list_segments(video_id) if item["segment_id"] == segment_id), None)
+        segments = self.repository.list_segments(video_id)
+        segment = next((item for item in segments if item["segment_id"] == segment_id), None)
         if segment is None:
             raise VideoResourceNotFoundError("Segment not found")
         track = self.repository.get_track(video_id, int(segment["track_id"]))
+        track_segments = sorted(
+            (item for item in segments if int(item["track_id"]) == int(segment["track_id"]) and item["segment_id"] != segment_id),
+            key=lambda item: int(item["start_frame"]),
+        )
+        preceding = [item for item in track_segments if int(item["end_frame"]) < int(segment["start_frame"])]
+        previous = preceding[-1] if preceding else None
+        next_segment = next((item for item in track_segments if int(item["start_frame"]) > int(segment["end_frame"])), None)
+        start_frame = int(previous["end_frame"]) + 1 if previous else int(track["start_frame"])
+        end_frame = int(next_segment["start_frame"]) - 1 if next_segment else int(track["end_frame"])
+        if start_frame == int(segment["start_frame"]) and end_frame == int(segment["end_frame"]):
+            return {"segment": segment, "revision": int(self.repository.get_video(video_id)["annotation_revision"])}
         return self.save_segment(
-            video_id, int(segment["track_id"]), int(track["start_frame"]), int(track["end_frame"]),
+            video_id, int(segment["track_id"]), start_frame, end_frame,
             segment["label"], expected_revision, segment_id,
         )
 

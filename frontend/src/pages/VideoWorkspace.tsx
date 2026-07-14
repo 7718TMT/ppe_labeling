@@ -55,6 +55,7 @@ import {
   deleteVideo as deleteImportedVideo,
   deleteVideoSegment,
   deleteVideoTrack,
+  extendVideoSegment,
   getProcessingOptions,
   getFeatures,
   getPoseOverlay,
@@ -155,6 +156,7 @@ export function VideoWorkspace() {
   const pendingMediaSeekRef = useRef<{ videoId: string; seconds: number }>();
   const workspaceSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const savingRequestCountRef = useRef(0);
+  const deletingSegmentIdRef = useRef<string>();
   const featureAutoTimerRef = useRef<number>();
   const overlayCacheRef = useRef<{
     videoId?: string;
@@ -532,23 +534,60 @@ export function VideoWorkspace() {
   async function removeSegment() {
     if (!active || !selectedSegment) return;
     const videoId = active.video_id;
+    const deletingSegment = selectedSegment;
+    if (deletingSegmentIdRef.current === deletingSegment.segment_id) return;
+    deletingSegmentIdRef.current = deletingSegment.segment_id;
+    setSegments((current) => current.filter((item) => item.segment_id !== deletingSegment.segment_id));
+    setSelectedSegment(undefined);
+    setCreatingSegment(false);
+    setMessage('Segment deleted.');
     savingRequestCountRef.current += 1;
     setSaving(true);
     try {
-      const result = await deleteVideoSegment(projectId, videoId, selectedSegment.segment_id, revision);
+      const result = await deleteVideoSegment(projectId, videoId, deletingSegment.segment_id, revision);
       if (activeIdRef.current === videoId) {
         setRevision(result.revision);
-        setSegments((current) => current.filter((item) => item.segment_id !== selectedSegment.segment_id));
-        setSelectedSegment(undefined);
-        setCreatingSegment(false);
-        setMessage('Segment deleted.');
         scheduleFeatureExtraction(); // #15
       }
     } catch (reason) {
-      if (activeIdRef.current === videoId) setError(readableError(reason));
+      if (activeIdRef.current === videoId) {
+        setSegments((current) => current.some((item) => item.segment_id === deletingSegment.segment_id)
+          ? current
+          : [...current, deletingSegment].sort((left, right) => left.start_frame - right.start_frame));
+        setError(`Could not delete the segment. ${readableError(reason)}`);
+      }
     } finally {
+      if (deletingSegmentIdRef.current === deletingSegment.segment_id) {
+        deletingSegmentIdRef.current = undefined;
+      }
       savingRequestCountRef.current = Math.max(0, savingRequestCountRef.current - 1);
       setSaving(savingRequestCountRef.current > 0);
+    }
+  }
+
+  async function expandSegment(segment: VideoSegment) {
+    if (!active) return;
+    const videoId = active.video_id;
+    try {
+      const result = await extendVideoSegment(projectId, videoId, segment.segment_id, revision);
+      if (activeIdRef.current !== videoId) return;
+      setRevision(result.revision);
+      setSegments((current) => current.map((item) =>
+        item.segment_id === result.segment.segment_id ? result.segment : item,
+      ).sort((left, right) => left.start_frame - right.start_frame));
+      if (selectedSegment?.segment_id === segment.segment_id) {
+        setSelectedSegment(result.segment);
+        setStart(result.segment.start_frame);
+        setEnd(result.segment.end_frame);
+      }
+      if (result.segment.start_frame === segment.start_frame && result.segment.end_frame === segment.end_frame) {
+        setMessage('No surrounding gap to expand into.');
+      } else {
+        setMessage('Segment expanded into surrounding gaps.');
+        scheduleFeatureExtraction();
+      }
+    } catch (reason) {
+      if (activeIdRef.current === videoId) setError(readableError(reason));
     }
   }
 
@@ -715,10 +754,16 @@ export function VideoWorkspace() {
     if (!active || source === 'Off') return;
     const videoId = active.video_id;
     const mode: ProcessMode = source === 'AI' ? 'Model' : 'Threshold';
+    const overwriteLabels = segments.length > 0;
+    if (overwriteLabels && !window.confirm(
+      'This video already has labels. Generating new suggestions will replace all current labels. Continue?',
+    )) return;
     setProcessingRequests((current) => new Set(current).add(videoId));
     setError('');
     try {
-      const rows = await processVideo(projectId, videoId, mode);
+      const rows = overwriteLabels
+        ? await processVideo(projectId, videoId, mode, true)
+        : await processVideo(projectId, videoId, mode);
       setJobs((current) => upsertJobRows(current, rows));
       if (activeIdRef.current === videoId) {
         setMessage(`${source} suggestion generation started.`);
@@ -913,12 +958,26 @@ export function VideoWorkspace() {
     function key(event: KeyboardEvent) {
       if (helpOpen || pendingDelete) return;
       const target = event.target;
-      if (target instanceof HTMLElement && (
+      const editingText = target instanceof HTMLElement && (
         target.isContentEditable
-        || target.closest('input, textarea, select, button, a, [contenteditable="true"]')
-      )) return;
+        || target.closest('input, textarea, select, [contenteditable="true"]')
+      );
+      if (editingText) return;
       if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); void history('undo'); return; }
       if (event.ctrlKey && event.key.toLowerCase() === 'y') { event.preventDefault(); void history('redo'); return; }
+      if (event.key === 'Escape' && selectedSegment) {
+        event.preventDefault();
+        setSelectedSegment(undefined);
+        setCreatingSegment(false);
+        setMergeSegmentId(undefined);
+        return;
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedSegment) {
+        event.preventDefault();
+        void removeSegment();
+        return;
+      }
+      if (target instanceof HTMLElement && target.closest('button, a')) return;
       const actions: Record<string, () => void> = {
         ' ': () => void togglePlay(),
         ArrowLeft: () => seek(frame - (event.shiftKey ? 10 : 1)),
@@ -1179,7 +1238,7 @@ export function VideoWorkspace() {
                                   onClick={() => void splitVideoTrack(projectId, active.video_id, track.track_id, frame).then(() => reloadActive()).catch((r) => setError(readableError(r)))}
                                   className="panel-button flex-1"
                                 >
-                                  Split here
+                                  Split
                                 </button>
                                 <button
                                   type="button"
@@ -1227,13 +1286,14 @@ export function VideoWorkspace() {
                             </button>
                             {selectedSegment?.segment_id === seg.segment_id && (
                               <div className="px-2 pb-2 flex gap-2">
-                                <button type="button" onClick={() => void removeSegment()} className="h-6 px-2 bg-error/10 border border-error/50 text-error rounded text-[11px] font-medium hover:bg-error/20 transition-colors">Delete</button>
                                 <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => {
                                   if (!active) return;
                                   splitVideoSegment(projectId, active.video_id, seg.segment_id, frame, revision)
                                     .then(() => refreshSegments())
                                     .catch(e => setError(readableError(e)));
-                                }} className="h-6 px-2 bg-surface-container border border-outline-variant rounded text-[11px] hover:border-primary/50 disabled:opacity-40 transition-colors">Split at frame</button>
+                                }} className="panel-button flex-1 disabled:opacity-40">Split</button>
+                                <button type="button" onClick={() => void expandSegment(seg)} className="panel-button flex-1">Expand</button>
+                                <button type="button" onClick={() => void removeSegment()} className="panel-button flex-1 text-error border-error/50 hover:bg-error/10 hover:border-error">Delete</button>
                               </div>
                             )}
                           </div>
@@ -1265,9 +1325,6 @@ export function VideoWorkspace() {
                             <button type="button" onClick={() => void saveSegment()} className="h-8 px-3 bg-primary-container text-on-primary-container rounded flex-1 font-label text-label-sm">
                               {selectedSegment ? 'Modify segment' : 'Add segment'}
                             </button>
-                            {selectedSegment && (
-                              <button type="button" onClick={() => void removeSegment()} className="h-8 px-3 border border-error/50 text-error rounded font-label text-label-sm">Delete</button>
-                            )}
                           </div>
                         </div>
                       )}

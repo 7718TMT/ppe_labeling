@@ -160,6 +160,50 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
 
+  it('deletes a selected timeline segment with Delete even while its bar has focus', async () => {
+    vi.mocked(api.getVideoSegments).mockResolvedValue({
+      revision: 4,
+      segments: [{
+        segment_id: 'delete-me', track_id: 1, start_frame: 0, end_frame: 10,
+        label: 'others', quality_status: 'good', include_in_export: 1,
+        source_type: 'manual',
+      }],
+    });
+    vi.mocked(api.deleteVideoSegment).mockResolvedValue({ revision: 5 });
+    renderWorkspace();
+    const segment = await screen.findByTitle(/others frames 0.*10/);
+    fireEvent.click(segment);
+    fireEvent.keyDown(segment, { key: 'Delete' });
+
+    await waitFor(() => expect(api.deleteVideoSegment).toHaveBeenCalledWith('p1', 'v1', 'delete-me', 4));
+    expect(screen.queryByTitle(/others frames 0.*10/)).not.toBeInTheDocument();
+  });
+
+  it('expands a selected segment only through its surrounding gaps', async () => {
+    vi.mocked(api.getVideoSegments).mockResolvedValue({
+      revision: 4,
+      segments: [{
+        segment_id: 'expand-me', track_id: 1, start_frame: 20, end_frame: 30,
+        label: 'running', quality_status: 'good', include_in_export: 1,
+        source_type: 'manual',
+      }],
+    });
+    vi.mocked(api.extendVideoSegment).mockResolvedValue({
+      revision: 5,
+      segment: {
+        segment_id: 'expand-me', track_id: 1, start_frame: 0, end_frame: 119,
+        label: 'running', quality_status: 'good', include_in_export: 1,
+        source_type: 'manual',
+      },
+    });
+    renderWorkspace();
+    fireEvent.click(await screen.findByTitle(/running frames 20.*30/));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+
+    await waitFor(() => expect(api.extendVideoSegment).toHaveBeenCalledWith('p1', 'v1', 'expand-me', 4));
+    expect(await screen.findByRole('status')).toHaveTextContent('Segment expanded into surrounding gaps.');
+  });
+
   it('explains exhausted undo history without presenting a technical error', async () => {
     vi.mocked(api.videoHistoryAction).mockRejectedValueOnce(new Error('Nothing to undo'));
     renderWorkspace();
@@ -180,6 +224,27 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Threshold suggestion generation started');
   });
 
+  it('confirms before overwriting existing labels with new suggestions', async () => {
+    vi.mocked(api.getVideoSegments).mockResolvedValue({
+      revision: 1,
+      segments: [{
+        segment_id: 'existing', track_id: 1, start_frame: 0, end_frame: 10,
+        label: 'running', quality_status: 'good', include_in_export: 1,
+        source_type: 'manual',
+      }],
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderWorkspace();
+    await screen.findByTitle(/running frames 0.*10/);
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestion' }));
+    expect(confirm).toHaveBeenCalled();
+    expect(api.processVideo).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Suggestion' }));
+    await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Threshold', true));
+  });
+
   it('shows the actual persisted mode for an active pipeline', async () => {
     vi.mocked(api.getProcessingOptions).mockResolvedValue({
       threshold_available: true,
@@ -195,7 +260,7 @@ describe('VideoWorkspace', () => {
     expect(screen.getByRole('button', { name: 'Suggestion' })).toBeDisabled();
   });
 
-  it('generates AI suggestions from the unified control without changing manual labels', async () => {
+  it('generates AI suggestions after confirmed label replacement', async () => {
     vi.mocked(api.getProcessingOptions).mockResolvedValue({
       threshold_available: true,
       model_available: true,
@@ -213,10 +278,11 @@ describe('VideoWorkspace', () => {
     await screen.findByText('Worker 1');
     // Segment title format is now 'running frames 2–10' (#2)
     expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'AI' }));
     fireEvent.click(screen.getByRole('button', { name: 'Suggestion' }));
-    await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Model'));
+    await waitFor(() => expect(api.processVideo).toHaveBeenCalledWith('p1', 'v1', 'Model', true));
     expect(await screen.findByRole('status')).toHaveTextContent('AI suggestion generation started');
     expect(api.saveVideoSegment).not.toHaveBeenCalled();
     expect(screen.getByTitle('running frames 2\u201310')).toBeInTheDocument();

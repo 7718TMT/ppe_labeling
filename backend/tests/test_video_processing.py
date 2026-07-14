@@ -219,6 +219,24 @@ def test_v2_migration_normalizes_jobs_and_enforces_active_uniqueness(
     assert sum(model["is_active"] for model in repository.list_external_models("p1")) == 1
 
 
+def test_confirmed_pipeline_overwrite_clears_existing_segments(tmp_path: Path) -> None:
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    service = VideoService(repository, storage)
+    project = service.create_project("Overwrite")
+    video = _create_video(repository, project["project_id"])
+    repository.replace_tracks(video["video_id"], [_track()])
+    repository.execute(
+        "INSERT INTO video_segments(segment_id,video_id,track_id,start_frame,end_frame,label,annotation_version) VALUES ('old',?,1,0,10,'running',0)",
+        (video["video_id"],),
+    )
+
+    service.queue_pipeline(project["project_id"], video["video_id"], "threshold", overwrite_labels=True)
+
+    assert repository.list_segments(video["video_id"]) == []
+    assert repository.get_video(video["video_id"])["annotation_status"] == "unlabeled"
+
+
 def test_mode_aware_queue_uses_durable_readiness_and_pins_model(
     tmp_path: Path,
 ) -> None:

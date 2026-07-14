@@ -640,6 +640,8 @@ O             set segment end
 T             select threshold generation
 M             select model generation
 S             turn automatic suggestion generation off
+Esc           leave selected segment and return to full-video mode
+Delete        delete selected segment
 X             exclude selected segment/window
 Enter         save
 Ctrl+Z        undo

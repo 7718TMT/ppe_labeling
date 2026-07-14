@@ -256,6 +256,7 @@ class VideoService:
         video_id: str,
         mode: str = "threshold",
         priority: int = 100,
+        overwrite_labels: bool = False,
     ) -> list[dict[str, Any]]:
         """Queue one mode-aware pipeline from the deepest valid cache."""
 
@@ -277,6 +278,9 @@ class VideoService:
                 )
             model_id = str(model["external_model_id"])
 
+        if overwrite_labels:
+            self._clear_labels_for_suggestion_overwrite(video_id)
+
         stage = self._first_pipeline_stage(video, target_mode)
         job = self.repository.enqueue_pipeline_job(
             project_id,
@@ -287,6 +291,23 @@ class VideoService:
             priority,
         )
         return [job]
+
+    def _clear_labels_for_suggestion_overwrite(self, video_id: str) -> None:
+        """Remove current labels after the annotator explicitly confirmed replacement."""
+
+        video = self.repository.get_video(video_id)
+        revision = int(video["annotation_revision"])
+        segments = self.repository.list_segments(video_id)
+        for segment in segments:
+            revision = self.repository.delete_segment(video_id, segment["segment_id"], revision)
+        if segments:
+            self.repository.update_video(
+                video_id,
+                annotation_status="unlabeled",
+                is_approved=0,
+                approval_revision=None,
+                approved_at=None,
+            )
 
     def _first_pipeline_stage(
         self,

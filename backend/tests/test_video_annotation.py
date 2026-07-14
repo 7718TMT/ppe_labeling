@@ -47,6 +47,18 @@ def test_segment_validation_overlap_revision_history_and_approval(tmp_path: Path
     assert updated["revision"] == 3
 
 
+def test_extend_segment_fills_only_adjacent_gaps(tmp_path: Path) -> None:
+    _repository, _storage, service, video = setup_video(tmp_path)
+    service.save_segment(video["video_id"], 1, 10, 20, "others", 0)
+    target = service.save_segment(video["video_id"], 1, 30, 40, "running", 1)["segment"]
+    service.save_segment(video["video_id"], 1, 50, 60, "falling", 2)
+
+    expanded = service.extend_segment(video["video_id"], target["segment_id"], 3)
+
+    assert expanded["segment"]["start_frame"] == 21
+    assert expanded["segment"]["end_frame"] == 49
+
+
 def test_undo_redo_and_track_edits_preserve_labels_as_labeled(tmp_path: Path) -> None:
     repository, _storage, service, video = setup_video(tmp_path)
     segment = service.save_segment(video["video_id"], 1, 10, 15, "falling", 0)["segment"]

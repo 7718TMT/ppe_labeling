@@ -178,6 +178,7 @@ def process_video(
         video_id,
         payload.mode,
         payload.priority,
+        payload.overwrite_labels,
     )
 
 

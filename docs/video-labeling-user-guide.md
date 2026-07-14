@@ -353,11 +353,11 @@ close the guide.
 | `1` | Select `others` |
 | `2` | Select `running` |
 | `3` | Select `falling` |
-| `T` | Show Threshold suggestions |
-| `M` | Show AI suggestions when available |
-| `S` | Turn suggestions off |
-| `A` | Accept the selected suggestion |
-| `R` | Reject the selected suggestion |
+| `T` | Select Threshold for the Suggestion button |
+| `M` | Select AI for the Suggestion button when available |
+| `S` | Turn automatic suggestion generation off |
+| `Esc` | Leave the selected segment and return to full-video mode |
+| `Delete` | Delete the selected segment |
 | `X` | Exclude or restore the selected segment |
 | `Enter` | Create or update a segment |
 | `Ctrl+Z` / `Ctrl+Y` | Undo or redo |

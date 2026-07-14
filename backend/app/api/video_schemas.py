@@ -33,6 +33,7 @@ class QueueRequest(BaseModel):
 
 class ProcessRequest(QueueRequest):
     mode: Literal["threshold", "model"]
+    overwrite_labels: bool = False
 
 
 class ProcessingJobResponse(BaseModel):

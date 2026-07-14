@@ -85,4 +85,30 @@ describe('VideoTimeline', () => {
 
     expect(onSegmentResize).toHaveBeenCalledWith('s1', 0, 39);
   });
+
+  it('moves the whole segment when its body is dragged', () => {
+    const onSegmentResize = vi.fn();
+    render(
+      <VideoTimeline
+        frameCount={120}
+        currentFrame={20}
+        onFrame={vi.fn()}
+        onSegment={vi.fn()}
+        onSegmentResize={onSegmentResize}
+        segments={[{
+          segment_id: 'moving', track_id: 1, start_frame: 0, end_frame: 20,
+          label: 'others', quality_status: 'good', include_in_export: 1,
+          source_type: 'manual',
+        }]}
+      />,
+    );
+
+    const blocks = screen.getAllByTitle(/others frames 0.*20/);
+    const block = blocks[blocks.length - 1];
+    fireEvent.pointerDown(block, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(block, { clientX: 100, pointerId: 1 });
+    fireEvent.pointerUp(block, { clientX: 100, pointerId: 1 });
+
+    expect(onSegmentResize).toHaveBeenCalledWith('moving', 99, 119);
+  });
 });
