@@ -28,7 +28,7 @@ def _video_bytes(
     tmp_path: Path,
     name: str,
     base_value: int,
-    frames: int = 12,
+    frames: int = 60,
 ) -> bytes:
     path = tmp_path / name
     writer = cv2.VideoWriter(

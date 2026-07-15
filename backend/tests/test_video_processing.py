@@ -12,6 +12,7 @@ import pytest
 from backend.app.domain.errors import (
     ModelCompatibilityError,
     VideoProcessingConflictError,
+    VideoValidationError,
 )
 from backend.app.domain.video import (
     FEATURE_SCHEMA_VERSION,
@@ -96,7 +97,7 @@ def test_trim_saves_clean_copy_and_resets_a_replacement(tmp_path: Path) -> None:
     project = service.create_project("Trim")
     source = tmp_path / "source.mp4"
     writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 24, (32, 24))
-    for index in range(60):
+    for index in range(120):
         writer.write(np.full((24, 32, 3), index, dtype=np.uint8))
     writer.release()
     with source.open("rb") as stream:
@@ -108,11 +109,14 @@ def test_trim_saves_clean_copy_and_resets_a_replacement(tmp_path: Path) -> None:
         expected_revision=0,
     )
 
-    copied_result = service.trim_video(project["project_id"], video["video_id"], 10, 30, "copy")
+    with pytest.raises(VideoValidationError, match="at least 60 frames"):
+        service.trim_video(project["project_id"], video["video_id"], 10, 68, "copy")
+
+    copied_result = service.trim_video(project["project_id"], video["video_id"], 10, 70, "copy")
     copied = copied_result["video"]
 
     assert copied["video_id"] != video["video_id"]
-    assert copied["canonical_frame_count"] == 21
+    assert copied["canonical_frame_count"] == 61
     assert copied["codec"].lower() in {"avc1", "h264"}
     assert copied["filename"] == "source_copy.mp4"
     assert copied["annotation_status"] == "labeled"
@@ -120,12 +124,12 @@ def test_trim_saves_clean_copy_and_resets_a_replacement(tmp_path: Path) -> None:
     assert copied_result["jobs"][0]["stage"] == "canonicalize"
     assert [(segment["start_frame"], segment["end_frame"]) for segment in repository.list_segments(copied["video_id"])] == [(0, 10)]
     assert storage.raw_path(project["project_id"], copied["relative_path"]).is_file()
-    assert repository.get_video(video["video_id"])["canonical_frame_count"] == 60
+    assert repository.get_video(video["video_id"])["canonical_frame_count"] == 120
 
-    replaced = service.trim_video(project["project_id"], video["video_id"], 5, 20, "replace")["video"]
+    replaced = service.trim_video(project["project_id"], video["video_id"], 5, 70, "replace")["video"]
 
     assert replaced["video_id"] == video["video_id"]
-    assert replaced["canonical_frame_count"] == 16
+    assert replaced["canonical_frame_count"] == 66
     assert replaced["annotation_status"] == "labeled"
     assert len(repository.list_tracks(video["video_id"])) == 1
     assert [(segment["start_frame"], segment["end_frame"]) for segment in repository.list_segments(video["video_id"])] == [(0, 15)]
@@ -140,13 +144,13 @@ def test_trimmed_unlabeled_copy_queues_the_normal_suggestion_pipeline(tmp_path: 
     project = service.create_project("Trim suggestions")
     source = tmp_path / "source.mp4"
     writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 24, (32, 24))
-    for _ in range(24):
+    for _ in range(120):
         writer.write(np.zeros((24, 32, 3), dtype=np.uint8))
     writer.release()
     with source.open("rb") as stream:
         video = service.import_video(project["project_id"], "source.mp4", stream)
 
-    result = service.trim_video(project["project_id"], video["video_id"], 2, 12, "copy")
+    result = service.trim_video(project["project_id"], video["video_id"], 2, 61, "copy")
 
     assert result["processing_action"] == "suggestions_queued"
     assert result["jobs"][0]["stage"] == "canonicalize"

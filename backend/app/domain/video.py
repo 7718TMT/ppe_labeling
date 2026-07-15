@@ -11,6 +11,7 @@ from backend.app.domain.errors import VideoValidationError
 HUMAN_LABELS = ("others", "running", "falling")
 SUGGESTION_LABELS = ("running", "falling")
 CANONICAL_FPS = 24
+WINDOW_LENGTH_FRAMES = 60
 FEATURE_SCHEMA_VERSION = "v1"
 WINDOW_CONFIG_VERSION = "60-12-24-v1"
 TRACKING_CACHE_VERSION = "botsort-dedicated-reid-v3"
@@ -28,7 +29,11 @@ DEFAULT_PROJECT_CONFIG: dict[str, Any] = {
         "tracker": "botsort",
         "tracker_config_version": TRACKING_CACHE_VERSION,
     },
-    "window": {"length_frames": 60, "stride_frames": 12, "final_period_frames": 24},
+    "window": {
+        "length_frames": WINDOW_LENGTH_FRAMES,
+        "stride_frames": 12,
+        "final_period_frames": 24,
+    },
     "window_labeling": {
         "falling_min_overlap_frames": 8,
         "falling_final_period_ratio": 0.50,

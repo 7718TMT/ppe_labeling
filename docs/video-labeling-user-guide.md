@@ -113,6 +113,11 @@ video. Drag the left and right heads to choose the first and last frame to
 keep. The playhead can still be moved by clicking the strip; **Preview range**
 loops only the proposed result.
 
+Videos must be at least **60 canonical frames** long, which is the minimum
+length for one analysis window. Uploads shorter than that are rejected. In trim
+mode, the handles cannot make a shorter saved range and both save actions stay
+disabled until the selected range contains at least 60 frames.
+
 Use `Ctrl`/`Cmd`+`Z` and `Ctrl`/`Cmd`+`Y`, or the toolbar undo/redo controls, to
 undo or redo trim-handle changes before saving. **Reset** restores the full
 video range.

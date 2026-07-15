@@ -27,6 +27,7 @@ from backend.app.domain.video import (
     FEATURE_SCHEMA_VERSION,
     TRACKING_CACHE_VERSION,
     WINDOW_CONFIG_VERSION,
+    WINDOW_LENGTH_FRAMES,
     canonical_frame_mapping,
     project_config,
     threshold_profile_config,
@@ -192,6 +193,11 @@ class VideoService:
         total_frames = int(video["canonical_frame_count"])
         if not 0 <= start_frame < end_frame < total_frames:
             raise VideoValidationError("Choose a trim range with at least two frames")
+        if end_frame - start_frame + 1 < WINDOW_LENGTH_FRAMES:
+            raise VideoValidationError(
+                f"Trimmed video must contain at least {WINDOW_LENGTH_FRAMES} frames "
+                "to create one analysis window"
+            )
         if save_mode not in {"replace", "copy"}:
             raise VideoValidationError("Trim destination must be replace or copy")
         if self.repository.active_job_for_video(video_id) is not None:
@@ -496,6 +502,12 @@ class VideoService:
         try:
             metadata = self._probe(raw_path)
             mapping = canonical_frame_mapping(metadata["original_fps"], metadata["original_frame_count"])
+            if len(mapping) < WINDOW_LENGTH_FRAMES:
+                raise VideoValidationError(
+                    f'"{Path(filename).name}" is too short for video labeling: '
+                    f"it has {len(mapping)} frames on the 24 FPS annotation timeline. "
+                    f"At least {WINDOW_LENGTH_FRAMES} frames are required for one analysis window."
+                )
             values = {
                 "filename": Path(filename).name,
                 "relative_path": str(raw_path.relative_to(self.storage.project_dir(project_id))).replace("\\", "/"),

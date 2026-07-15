@@ -10,6 +10,7 @@ interface Props {
   currentFrame: number;
   mediaUrl: string;
   range: TrimRange;
+  minimumRange?: number;
   onFrame: (frame: number) => void;
   onRangeCommit: (range: TrimRange) => void;
 }
@@ -24,7 +25,7 @@ const PREVIEW_COUNT = 12;
  * Dedicated media trim timeline. It intentionally has no annotation rows: the
  * thumbnails represent the raw video that will be written when saved.
  */
-export function TrimTimeline({ frameCount, currentFrame, mediaUrl, range, onFrame, onRangeCommit }: Props) {
+export function TrimTimeline({ frameCount, currentFrame, mediaUrl, range, minimumRange = 2, onFrame, onRangeCommit }: Props) {
   const [draft, setDraft] = useState(range);
   const [previews, setPreviews] = useState<Record<number, string>>({});
   const [hoverFrame, setHoverFrame] = useState<number>();
@@ -88,22 +89,23 @@ export function TrimTimeline({ frameCount, currentFrame, mediaUrl, range, onFram
     )));
   };
   const toPercent = (value: number) => `${(value / Math.max(1, frameCount - 1)) * 100}%`;
+  const minimumGap = Math.max(1, Math.min(minimumRange, frameCount) - 1);
 
   const moveHandle = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag) return;
     const nextFrame = frameAt(event.clientX);
     setDraft((current) => drag.edge === 'start'
-      ? { ...current, start: Math.min(nextFrame, current.end - 1) }
-      : { ...current, end: Math.max(nextFrame, current.start + 1) });
+      ? { ...current, start: Math.min(nextFrame, current.end - minimumGap) }
+      : { ...current, end: Math.max(nextFrame, current.start + minimumGap) });
   };
   const releaseHandle = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag) return;
     const nextFrame = frameAt(event.clientX);
     const finalRange = drag.edge === 'start'
-      ? { ...draft, start: Math.min(nextFrame, draft.end - 1) }
-      : { ...draft, end: Math.max(nextFrame, draft.start + 1) };
+      ? { ...draft, start: Math.min(nextFrame, draft.end - minimumGap) }
+      : { ...draft, end: Math.max(nextFrame, draft.start + minimumGap) };
     setDraft(finalRange);
     dragRef.current = undefined;
     onRangeCommit(finalRange);

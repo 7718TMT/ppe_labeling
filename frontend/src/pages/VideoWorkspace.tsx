@@ -538,6 +538,10 @@ export function VideoWorkspace() {
 
   async function saveTrim(saveMode: 'replace' | 'copy') {
     if (!active || !trimRange || trimSaving) return;
+    if (trimRange.end - trimRange.start + 1 < 60) {
+      setError('Select at least 60 frames to create one analysis window.');
+      return;
+    }
     let copyFilename: string | undefined;
     if (saveMode === 'copy') {
       const defaultName = `${active.filename.replace(/\.[^.]+$/, '')}_copy.mp4`;
@@ -1388,11 +1392,12 @@ export function VideoWorkspace() {
               {trimMode && trimRange && (
                 <div className="px-3 py-2 bg-surface-container border-t border-primary/30 border-l-2 border-l-primary flex flex-wrap items-center gap-2 text-label-sm">
                   <span className="font-label font-medium text-primary">Video trim</span>
-                  <span className="text-on-surface-variant">Keep frames {trimRange.start}–{trimRange.end}</span>
+                  <span className="text-on-surface-variant">Keep frames {trimRange.start}–{trimRange.end} ({trimRange.end - trimRange.start + 1} frames)</span>
                   <button type="button" className="panel-button" onClick={previewTrim}>Preview range</button>
                   <button type="button" className="panel-button" onClick={() => updateTrimRange({ start: 0, end: active.canonical_frame_count - 1 })}>Reset</button>
-                  <button type="button" className="panel-button bg-primary-container text-on-primary-container border-primary-container hover:bg-primary" disabled={trimSaving} onClick={() => void saveTrim('copy')}>{trimSaving ? 'Saving…' : 'Save copy'}</button>
-                  <button type="button" className="panel-button bg-error-container text-on-error-container border-error-container hover:brightness-110" disabled={trimSaving} onClick={() => void saveTrim('replace')}>{trimSaving ? 'Saving…' : 'Replace video'}</button>
+                  <button type="button" className="panel-button bg-primary-container text-on-primary-container border-primary-container hover:bg-primary" disabled={trimSaving || trimRange.end - trimRange.start + 1 < 60} onClick={() => void saveTrim('copy')}>{trimSaving ? 'Saving…' : 'Save copy'}</button>
+                  <button type="button" className="panel-button bg-error-container text-on-error-container border-error-container hover:brightness-110" disabled={trimSaving || trimRange.end - trimRange.start + 1 < 60} onClick={() => void saveTrim('replace')}>{trimSaving ? 'Saving…' : 'Replace video'}</button>
+                  {trimRange.end - trimRange.start + 1 < 60 && <span className="text-[10px] text-error">Select at least 60 frames to save a video.</span>}
                   <span className="text-[10px] text-on-surface-variant">Saving re-encodes the selected frames. Replacing clears frame-based labels; a copy preserves the original video.</span>
                 </div>
               )}
@@ -1403,6 +1408,7 @@ export function VideoWorkspace() {
                   currentFrame={frame}
                   mediaUrl={videoMediaUrl(projectId, active.video_id)}
                   range={trimRange}
+                  minimumRange={60}
                   onFrame={seek}
                   onRangeCommit={updateTrimRange}
                 />
