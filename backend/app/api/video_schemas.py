@@ -29,6 +29,16 @@ class VideoRenamePayload(BaseModel):
     prefix: str = Field(min_length=1, max_length=80)
 
 
+class VideoTrimPayload(BaseModel):
+    """Inclusive canonical-frame range and destination for a video trim."""
+
+    start_frame: int = Field(ge=0)
+    end_frame: int = Field(ge=0)
+    save_mode: Literal["replace", "copy"]
+    filename: str | None = Field(default=None, max_length=255)
+    suggestion_mode: Literal["threshold", "model"] = "threshold"
+
+
 class JobControl(BaseModel):
     action: Literal["pause", "resume", "cancel", "retry", "prioritize"]
 

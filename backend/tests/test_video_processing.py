@@ -4,6 +4,9 @@ import sqlite3
 from pathlib import Path
 from threading import Barrier
 
+import cv2
+import numpy as np
+
 import pytest
 
 from backend.app.domain.errors import (
@@ -82,6 +85,71 @@ def test_project_video_rename_uses_prefix_sequence_and_keeps_extensions(tmp_path
     filenames = {video["video_id"]: video["filename"] for video in renamed}
     assert filenames[first["video_id"]] == "fall_batch_00002.mp4"
     assert filenames[second["video_id"]] == "fall_batch_00001.avi"
+
+
+def test_trim_saves_clean_copy_and_resets_a_replacement(tmp_path: Path) -> None:
+    """A saved trim owns new media and cannot retain stale frame annotations."""
+
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    service = VideoService(repository, storage)
+    project = service.create_project("Trim")
+    source = tmp_path / "source.mp4"
+    writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 24, (32, 24))
+    for index in range(60):
+        writer.write(np.full((24, 32, 3), index, dtype=np.uint8))
+    writer.release()
+    with source.open("rb") as stream:
+        video = service.import_video(project["project_id"], "source.mp4", stream)
+    repository.replace_tracks(video["video_id"], [_track()])
+    repository.write_segment(
+        video["video_id"],
+        {"track_id": 1, "start_frame": 0, "end_frame": 20, "label": "others"},
+        expected_revision=0,
+    )
+
+    copied_result = service.trim_video(project["project_id"], video["video_id"], 10, 30, "copy")
+    copied = copied_result["video"]
+
+    assert copied["video_id"] != video["video_id"]
+    assert copied["canonical_frame_count"] == 21
+    assert copied["codec"].lower() in {"avc1", "h264"}
+    assert copied["filename"] == "source_copy.mp4"
+    assert copied["annotation_status"] == "labeled"
+    assert copied_result["processing_action"] == "suggestions_queued"
+    assert copied_result["jobs"][0]["stage"] == "canonicalize"
+    assert [(segment["start_frame"], segment["end_frame"]) for segment in repository.list_segments(copied["video_id"])] == [(0, 10)]
+    assert storage.raw_path(project["project_id"], copied["relative_path"]).is_file()
+    assert repository.get_video(video["video_id"])["canonical_frame_count"] == 60
+
+    replaced = service.trim_video(project["project_id"], video["video_id"], 5, 20, "replace")["video"]
+
+    assert replaced["video_id"] == video["video_id"]
+    assert replaced["canonical_frame_count"] == 16
+    assert replaced["annotation_status"] == "labeled"
+    assert len(repository.list_tracks(video["video_id"])) == 1
+    assert [(segment["start_frame"], segment["end_frame"]) for segment in repository.list_segments(video["video_id"])] == [(0, 15)]
+
+
+def test_trimmed_unlabeled_copy_queues_the_normal_suggestion_pipeline(tmp_path: Path) -> None:
+    """An unlabeled trim must receive the same automatic suggestion work as import."""
+
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    service = VideoService(repository, storage)
+    project = service.create_project("Trim suggestions")
+    source = tmp_path / "source.mp4"
+    writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 24, (32, 24))
+    for _ in range(24):
+        writer.write(np.zeros((24, 32, 3), dtype=np.uint8))
+    writer.release()
+    with source.open("rb") as stream:
+        video = service.import_video(project["project_id"], "source.mp4", stream)
+
+    result = service.trim_video(project["project_id"], video["video_id"], 2, 12, "copy")
+
+    assert result["processing_action"] == "suggestions_queued"
+    assert result["jobs"][0]["stage"] == "canonicalize"
 
 
 def _model_values(artifact: Path) -> dict:

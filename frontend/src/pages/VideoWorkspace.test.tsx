@@ -33,6 +33,7 @@ vi.mock('../api/client', () => ({
   setVideoTrackInclusion: vi.fn(),
   splitVideoSegment: vi.fn(),
   splitVideoTrack: vi.fn(),
+  trimVideo: vi.fn(),
   unapproveVideo: vi.fn(),
   validateVideoExport: vi.fn(),
   createVideoExport: vi.fn(),
@@ -149,6 +150,33 @@ describe('VideoWorkspace', () => {
     ));
     fireEvent.keyDown(screen.getByLabelText('Start'), { key: '3' });
     expect(screen.getByRole('button', { name: 'running' })).toHaveClass('border-primary');
+  });
+
+  it('shows approved and remaining video counts in the approval progress', async () => {
+    videos = [{ ...VIDEO_A, is_approved: 1 }, VIDEO_B];
+    renderWorkspace();
+    expect(await screen.findByLabelText('Approval progress: 1 approved, 1 remaining, 2 total')).toBeInTheDocument();
+    expect(screen.getByText('1 / 2 approved · 1 left')).toBeInTheDocument();
+  });
+
+  it('replaces worker rows with a dedicated video trim timeline', async () => {
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle video trim mode' }));
+    expect(screen.getByText('Video trim')).toBeInTheDocument();
+    expect(screen.getByLabelText('Video trim timeline')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Drag trim start' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save copy' })).toBeInTheDocument();
+  });
+
+  it('saves the selected trim as a copy', async () => {
+    vi.mocked(api.trimVideo).mockResolvedValue({ video: makeVideo('trim-copy', 'shift-a_trim.mp4'), save_mode: 'copy' });
+    vi.spyOn(window, 'prompt').mockReturnValue('');
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle video trim mode' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save copy' }));
+    await waitFor(() => expect(api.trimVideo).toHaveBeenCalledWith('p1', 'v1', 0, 119, 'copy', undefined, 'threshold'));
   });
 
   it('shows a recoverable revision conflict instead of silently overwriting', async () => {

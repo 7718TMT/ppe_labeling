@@ -81,6 +81,13 @@ describe('VideoBrowser', () => {
     expect(screen.queryByText('failed.mp4')).not.toBeInTheDocument();
   });
 
+  it('filters video cards by a case-insensitive name search', () => {
+    render(<VideoBrowser videos={[video('Fall-Worker'), video('running-shift')]} onSelect={vi.fn()} onImport={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Search videos by name'), { target: { value: 'FALL' } });
+    expect(screen.getByText('Fall-Worker.mp4')).toBeInTheDocument();
+    expect(screen.queryByText('running-shift.mp4')).not.toBeInTheDocument();
+  });
+
   it('sorts filtered videos locally by the selected field and direction', () => {
     const alpha = { ...video('alpha'), duration_seconds: 20, updated_at: '2026-01-02T00:00:00Z' };
     const zeta = { ...video('zeta'), duration_seconds: 5, updated_at: '2026-01-03T00:00:00Z' };

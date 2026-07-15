@@ -16,6 +16,7 @@ dependencies = [
     "pyarrow==21.0.0",
     "joblib==1.5.2",
     "onnxruntime==1.23.2",
+    "imageio-ffmpeg>=0.6.0",
 ]
 
 [dependency-groups]

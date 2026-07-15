@@ -52,6 +52,8 @@ interface Props {
   onSegment: (segment: VideoSegment) => void;
   /** Called once when the user releases a resized segment boundary. */
   onSegmentResize?: (segmentId: string, start: number, end: number) => void;
+  trimRange?: { start: number; end: number };
+  trimMode?: boolean;
 }
 
 export function VideoTimeline({
@@ -62,6 +64,8 @@ export function VideoTimeline({
   onFrame,
   onSegment,
   onSegmentResize,
+  trimRange,
+  trimMode = false,
 }: Props) {
   const [zoom, setZoom] = useState(1);
   const [dragBounds, setDragBounds] = useState<{
@@ -70,6 +74,7 @@ export function VideoTimeline({
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const ignoreNextClickRef = useRef(false);
+  const [previewFrame, setPreviewFrame] = useState<number>();
 
   /** Convert a frame number to a CSS left percentage string relative to the timeline area. */
   const toPercent = (frame: number) =>
@@ -87,6 +92,12 @@ export function VideoTimeline({
     const relativeX = event.clientX - rect.left;
     const frame = Math.round((relativeX / rect.width) * (frameCount - 1));
     onFrame(Math.max(0, Math.min(frameCount - 1, frame)));
+  }
+
+  function previewTimelineFrame(event: React.MouseEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const frame = Math.round(((event.clientX - rect.left) / rect.width) * (frameCount - 1));
+    setPreviewFrame(Math.max(0, Math.min(frameCount - 1, frame)));
   }
 
   // ── Drag-resize logic ────────────────────────────────────────────────────────
@@ -209,7 +220,10 @@ export function VideoTimeline({
               <div
                 className="relative flex-1 h-7 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
                 onClick={handleTimelineClick}
+                onMouseMove={previewTimelineFrame}
+                onMouseLeave={() => setPreviewFrame(undefined)}
               >
+                {trimMode && trimRange && <TrimOverlay range={trimRange} toPercent={toPercent} />}
                 {/* Current frame marker */}
                 <span
                   className="absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-20"
@@ -228,7 +242,10 @@ export function VideoTimeline({
                   <div
                     className="relative flex-1 h-8 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
                     onClick={handleTimelineClick}
+                    onMouseMove={previewTimelineFrame}
+                    onMouseLeave={() => setPreviewFrame(undefined)}
                   >
+                    {trimMode && trimRange && <TrimOverlay range={trimRange} toPercent={toPercent} />}
                     {/* Human segments */}
                     {trackSegments.map((seg) => {
                       const isSelected = selectedSegment === seg.segment_id;
@@ -300,8 +317,19 @@ export function VideoTimeline({
           )}
         </div>
       </div>
-
+      {trimMode && previewFrame !== undefined && (
+        <p className="mt-2 text-center font-label text-[10px] text-on-surface-variant" aria-live="polite">Frame preview: {previewFrame}</p>
+      )}
 
     </section>
   );
+}
+
+function TrimOverlay({ range, toPercent }: { range: { start: number; end: number }; toPercent: (frame: number) => string }) {
+  return <>
+    <span className="absolute inset-y-0 left-0 bg-black/35 pointer-events-none" style={{ width: toPercent(range.start) }} />
+    <span className="absolute inset-y-0 right-0 bg-black/35 pointer-events-none" style={{ left: toPercent(range.end + 1) }} />
+    <span className="absolute inset-y-0 w-0.5 bg-amber-400 pointer-events-none z-10" style={{ left: toPercent(range.start) }} />
+    <span className="absolute inset-y-0 w-0.5 bg-amber-400 pointer-events-none z-10" style={{ left: toPercent(range.end) }} />
+  </>;
 }

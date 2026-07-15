@@ -42,6 +42,7 @@ import {
   Redo2,
   Repeat2,
   Save,
+  Scissors,
   SkipBack,
   SkipForward,
   Undo2,
@@ -74,8 +75,10 @@ import {
   setVideoTrackInclusion,
   splitVideoSegment,
   splitVideoTrack,
+  trimVideo,
   unapproveVideo,
   videoHistoryAction,
+  videoMediaUrl,
 } from '../api/client';
 import { ExportPanel } from '../features/video/ExportPanel';
 import { PoseHelpDialog } from '../features/video/PoseHelpDialog';
@@ -85,6 +88,7 @@ import { ProcessingQueue } from '../features/video/ProcessingQueue';
 import { ShortcutGuideOverlay } from '../features/video/ShortcutGuideOverlay';
 import { VideoBrowser } from '../features/video/VideoBrowser';
 import { VideoTimeline } from '../features/video/VideoTimeline';
+import { TrimTimeline } from '../features/video/TrimTimeline';
 import type {
   FeatureWindow,
   GeneratedWindow,
@@ -198,6 +202,12 @@ export function VideoWorkspace() {
   const [label, setLabel] = useState<HumanVideoLabel>('others');
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
+  const [trimMode, setTrimMode] = useState(false);
+  const [trimRange, setTrimRange] = useState<{ start: number; end: number }>();
+  const [trimPreviewing, setTrimPreviewing] = useState(false);
+  const [trimUndo, setTrimUndo] = useState<Array<{ start: number; end: number }>>([]);
+  const [trimRedo, setTrimRedo] = useState<Array<{ start: number; end: number }>>([]);
+  const [trimSaving, setTrimSaving] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   /** showBoxes now controls BOTH bbox and skeleton (#13). */
   const [showBoxes, setShowBoxes] = useState(true);
@@ -225,6 +235,14 @@ export function VideoWorkspace() {
   frameRef.current = frame;
 
   useEffect(() => () => { activeIdRef.current = undefined; }, []);
+
+  useEffect(() => {
+    if (!active) return;
+    setTrimRange({ start: 0, end: active.canonical_frame_count - 1 });
+    setTrimUndo([]);
+    setTrimRedo([]);
+    setTrimPreviewing(false);
+  }, [active?.video_id, active?.canonical_frame_count]);
 
   useEffect(() => {
     const synchronizeFullscreen = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -484,8 +502,95 @@ export function VideoWorkspace() {
   }
 
   useEffect(() => {
-    if (player.current) player.current.loop = loop && !selectedSegment;
-  }, [loop, selectedSegment]);
+    if (player.current) player.current.loop = loop && !selectedSegment && !trimPreviewing;
+  }, [loop, selectedSegment, trimPreviewing]);
+
+  function updateTrimRange(next: { start: number; end: number }) {
+    if (!trimRange || next.start === trimRange.start && next.end === trimRange.end) return;
+    setTrimUndo((current) => [...current, trimRange]);
+    setTrimRedo([]);
+    setTrimRange(next);
+  }
+
+  function undoTrim() {
+    const previous = trimUndo.at(-1);
+    if (!previous || !trimRange) return;
+    setTrimUndo((current) => current.slice(0, -1));
+    setTrimRedo((current) => [...current, trimRange]);
+    setTrimRange(previous);
+  }
+
+  function redoTrim() {
+    const next = trimRedo.at(-1);
+    if (!next || !trimRange) return;
+    setTrimRedo((current) => current.slice(0, -1));
+    setTrimUndo((current) => [...current, trimRange]);
+    setTrimRange(next);
+  }
+
+  function previewTrim() {
+    if (!trimRange) return;
+    setTrimPreviewing(true);
+    setLoop(true);
+    seek(trimRange.start);
+    void player.current?.play();
+  }
+
+  async function saveTrim(saveMode: 'replace' | 'copy') {
+    if (!active || !trimRange || trimSaving) return;
+    let copyFilename: string | undefined;
+    if (saveMode === 'copy') {
+      const defaultName = `${active.filename.replace(/\.[^.]+$/, '')}_copy.mp4`;
+      const enteredName = window.prompt(
+        `Name the trimmed copy. Leave blank to use "${defaultName}".`,
+        '',
+      );
+      if (enteredName === null) return;
+      copyFilename = enteredName.trim() || undefined;
+    }
+    if (saveMode === 'replace' && !window.confirm(
+      'Replace this video with the trimmed range? Existing labels will be clipped to fit. Processing and approval data will be reset.',
+    )) return;
+    const videoAtSave = active;
+    setTrimSaving(true);
+    setError('');
+    player.current?.pause();
+    setPlaying(false);
+    try {
+      const result = await trimVideo(
+        projectId,
+        videoAtSave.video_id,
+        trimRange.start,
+        trimRange.end,
+        saveMode,
+        copyFilename,
+        source === 'AI' ? 'model' : 'threshold',
+      );
+      setVideos((current) => saveMode === 'copy'
+        ? [...current, result.video]
+        : current.map((item) => item.video_id === result.video.video_id ? result.video : item));
+      setActive(result.video);
+      setTrimMode(false);
+      setTrimPreviewing(false);
+      setTrimUndo([]);
+      setTrimRedo([]);
+      if (result.jobs?.length) {
+        setJobs((current) => upsertJobRows(current, result.jobs ?? []));
+        beginProcessingBatch(result.jobs.map((job) => job.video_id).filter(Boolean) as string[]);
+      }
+      await loadActive(result.video);
+      const subject = saveMode === 'copy' ? 'Trimmed copy saved.' : 'Video replaced with the trimmed range.';
+      setMessage(result.processing_action === 'keypoints_copied'
+        ? `${subject} Overlapping labels and matching keypoints were retained.`
+        : `${subject} Keypoint processing and automatic suggestions were queued.`);
+    } catch (reason) {
+      if (activeIdRef.current === videoAtSave.video_id) {
+        setError(`Could not save the trim. ${readableError(reason)}`);
+      }
+    } finally {
+      setTrimSaving(false);
+    }
+  }
 
   function synchronizePlayer() {
     const element = player.current;
@@ -497,8 +602,10 @@ export function VideoWorkspace() {
       catch { return; }
     }
     const current = Math.max(0, Math.min(currentVideo.canonical_frame_count - 1, Math.round(element.currentTime * currentVideo.canonical_fps)));
-    if (loop && selectedSegment && current >= selectedSegment.end_frame && !element.ended) {
-      seek(selectedSegment.start_frame); void element.play(); return;
+    const loopEnd = trimPreviewing ? trimRange?.end : selectedSegment?.end_frame;
+    const loopStart = trimPreviewing ? trimRange?.start : selectedSegment?.start_frame;
+    if (loop && loopEnd !== undefined && loopStart !== undefined && current >= loopEnd && !element.ended) {
+      seek(loopStart); void element.play(); return;
     }
     setFrame(current);
     setPlaying(!element.paused && !element.ended);
@@ -1065,8 +1172,8 @@ export function VideoWorkspace() {
         || target.closest('input, textarea, select, [contenteditable="true"]')
       );
       if (editingText) return;
-      if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); void history('undo'); return; }
-      if (event.ctrlKey && event.key.toLowerCase() === 'y') { event.preventDefault(); void history('redo'); return; }
+      if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); if (trimMode) undoTrim(); else void history('undo'); return; }
+      if (event.ctrlKey && event.key.toLowerCase() === 'y') { event.preventDefault(); if (trimMode) redoTrim(); else void history('redo'); return; }
       if (event.key === 'Escape' && selectedSegment) {
         event.preventDefault();
         setSelectedSegment(undefined);
@@ -1125,6 +1232,9 @@ export function VideoWorkspace() {
     ? processingBatchVideoIds : activeProcessingVideoIds;
   const processingBatchRemaining = [...processingBatchIds]
     .filter((videoId) => activeProcessingVideoIds.has(videoId)).length;
+  const approvedVideoCount = videos.filter((video) => Boolean(video.is_approved)).length;
+  const videosRemainingApproval = videos.length - approvedVideoCount;
+  const approvalProgress = videos.length > 0 ? (approvedVideoCount / videos.length) * 100 : 0;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1144,8 +1254,8 @@ export function VideoWorkspace() {
         </div>
 
         <div className="hidden lg:flex items-center gap-1">
-          <button type="button" aria-label="Undo" disabled={historyUnavailable === 'undo'} title={historyUnavailable === 'undo' ? 'No changes available to undo' : 'Undo'} onClick={() => void history('undo')} className="toolbar-icon disabled:opacity-30"><Undo2 size={17} /></button>
-          <button type="button" aria-label="Redo" disabled={historyUnavailable === 'redo'} title={historyUnavailable === 'redo' ? 'No changes available to redo' : 'Redo'} onClick={() => void history('redo')} className="toolbar-icon disabled:opacity-30"><Redo2 size={17} /></button>
+          <button type="button" aria-label="Undo" disabled={trimMode ? trimUndo.length === 0 : historyUnavailable === 'undo'} title="Undo" onClick={() => trimMode ? undoTrim() : void history('undo')} className="toolbar-icon disabled:opacity-30"><Undo2 size={17} /></button>
+          <button type="button" aria-label="Redo" disabled={trimMode ? trimRedo.length === 0 : historyUnavailable === 'redo'} title="Redo" onClick={() => trimMode ? redoTrim() : void history('redo')} className="toolbar-icon disabled:opacity-30"><Redo2 size={17} /></button>
           <button type="button" title="Previous video" disabled={selectedVideoIndex <= 0} onClick={() => setActive(videos[selectedVideoIndex - 1])} className="toolbar-icon disabled:opacity-30"><ChevronLeft size={17} /></button>
           <button type="button" title="Next video" disabled={selectedVideoIndex < 0 || selectedVideoIndex >= videos.length - 1} onClick={() => setActive(videos[selectedVideoIndex + 1])} className="toolbar-icon disabled:opacity-30"><ChevronRight size={17} /></button>
         </div>
@@ -1270,18 +1380,43 @@ export function VideoWorkspace() {
                 <button type="button" aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} onClick={() => void toggleFullscreen()} className="toolbar-icon">
                   {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </button>
+                <button type="button" aria-label="Toggle video trim mode" title="Video trim mode" onClick={() => { setTrimMode((enabled) => !enabled); setTrimPreviewing(false); }} className={`toolbar-icon ${trimMode ? 'border-primary bg-primary/10 text-primary' : ''}`}>
+                  <Scissors size={16} />
+                </button>
               </div>
 
-              {/* #10 — VideoTimeline: no Windows row; segments from all/selected tracks */}
-              <VideoTimeline
-                frameCount={active.canonical_frame_count}
-                currentFrame={frame}
-                segments={segments}
-                selectedSegment={selectedSegment?.segment_id}
-                onFrame={seek}
-                onSegment={chooseSegment}
-                onSegmentResize={handleSegmentResize}
-              />
+              {trimMode && trimRange && (
+                <div className="px-3 py-2 bg-surface-container border-t border-primary/30 border-l-2 border-l-primary flex flex-wrap items-center gap-2 text-label-sm">
+                  <span className="font-label font-medium text-primary">Video trim</span>
+                  <span className="text-on-surface-variant">Keep frames {trimRange.start}–{trimRange.end}</span>
+                  <button type="button" className="panel-button" onClick={previewTrim}>Preview range</button>
+                  <button type="button" className="panel-button" onClick={() => updateTrimRange({ start: 0, end: active.canonical_frame_count - 1 })}>Reset</button>
+                  <button type="button" className="panel-button bg-primary-container text-on-primary-container border-primary-container hover:bg-primary" disabled={trimSaving} onClick={() => void saveTrim('copy')}>{trimSaving ? 'Saving…' : 'Save copy'}</button>
+                  <button type="button" className="panel-button bg-error-container text-on-error-container border-error-container hover:brightness-110" disabled={trimSaving} onClick={() => void saveTrim('replace')}>{trimSaving ? 'Saving…' : 'Replace video'}</button>
+                  <span className="text-[10px] text-on-surface-variant">Saving re-encodes the selected frames. Replacing clears frame-based labels; a copy preserves the original video.</span>
+                </div>
+              )}
+
+              {trimMode && trimRange ? (
+                <TrimTimeline
+                  frameCount={active.canonical_frame_count}
+                  currentFrame={frame}
+                  mediaUrl={videoMediaUrl(projectId, active.video_id)}
+                  range={trimRange}
+                  onFrame={seek}
+                  onRangeCommit={updateTrimRange}
+                />
+              ) : (
+                <VideoTimeline
+                  frameCount={active.canonical_frame_count}
+                  currentFrame={frame}
+                  segments={segments}
+                  selectedSegment={selectedSegment?.segment_id}
+                  onFrame={seek}
+                  onSegment={chooseSegment}
+                  onSegmentResize={handleSegmentResize}
+                />
+              )}
             </>
           )}
         </main>
@@ -1578,6 +1713,15 @@ export function VideoWorkspace() {
             {/* #9 — Approve / Unapprove button at sidebar bottom */}
             {active && (
               <div className="shrink-0 p-3 border-t border-outline-variant">
+                <div className="mb-2" aria-label={`Approval progress: ${approvedVideoCount} approved, ${videosRemainingApproval} remaining, ${videos.length} total`}>
+                  <div className="flex justify-between gap-2 font-label text-[10px] text-on-surface-variant">
+                    <span>Approval progress</span>
+                    <span>{approvedVideoCount} / {videos.length} approved · {videosRemainingApproval} left</span>
+                  </div>
+                  <div className="h-1 mt-1 bg-surface-container-highest rounded overflow-hidden">
+                    <div className="h-full bg-primary transition-all" style={{ width: `${approvalProgress}%` }} />
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => void handleApproveToggle()}

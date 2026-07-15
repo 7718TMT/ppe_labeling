@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import sqlite3
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
 
 import cv2
 import numpy as np
+from imageio_ffmpeg import get_ffmpeg_exe
 
 from backend.app.domain.errors import (
     DuplicateVideoError,
@@ -165,6 +170,292 @@ class VideoService:
         }
         self.repository.rename_videos(project_id, filename_map)
         return self.repository.list_videos(project_id)
+
+    def trim_video(
+        self,
+        project_id: str,
+        video_id: str,
+        start_frame: int,
+        end_frame: int,
+        save_mode: str,
+        filename: str | None = None,
+        suggestion_mode: str = "threshold",
+    ) -> dict[str, Any]:
+        """Re-encode one selected frame range as a replacement or clean copy.
+
+        Trim coordinates use the canonical timeline shown in the UI. The raw
+        frame mapping converts those coordinates back to the source video so
+        the saved clip precisely represents the selected visual range.
+        """
+
+        video = self._project_video(project_id, video_id)
+        total_frames = int(video["canonical_frame_count"])
+        if not 0 <= start_frame < end_frame < total_frames:
+            raise VideoValidationError("Choose a trim range with at least two frames")
+        if save_mode not in {"replace", "copy"}:
+            raise VideoValidationError("Trim destination must be replace or copy")
+        if self.repository.active_job_for_video(video_id) is not None:
+            raise VideoValidationError("Wait for this video's processing to finish before trimming it")
+
+        source = self.storage.raw_path(project_id, str(video["relative_path"]))
+        annotation_snapshot = self.repository.trimmed_annotation_snapshot(
+            video_id, start_frame, end_frame
+        )
+        mapping = self.repository.frame_mapping(video_id)
+        source_start, source_end = self._source_trim_bounds(video, mapping, start_frame, end_frame)
+        raw_directory = self.storage.ensure_project(project_id) / "raw"
+        output_id = video_id if save_mode == "replace" else uuid4().hex
+        final_path = raw_directory / f"{output_id}.mp4"
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{output_id}.trim-", suffix=".mp4", dir=raw_directory
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            self._write_trimmed_media(source, temporary, source_start, source_end)
+            metadata = self._probe(temporary)
+            output_mapping = canonical_frame_mapping(
+                metadata["original_fps"], metadata["original_frame_count"]
+            )
+            if save_mode == "copy":
+                os.replace(temporary, final_path)
+                values = self._trimmed_video_values(
+                    video, final_path, metadata, filename, is_copy=True
+                )
+                copy = self.repository.create_video(project_id, values, video_id=output_id)
+                self.repository.replace_frame_mapping(output_id, output_mapping)
+                self.repository.restore_trimmed_annotations(
+                    output_id, annotation_snapshot, start_frame, end_frame
+                )
+                processing_action, jobs = self._prepare_trimmed_video(
+                    project_id, video, output_id, annotation_snapshot,
+                    start_frame, end_frame, suggestion_mode,
+                )
+                return {
+                    "video": self.repository.get_video(copy["video_id"]),
+                    "save_mode": "copy", "processing_action": processing_action,
+                    "jobs": jobs,
+                }
+
+            backup = raw_directory / f".{video_id}.pre-trim{source.suffix.lower()}"
+            if backup.exists():
+                backup.unlink()
+            try:
+                os.replace(source, backup)
+                os.replace(temporary, final_path)
+                values = self._trimmed_video_values(video, final_path, metadata, None)
+                replaced = self.repository.reset_trimmed_video(
+                    video_id, values, output_mapping
+                )
+                self.repository.restore_trimmed_annotations(
+                    video_id, annotation_snapshot, start_frame, end_frame
+                )
+                can_copy_pose = bool(annotation_snapshot["segments"]) and self._can_copy_trimmed_pose(
+                    project_id, video, start_frame, end_frame
+                )
+                if not can_copy_pose:
+                    self.storage.remove_artifacts(
+                        project_id, video_id,
+                        ("canonical", "pose", "features", "thumbnails", "overlays"),
+                    )
+                processing_action, jobs = self._prepare_trimmed_video(
+                    project_id, video, video_id, annotation_snapshot,
+                    start_frame, end_frame, suggestion_mode,
+                )
+                if can_copy_pose:
+                    self.storage.remove_artifacts(
+                        project_id, video_id,
+                        ("canonical", "features", "thumbnails", "overlays"),
+                    )
+                replaced = self.repository.get_video(video_id)
+            except Exception:
+                if final_path.exists() and backup.exists():
+                    final_path.unlink()
+                if backup.exists():
+                    os.replace(backup, source)
+                raise
+            backup.unlink(missing_ok=True)
+            return {
+                "video": replaced, "save_mode": "replace",
+                "processing_action": processing_action, "jobs": jobs,
+            }
+        except OSError as exc:
+            raise VideoValidationError(
+                "Trim could not be saved because the video file is currently in use"
+            ) from exc
+        except cv2.error as exc:
+            raise VideoValidationError("Video could not be trimmed") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _source_trim_bounds(
+        video: dict[str, Any],
+        mapping: list[dict[str, Any]],
+        start_frame: int,
+        end_frame: int,
+    ) -> tuple[int, int]:
+        """Map inclusive canonical bounds to inclusive raw-video frame bounds."""
+
+        if len(mapping) > end_frame:
+            return int(mapping[start_frame]["original_frame"]), int(mapping[end_frame]["original_frame"])
+        ratio = float(video["original_fps"]) / float(video["canonical_fps"])
+        return round(start_frame * ratio), round(end_frame * ratio)
+
+    def _prepare_trimmed_video(
+        self,
+        project_id: str,
+        source: dict[str, Any],
+        trimmed_video_id: str,
+        annotation_snapshot: dict[str, list[dict[str, Any]]],
+        start_frame: int,
+        end_frame: int,
+        suggestion_mode: str,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Reuse pose data for saved labels or queue a new suggestion pipeline."""
+
+        if annotation_snapshot["segments"] and self._copy_trimmed_pose(
+            project_id, source, trimmed_video_id, start_frame, end_frame
+        ):
+            return "keypoints_copied", []
+        jobs = self.queue_pipeline(
+            project_id, trimmed_video_id, suggestion_mode, priority=500
+        )
+        return "suggestions_queued", jobs
+
+    def _copy_trimmed_pose(
+        self,
+        project_id: str,
+        source: dict[str, Any],
+        trimmed_video_id: str,
+        start_frame: int,
+        end_frame: int,
+    ) -> bool:
+        """Slice a compatible source pose cache and preserve its worker IDs."""
+
+        if not self._can_copy_trimmed_pose(project_id, source, start_frame, end_frame):
+            return False
+        version = str(source["pose_cache_version"])
+        tracking_version = str(source["tracking_cache_version"])
+        source_path = self.storage.artifact_path(
+            project_id, "pose", str(source["video_id"]), version
+        )
+        pose = self.storage.read_json(source_path)
+        frames = [
+            {**frame, "frame_index": int(frame["frame_index"]) - start_frame}
+            for frame in pose.get("frames", [])
+            if start_frame <= int(frame["frame_index"]) <= end_frame
+        ]
+        if not frames:
+            return False
+        pose["video_id"] = trimmed_video_id
+        pose["frames"] = frames
+        self.storage.write_json(
+            self.storage.artifact_path(project_id, "pose", trimmed_video_id, str(version)),
+            pose,
+        )
+        self.repository.update_video(
+            trimmed_video_id,
+            pose_cache_version=version,
+            tracking_cache_version=tracking_version,
+            processing_status="annotation_ready",
+            quality_status=source.get("quality_status", "unknown"),
+        )
+        return True
+
+    def _can_copy_trimmed_pose(
+        self,
+        project_id: str,
+        source: dict[str, Any],
+        start_frame: int,
+        end_frame: int,
+    ) -> bool:
+        """Check whether the saved range has a compatible source pose cache."""
+
+        version = source.get("pose_cache_version")
+        if not version or not source.get("tracking_cache_version"):
+            return False
+        path = self.storage.artifact_path(
+            project_id, "pose", str(source["video_id"]), str(version)
+        )
+        if not path.is_file():
+            return False
+        pose = self.storage.read_json(path)
+        return any(
+            start_frame <= int(frame["frame_index"]) <= end_frame
+            for frame in pose.get("frames", [])
+        )
+
+    @staticmethod
+    def _write_trimmed_media(source: Path, target: Path, start: int, end: int) -> None:
+        """Encode an inclusive raw-frame range as browser-compatible H.264 MP4."""
+
+        capture = cv2.VideoCapture(str(source))
+        try:
+            if not capture.isOpened():
+                raise VideoValidationError("Video could not be opened for trimming")
+            fps = float(capture.get(cv2.CAP_PROP_FPS))
+        finally:
+            capture.release()
+        if fps <= 0:
+            raise VideoValidationError("Video frame rate is unavailable for trimming")
+
+        command = [
+            get_ffmpeg_exe(), "-y", "-i", str(source),
+            "-vf", f"trim=start_frame={start}:end_frame={end + 1},setpts=PTS-STARTPTS",
+            "-map", "0:v:0", "-an",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-r", f"{fps:g}",
+            "-movflags", "+faststart", str(target),
+        ]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
+            raise VideoValidationError("Video could not be encoded as a browser-compatible MP4")
+
+    def _trimmed_video_values(
+        self,
+        original: dict[str, Any],
+        output: Path,
+        metadata: dict[str, Any],
+        requested_filename: str | None,
+        is_copy: bool = False,
+    ) -> dict[str, Any]:
+        """Build a clean imported-video row for a freshly encoded trim."""
+
+        digest = hashlib.sha256()
+        with output.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        filename = self._trimmed_filename(
+            str(original["filename"]), requested_filename, is_copy
+        )
+        return {
+            "filename": filename,
+            "relative_path": str(
+                output.relative_to(self.storage.project_dir(str(original["project_id"])))
+            ).replace("\\", "/"),
+            "file_hash": digest.hexdigest(),
+            "canonical_fps": 24,
+            "canonical_frame_count": len(canonical_frame_mapping(metadata["original_fps"], metadata["original_frame_count"])),
+            "file_size": output.stat().st_size,
+            "folder_group": original.get("folder_group"),
+            **metadata,
+        }
+
+    @staticmethod
+    def _trimmed_filename(
+        original_filename: str, requested_filename: str | None, is_copy: bool
+    ) -> str:
+        """Return a safe displayed filename for an MP4 trim output."""
+
+        if requested_filename is None or not requested_filename.strip():
+            if not is_copy:
+                return original_filename
+            return f"{Path(original_filename).stem}_copy.mp4"
+        clean = requested_filename.strip()
+        if Path(clean).name != clean or any(character in clean for character in "<>:\\|?*"):
+            raise VideoValidationError("Copy name must be a simple file name")
+        return clean if Path(clean).suffix.lower() == ".mp4" else f"{Path(clean).stem}.mp4"
 
     def overlay_range(self, project_id: str, video_id: str, start: int, end: int) -> list[dict[str, Any]]:
         video = self._project_video(project_id, video_id)

@@ -605,6 +605,158 @@ class VideoRepository:
                 [(video_id, *row) for row in mapping],
             )
 
+    def reset_trimmed_video(
+        self,
+        video_id: str,
+        values: dict[str, Any],
+        mapping: Sequence[tuple[int, int, float]],
+    ) -> dict[str, Any]:
+        """Discard frame-dependent state after replacing a video's media.
+
+        Tracks, labels, suggestions, jobs, and history point at the old frame
+        sequence. Keeping any of them after a destructive trim would make the
+        annotation data incorrect, so the replacement starts as a clean import.
+        """
+
+        with self.connection() as connection, connection:
+            if connection.execute("SELECT 1 FROM videos WHERE video_id=?", (video_id,)).fetchone() is None:
+                raise VideoResourceNotFoundError("Video not found")
+            for table in (
+                "processing_jobs",
+                "video_tracks",
+                "video_segments",
+                "annotation_history",
+                "generated_windows",
+                "threshold_suggestions",
+                "model_suggestions",
+                "canonical_frame_mappings",
+            ):
+                connection.execute(f"DELETE FROM {table} WHERE video_id=?", (video_id,))
+            assignments = ",".join(f"{field}=?" for field in values)
+            connection.execute(
+                f"""
+                UPDATE videos
+                SET {assignments},
+                    processing_status='imported',
+                    annotation_status='unlabeled',
+                    quality_status='unknown',
+                    annotation_revision=0,
+                    is_approved=0,
+                    approval_revision=NULL,
+                    approved_at=NULL,
+                    pose_cache_version=NULL,
+                    tracking_cache_version=NULL,
+                    feature_cache_version=NULL,
+                    threshold_cache_version=NULL,
+                    window_cache_version=NULL,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE video_id=?
+                """,
+                [*values.values(), video_id],
+            )
+            connection.executemany(
+                "INSERT INTO canonical_frame_mappings(video_id,canonical_frame,original_frame,timestamp_seconds) VALUES (?,?,?,?)",
+                [(video_id, *row) for row in mapping],
+            )
+            connection.execute(
+                """
+                UPDATE video_workspace_state
+                SET track_id=NULL, frame_index=0, updated_at=CURRENT_TIMESTAMP
+                WHERE video_id=?
+                """,
+                (video_id,),
+            )
+        return self.get_video(video_id)
+
+    def trimmed_annotation_snapshot(
+        self, video_id: str, start_frame: int, end_frame: int
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return tracks and segments intersecting an inclusive trim range."""
+
+        self.get_video(video_id)
+        tracks = [
+            track for track in self.list_tracks(video_id)
+            if int(track["start_frame"]) <= end_frame and int(track["end_frame"]) >= start_frame
+        ]
+        segments = [
+            segment for segment in self.list_segments(video_id)
+            if int(segment["start_frame"]) <= end_frame and int(segment["end_frame"]) >= start_frame
+        ]
+        return {"tracks": tracks, "segments": segments}
+
+    def restore_trimmed_annotations(
+        self,
+        video_id: str,
+        snapshot: dict[str, list[dict[str, Any]]],
+        start_frame: int,
+        end_frame: int,
+    ) -> None:
+        """Restore clipped labels at frame zero after a media trim.
+
+        Pose data and suggestions are intentionally not restored. These rows
+        keep only user-visible annotation state whose frame coordinates can be
+        safely translated to the newly saved video.
+        """
+
+        with self.connection() as connection, connection:
+            connection.execute("DELETE FROM video_tracks WHERE video_id=?", (video_id,))
+            connection.execute("DELETE FROM video_segments WHERE video_id=?", (video_id,))
+            connection.execute("DELETE FROM annotation_history WHERE video_id=?", (video_id,))
+            for track in snapshot["tracks"]:
+                clipped_start = max(int(track["start_frame"]), start_frame) - start_frame
+                clipped_end = min(int(track["end_frame"]), end_frame) - start_frame
+                length = clipped_end - clipped_start + 1
+                valid = min(length, int(track["valid_frame_count"]))
+                connection.execute(
+                    """
+                    INSERT INTO video_tracks(
+                        track_pk,video_id,track_id,start_frame,end_frame,
+                        valid_frame_count,gap_count,avg_person_confidence,
+                        avg_keypoint_confidence,valid_frame_ratio,
+                        missing_ankle_ratio,quality_status,include_in_export,
+                        exclude_reason,revision
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        uuid4().hex, video_id, track["track_id"], clipped_start,
+                        clipped_end, valid, min(length - valid, int(track["gap_count"])),
+                        track["avg_person_confidence"], track["avg_keypoint_confidence"],
+                        track["valid_frame_ratio"], track["missing_ankle_ratio"],
+                        track["quality_status"], track["include_in_export"],
+                        track["exclude_reason"], 1,
+                    ),
+                )
+            for segment in snapshot["segments"]:
+                connection.execute(
+                    """
+                    INSERT INTO video_segments(
+                        segment_id,video_id,track_id,start_frame,end_frame,label,
+                        quality_status,include_in_export,exclude_reason,
+                        annotation_version,source_type,source_id,created_by
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        uuid4().hex, video_id, segment["track_id"],
+                        max(int(segment["start_frame"]), start_frame) - start_frame,
+                        min(int(segment["end_frame"]), end_frame) - start_frame,
+                        segment["label"], segment["quality_status"],
+                        segment["include_in_export"], segment["exclude_reason"],
+                        1, segment["source_type"], segment["source_id"],
+                        segment["created_by"],
+                    ),
+                )
+            has_labels = bool(snapshot["segments"])
+            connection.execute(
+                """
+                UPDATE videos
+                SET annotation_revision=?, annotation_status=?, is_approved=0,
+                    approval_revision=NULL, approved_at=NULL,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE video_id=?
+                """,
+                (1 if has_labels else 0, "labeled" if has_labels else "unlabeled", video_id),
+            )
+
     def frame_mapping(self, video_id: str) -> list[dict[str, Any]]:
         return self.all(
             "SELECT canonical_frame,original_frame,timestamp_seconds FROM canonical_frame_mappings WHERE video_id=? ORDER BY canonical_frame",

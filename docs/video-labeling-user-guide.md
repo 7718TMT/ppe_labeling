@@ -82,6 +82,9 @@ Approved
 
 The browser has two filters above the cards:
 
+Use **Search video names** above these filters to find a filename quickly. The
+search is case-insensitive and combines with the selected status filters.
+
 - **System processing** filters the background pipeline: Unprocessed has not
   started, Processing is queued or running, Ready can be annotated, and Failed
   needs retrying.
@@ -98,7 +101,40 @@ duration, frame count, system processing, or user labelling. Its arrow changes
 between ascending and descending order. The default is recently updated with
 the newest video first.
 
-## 4. Process a video
+The bottom of the inspector shows **Approval progress**: approved videos out of
+the project total and the number left to approve. Its bar updates immediately
+after approving, unapproving, importing, or deleting a video.
+
+## 4. Trim a video
+
+Select the **scissors** button next to fullscreen to enter trim mode. The worker
+label lanes disappear and are replaced by a frame-preview strip for the raw
+video. Drag the left and right heads to choose the first and last frame to
+keep. The playhead can still be moved by clicking the strip; **Preview range**
+loops only the proposed result.
+
+Use `Ctrl`/`Cmd`+`Z` and `Ctrl`/`Cmd`+`Y`, or the toolbar undo/redo controls, to
+undo or redo trim-handle changes before saving. **Reset** restores the full
+video range.
+
+- **Save copy** asks for a name. Leave it blank to use `<name>_copy.mp4`; the
+  source video remains unchanged. Existing labels are copied into the new video
+  where they overlap the kept range, with their frame numbers shifted to start
+  at zero.
+- **Replace video** asks for confirmation, then replaces the current media
+  in-place. Existing overlapping labels are clipped and shifted to fit the new
+  video. Processing, pose, suggestions, approval, and history are reset because
+  they no longer describe the edited media.
+
+A saved trim is re-encoded MP4 media, not a display-only range. The saved video
+automatically handles processing: when it has no retained labels, it follows
+the normal import pipeline (keypoints, features, and the selected automatic
+suggestion method). When overlapping labels are retained and the source has
+pose data, the matching keypoints are sliced and copied with the labels instead
+of rerunning tracking. If no source pose cache exists, keypoint processing is
+queued and existing labels are never overwritten by later suggestions.
+
+## 5. Process a video
 
 The top toolbar has one split **Suggestions** control:
 
@@ -162,7 +198,7 @@ a new ID. A reprocessed video records this profile as
 reviewer track-merge and split controls when people overlap or leave the camera
 view.
 
-## 5. Understand the workspace
+## 6. Understand the workspace
 
 The workspace has four areas:
 
@@ -174,7 +210,7 @@ The workspace has four areas:
 Use the panel buttons in the toolbar to collapse the left or right side. On
 smaller displays the panels start collapsed so the player remains usable.
 
-## 6. Play, scrub, and navigate frames
+## 7. Play, scrub, and navigate frames
 
 Player controls support:
 
@@ -195,7 +231,7 @@ saved annotations and cached poses for each video.
 
 Use **Timeline zoom** for long videos and scroll horizontally after zooming.
 
-## 7. Select and correct a worker track
+## 8. Select and correct a worker track
 
 Select a worker by either:
 
@@ -213,7 +249,7 @@ The longest track is selected automatically when appropriate. Available tools:
 Track edits preserve human segments. Affected segments are marked for review,
 and only dependent pose-derived data is invalidated.
 
-## 8. Create and edit human segments
+## 9. Create and edit human segments
 
 Human annotation uses exactly three classes:
 
@@ -257,7 +293,7 @@ The application rejects out-of-range frames, track-lifespan violations,
 conflicting same-track overlaps, invalid classes, and stale revision writes.
 Different workers may have overlapping segments.
 
-## 9. Apply the class definitions consistently
+## 10. Apply the class definitions consistently
 
 ### Falling
 
@@ -278,7 +314,7 @@ Use `others` for all normal work behavior that is not running or falling,
 including standing, walking, bending, crouching, kneeling, sitting, equipment
 work, and stable recovery after a fall.
 
-## 10. Review suggestions
+## 11. Review suggestions
 
 Open **Suggestions**. The display toggle is:
 
@@ -303,7 +339,7 @@ Select a pending suggestion, then choose:
 Regenerating either suggestion source preserves all manual labels and keeps the
 two suggestion sources separate.
 
-## 11. Use Details, window review, and export
+## 12. Use Details, window review, and export
 
 The **Details** tab shows essential video and selected-worker information plus
 overlay controls. It contains optional collapsible sections:
@@ -330,14 +366,14 @@ This compact export preserves the labelled pose windows and reproducibility
 metadata needed for training. It does not create train, validation, or test
 splits.
 
-## 12. Complete a video
+## 13. Complete a video
 
 Resolve invalid or review-required segments, then select **Complete & Next**.
 The application validates the video, records approval, and opens the next
 available video. Editing a completed video invalidates its prior approval so it
 can be reviewed again.
 
-## 13. Delete videos, workers, or segments
+## 14. Delete videos, workers, or segments
 
 1. For one video, select its trash button. For multiple videos, workers, or
    segments, tick their checkboxes or `Ctrl`/`Cmd`-click their cards.
@@ -351,14 +387,14 @@ each deleted video. It does not delete an external source file or affect other
 videos. The next available video is selected automatically. Deleting a worker
 also deletes its segments; deleting segments leaves their worker intact.
 
-## 14. Use built-in Help
+## 15. Use built-in Help
 
 Select **Help** in the Pose toolbar at any time. The panel explains the basic
 workflow, class boundaries, playback, shortcuts, suggestions, and deletion. It
 is searchable, scrollable, dismissible with `Escape`, and does not interrupt
 saved work.
 
-## 15. Keyboard shortcuts
+## 16. Keyboard shortcuts
 
 Shortcuts do not run while typing in an input, select, textarea, or editable
 control. Hold `Alt` to show a temporary on-screen reference; release it to
@@ -384,7 +420,7 @@ close the guide.
 | `Ctrl+Z` / `Ctrl+Y` | Undo or redo |
 | `N` | Complete and open the next video |
 
-## 16. Recovery and troubleshooting
+## 17. Recovery and troubleshooting
 
 ### Processing does not start
 

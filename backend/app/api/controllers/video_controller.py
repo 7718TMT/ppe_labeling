@@ -36,6 +36,7 @@ from backend.app.api.video_schemas import (
     TrackSplitPayload,
     VideoDeleteResponse,
     VideoRenamePayload,
+    VideoTrimPayload,
     WindowReviewPayload,
     WorkspaceStatePayload,
 )
@@ -147,6 +148,26 @@ def rename_videos(
     """Rename every video display name in a project with one prefix."""
 
     return service.rename_videos(project_id, payload.prefix)
+
+
+@router.post("/{project_id}/videos/{video_id}/trim")
+def trim_video(
+    project_id: str,
+    video_id: str,
+    payload: VideoTrimPayload,
+    service: VideoService = Depends(get_video_service),
+) -> dict[str, Any]:
+    """Persist a frame-accurate trim as either a replacement or a new video."""
+
+    return service.trim_video(
+        project_id,
+        video_id,
+        payload.start_frame,
+        payload.end_frame,
+        payload.save_mode,
+        payload.filename,
+        payload.suggestion_mode,
+    )
 
 
 @router.get("/{project_id}/videos/{video_id}/overlay")

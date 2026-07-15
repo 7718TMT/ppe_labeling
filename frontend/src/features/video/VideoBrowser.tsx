@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Film, Loader2, Pencil, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Film, Loader2, Pencil, Search, Trash2, Upload } from 'lucide-react';
 
 import { videoThumbnailUrl } from '../../api/client';
 import type { ProcessingJob, VideoItem } from '../../types';
@@ -61,6 +61,7 @@ export function VideoBrowser({
   const scrollViewport = useRef<HTMLDivElement>(null);
   const [processingFilter, setProcessingFilter] = useState('All');
   const [annotationFilter, setAnnotationFilter] = useState('All');
+  const [videoQuery, setVideoQuery] = useState('');
   const [orderField, setOrderField] = useState<OrderField>('updated');
   const [orderDirection, setOrderDirection] = useState<OrderDirection>('desc');
   const [scrollTop, setScrollTop] = useState(0);
@@ -75,8 +76,10 @@ export function VideoBrowser({
   }
 
   const filtered = useMemo(() => {
+    const normalizedQuery = videoQuery.trim().toLocaleLowerCase();
     const matching = videos.filter((video) =>
-      (processingFilter === 'All' || userVideoStatus(video, jobs) === processingFilter)
+      (!normalizedQuery || video.filename.toLocaleLowerCase().includes(normalizedQuery))
+      && (processingFilter === 'All' || userVideoStatus(video, jobs) === processingFilter)
       && (annotationFilter === 'All' || userAnnotationStatus(video) === annotationFilter),
     );
     const multiplier = orderDirection === 'asc' ? 1 : -1;
@@ -100,7 +103,7 @@ export function VideoBrowser({
       if (comparison !== 0) return comparison * multiplier;
       return left.filename.localeCompare(right.filename, undefined, { numeric: true }) * multiplier;
     });
-  }, [annotationFilter, jobs, orderDirection, orderField, processingFilter, videos]);
+  }, [annotationFilter, jobs, orderDirection, orderField, processingFilter, videoQuery, videos]);
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 2);
   const visible = filtered.slice(start, start + 12);
 
@@ -144,6 +147,21 @@ export function VideoBrowser({
             event.target.value = '';
           }}
         />
+        <label className="relative block">
+          <span className="sr-only">Search videos by name</span>
+          <Search size={14} className="absolute left-2.5 top-2.5 text-on-surface-variant" />
+          <input
+            type="search"
+            aria-label="Search videos by name"
+            value={videoQuery}
+            onChange={(event) => {
+              setVideoQuery(event.target.value);
+              resetScroll();
+            }}
+            placeholder="Search video names"
+            className="w-full h-8 bg-surface-container-lowest border border-outline-variant rounded pl-8 pr-2 text-label-sm"
+          />
+        </label>
         {renameOpen && onRename && (
           <form
             className="rounded border border-outline-variant bg-surface-container-low p-2 space-y-2"

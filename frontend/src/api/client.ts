@@ -141,6 +141,29 @@ export async function renameVideos(projectId: string, prefix: string): Promise<V
   return (await api.post(`/video-projects/${encodeURIComponent(projectId)}/videos/rename`, { prefix })).data;
 }
 
+export async function trimVideo(
+  projectId: string,
+  videoId: string,
+  startFrame: number,
+  endFrame: number,
+  saveMode: 'replace' | 'copy',
+  filename?: string,
+  suggestionMode: 'threshold' | 'model' = 'threshold',
+): Promise<{
+  video: VideoItem;
+  save_mode: 'replace' | 'copy';
+  processing_action?: 'keypoints_copied' | 'suggestions_queued';
+  jobs?: ProcessingJob[];
+}> {
+  return (await api.post(
+    `/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/trim`,
+    {
+      start_frame: startFrame, end_frame: endFrame, save_mode: saveMode,
+      suggestion_mode: suggestionMode, ...(filename ? { filename } : {}),
+    },
+  )).data;
+}
+
 export async function processVideo(
   projectId: string,
   videoId: string,
