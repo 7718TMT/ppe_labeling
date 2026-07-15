@@ -18,7 +18,7 @@
  * #15 Auto-trigger feature extraction 5 s after last segment change, on approve, on video change.
  * #16 Fullscreen: play/pause + scrubber handled inside PoseVideoPlayer.
  * #17 Rearranged segment action buttons (cleaner grid).
- * #18 Details tab: only Video info + Overlay controls remain.
+ * #18 Details tab: video facts, annotation summary, and overlay controls.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -123,6 +123,48 @@ function upsertJobRows(current: ProcessingJob[], incoming: ProcessingJob[]): Pro
 
 function readableError(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+/** Format a frame location as a compact playback timestamp. */
+function formatFrameTimestamp(frameIndex: number, fps: number): string {
+  const totalSeconds = Math.max(0, frameIndex) / Math.max(1, fps);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const tenths = Math.floor((totalSeconds % 1) * 10);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${tenths}`;
+}
+
+/** Render status values stored as snake case in a user-facing form. */
+function displayStatus(value: string): string {
+  return value.replaceAll('_', ' ');
+}
+
+/** Count the distinct video frames covered by at least one segment. */
+function countCoveredFrames(segments: VideoSegment[], frameCount: number): number {
+  if (frameCount <= 0) return 0;
+  const ranges = segments
+    .map((segment) => ({
+      start: Math.max(0, segment.start_frame),
+      end: Math.min(frameCount - 1, segment.end_frame),
+    }))
+    .filter((range) => range.start <= range.end)
+    .sort((left, right) => left.start - right.start);
+  let covered = 0;
+  let rangeStart = -1;
+  let rangeEnd = -1;
+  for (const range of ranges) {
+    if (rangeStart < 0) {
+      rangeStart = range.start;
+      rangeEnd = range.end;
+    } else if (range.start <= rangeEnd + 1) {
+      rangeEnd = Math.max(rangeEnd, range.end);
+    } else {
+      covered += rangeEnd - rangeStart + 1;
+      rangeStart = range.start;
+      rangeEnd = range.end;
+    }
+  }
+  return rangeStart < 0 ? 0 : covered + rangeEnd - rangeStart + 1;
 }
 
 /**
@@ -1334,6 +1376,16 @@ export function VideoWorkspace() {
   const activeTrack = tracks.find((item) => item.track_id === selectedTrack);
   const selectedVideoIndex = videos.findIndex((item) => item.video_id === active?.video_id);
   const activeSegments = segments.filter((item) => selectedTrack === undefined || item.track_id === selectedTrack);
+  const detailLabelCounts = segments.reduce<Record<HumanVideoLabel, number>>((counts, segment) => {
+    counts[segment.label] += 1;
+    return counts;
+  }, { others: 0, running: 0, falling: 0 });
+  const coveredFrames = active ? countCoveredFrames(segments, active.canonical_frame_count) : 0;
+  const annotationCoverage = active && active.canonical_frame_count > 0
+    ? Math.round((coveredFrames / active.canonical_frame_count) * 100)
+    : 0;
+  const generatedSegmentCount = segments.filter((segment) => segment.source_type !== 'manual').length;
+  const activeJob = active ? jobs.find((job) => job.video_id === active.video_id && ACTIVE_JOB_STATUSES.has(job.status)) : undefined;
   const selectedSegmentsForMerge = segments
     .filter((segment) => selectedSegmentIds.has(segment.segment_id))
     .sort((left, right) => left.start_frame - right.start_frame);
@@ -1784,22 +1836,55 @@ export function VideoWorkspace() {
                 </div>
               )}
 
-              {/* ── Details tab — #18: only Video info + Overlay controls ── */}
+              {/* ── Details tab: video facts, annotation summary, and controls ── */}
               {tab === 'details' && (
                 <div className="p-3 space-y-3">
-                  {/* Video info */}
+                  {/* Video facts */}
                   <section className="border border-outline-variant rounded p-3">
                     <p className="font-label text-label-caps uppercase text-on-surface-variant">Video</p>
                     {active ? (
-                      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2 text-label-sm">
-                        <dt className="text-on-surface-variant">Duration</dt><dd>{active.duration_seconds.toFixed(1)} s</dd>
-                        <dt className="text-on-surface-variant">Frames</dt><dd>{active.canonical_frame_count}</dd>
-                        <dt className="text-on-surface-variant">Workers</dt><dd>{tracks.length}</dd>
-                        <dt className="text-on-surface-variant">Quality</dt><dd className="capitalize">{active.quality_status.replaceAll('_', ' ')}</dd>
-                        <dt className="text-on-surface-variant">Status</dt><dd className="capitalize">{active.annotation_status.replaceAll('_', ' ')}</dd>
+                      <dl className="mt-2 space-y-2 text-label-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <dt className="text-on-surface-variant shrink-0">Name</dt>
+                          <dd className="truncate text-right" title={active.filename}>{active.filename}</dd>
+                        </div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Resolution</dt><dd>{active.width} × {active.height}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Frame rate</dt><dd>{active.original_fps === active.canonical_fps ? `${active.canonical_fps} fps` : `${active.original_fps} source · ${active.canonical_fps} annotation`}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Duration</dt><dd>{active.duration_seconds.toFixed(1)} s · {active.canonical_frame_count} frames</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Playhead</dt><dd>{frame + 1} / {active.canonical_frame_count} · {formatFrameTimestamp(frame, active.canonical_fps)}</dd></div>
                       </dl>
                     ) : <p className="text-label-sm text-on-surface-variant mt-2">No video selected.</p>}
                   </section>
+
+                  {active && (
+                    <section className="border border-outline-variant rounded p-3">
+                      <p className="font-label text-label-caps uppercase text-on-surface-variant">Annotation</p>
+                      <dl className="mt-2 space-y-2 text-label-sm">
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Workers</dt><dd>{tracks.length}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Segments</dt><dd>{segments.length}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Timeline coverage</dt><dd>{annotationCoverage}% · {coveredFrames} frames</dd></div>
+                        {(['others', 'running', 'falling'] as HumanVideoLabel[]).map((item) => (
+                          <div key={item} className="flex justify-between gap-3">
+                            <dt className="flex items-center gap-1.5 capitalize text-on-surface-variant"><span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: LABEL_COLORS[item] }} />{item}</dt>
+                            <dd>{detailLabelCounts[item]} segment{detailLabelCounts[item] === 1 ? '' : 's'}</dd>
+                          </div>
+                        ))}
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">System generated</dt><dd>{generatedSegmentCount} segment{generatedSegmentCount === 1 ? '' : 's'}</dd></div>
+                      </dl>
+                    </section>
+                  )}
+
+                  {active && (
+                    <section className="border border-outline-variant rounded p-3">
+                      <p className="font-label text-label-caps uppercase text-on-surface-variant">Workflow</p>
+                      <dl className="mt-2 space-y-2 text-label-sm">
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Processing</dt><dd className="capitalize">{activeJob ? `${displayStatus(activeJob.stage)} in progress` : displayStatus(active.processing_status)}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Suggestion mode</dt><dd>{source}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Dataset</dt><dd>{active.include_in_export ? 'Included in export' : 'Excluded'}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Approval</dt><dd>{active.is_approved ? 'Approved' : 'Not approved'}</dd></div>
+                      </dl>
+                    </section>
+                  )}
 
                   {/* Overlay controls */}
                   <section className="border border-outline-variant rounded p-3 space-y-2">
@@ -1813,6 +1898,20 @@ export function VideoWorkspace() {
                       Selected worker only
                     </label>
                   </section>
+
+                  {active && (
+                    <details className="border border-outline-variant rounded p-3 group">
+                      <summary className="font-label text-label-sm cursor-pointer text-on-surface-variant group-open:text-on-surface">Technical details</summary>
+                      <dl className="mt-3 space-y-2 text-label-sm">
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Original frames</dt><dd>{active.original_frame_count}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Annotation quality</dt><dd className="capitalize">{displayStatus(active.quality_status)}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Revision</dt><dd>{active.annotation_revision}</dd></div>
+                        <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Last updated</dt><dd>{new Date(active.updated_at).toLocaleString()}</dd></div>
+                        {!active.include_in_export && active.exclude_reason && <div className="flex justify-between gap-3"><dt className="text-on-surface-variant">Exclusion reason</dt><dd className="text-right">{active.exclude_reason}</dd></div>}
+                      </dl>
+                      {active.last_error && <p role="status" className="mt-3 rounded bg-error/10 px-2 py-1.5 text-label-sm text-error">{active.last_error}</p>}
+                    </details>
+                  )}
                 </div>
               )}
             </div>

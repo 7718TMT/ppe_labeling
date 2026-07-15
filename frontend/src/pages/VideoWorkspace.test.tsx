@@ -560,6 +560,21 @@ describe('VideoWorkspace', () => {
     expect(screen.getByText(/loss of balance begins/)).toBeInTheDocument();
   });
 
+  it('shows media, annotation, and workflow facts in the Details tab', async () => {
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: 'details' }));
+
+    expect(screen.getByText('Resolution')).toBeInTheDocument();
+    expect(screen.getByText('640 × 480')).toBeInTheDocument();
+    expect(screen.getByText('Frame rate')).toBeInTheDocument();
+    expect(screen.getByText('24 fps')).toBeInTheDocument();
+    expect(screen.getByText('Timeline coverage')).toBeInTheDocument();
+    expect(screen.getByText('0% · 0 frames')).toBeInTheDocument();
+    expect(screen.getByText('Suggestion mode')).toBeInTheDocument();
+    expect(screen.getByText('Technical details')).toBeInTheDocument();
+  });
+
   it('keeps annotations usable when Model availability cannot be loaded', async () => {
     vi.mocked(api.getProcessingOptions).mockRejectedValue(new Error('model service unavailable'));
     renderWorkspace();
