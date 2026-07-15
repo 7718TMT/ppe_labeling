@@ -454,7 +454,7 @@ describe('VideoWorkspace', () => {
 
     fireEvent.keyDown(window, { key: 'Alt' });
     expect(screen.getByRole('region', { name: 'Keyboard shortcut guide' })).toBeInTheDocument();
-    expect(screen.getByText('Release Alt to close')).toBeInTheDocument();
+    expect(screen.getByText(/release to close/i)).toBeInTheDocument();
     fireEvent.keyUp(window, { key: 'Alt' });
     expect(screen.queryByRole('region', { name: 'Keyboard shortcut guide' })).not.toBeInTheDocument();
   });

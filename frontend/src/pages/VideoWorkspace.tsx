@@ -1281,8 +1281,8 @@ export function VideoWorkspace() {
         || target.closest('input, textarea, select, [contenteditable="true"]')
       );
       if (editingText) return;
-      if (event.ctrlKey && event.key.toLowerCase() === 'z') { event.preventDefault(); if (trimMode) undoTrim(); else void history('undo'); return; }
-      if (event.ctrlKey && event.key.toLowerCase() === 'y') { event.preventDefault(); if (trimMode) redoTrim(); else void history('redo'); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); if (trimMode) undoTrim(); else void history('undo'); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); if (trimMode) redoTrim(); else void history('redo'); return; }
       if (event.key === 'Escape' && selectedSegment) {
         event.preventDefault();
         setSelectedSegment(undefined);

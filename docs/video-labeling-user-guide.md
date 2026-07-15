@@ -394,10 +394,11 @@ also deletes its segments; deleting segments leaves their worker intact.
 
 ## 15. Use built-in Help
 
-Select **Help** in the Pose toolbar at any time. The panel explains the basic
-workflow, class boundaries, playback, shortcuts, suggestions, and deletion. It
-is searchable, scrollable, dismissible with `Escape`, and does not interrupt
-saved work.
+Select **Help** in the Pose toolbar at any time. The searchable panel explains
+each workspace zone: the video browser, Import and Export, processing queue,
+player toolbar, timeline, trim mode, suggestions, workers, segments, filters,
+approval, export, errors, and keyboard controls. It is scrollable, dismissible
+with `Escape`, and does not interrupt saved work.
 
 ## 16. Keyboard shortcuts
 
@@ -417,13 +418,12 @@ close the guide.
 | `T` | Select Threshold for the Suggestion button |
 | `M` | Select AI for the Suggestion button when available |
 | `S` | Turn automatic suggestion generation off |
-| `Esc` | Leave the selected segment and return to full-video mode |
+| `Esc` | Exit browser fullscreen, or leave the selected segment and return to full-video mode |
 | `Ctrl`/`Cmd`+click or checkbox | Select multiple videos, workers, or segments |
 | `Delete` / `Backspace` | Delete the most recently selected group |
 | `X` | Exclude or restore the selected segment |
 | `Enter` | Create or update a segment |
 | `Ctrl+Z` / `Ctrl+Y` | Undo or redo |
-| `N` | Complete and open the next video |
 
 ## 17. Recovery and troubleshooting
 
