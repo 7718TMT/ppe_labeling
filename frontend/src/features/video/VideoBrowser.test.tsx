@@ -12,6 +12,10 @@ const video = (id: string, status = 'annotation_ready'): VideoItem => ({
   is_approved: 0, include_in_export: 1, updated_at: '2026-01-01',
 });
 
+function openFilters(): void {
+  fireEvent.click(screen.getByRole('button', { name: /^Filters/ }));
+}
+
 describe('VideoBrowser', () => {
   afterEach(cleanup);
 
@@ -30,6 +34,7 @@ describe('VideoBrowser', () => {
     expect(within(screen.getByLabelText('Open one.mp4')).getByText('Processing')).toBeInTheDocument();
     fireEvent.click(screen.getByText('one.mp4'));
     expect(select).toHaveBeenCalledWith(expect.objectContaining({ video_id: 'one' }));
+    openFilters();
     fireEvent.change(screen.getByLabelText('Filter system processing status'), { target: { value: 'Failed' } });
     expect(screen.queryByText('one.mp4')).not.toBeInTheDocument();
     expect(screen.getByText('two.mp4')).toBeInTheDocument();
@@ -63,6 +68,7 @@ describe('VideoBrowser', () => {
     const viewport = container.querySelector('.overflow-y-auto') as HTMLDivElement;
     Object.defineProperty(viewport, 'scrollTop', { configurable: true, writable: true, value: 2200 });
     fireEvent.scroll(viewport);
+    openFilters();
     fireEvent.change(screen.getByLabelText('Filter system processing status'), { target: { value: 'Failed' } });
     expect(viewport.scrollTop).toBe(0);
     expect(screen.getByText('video-0.mp4')).toBeInTheDocument();
@@ -73,6 +79,7 @@ describe('VideoBrowser', () => {
     render(
       <VideoBrowser videos={[video('unlabeled'), labeled, video('failed', 'failed')]} onSelect={vi.fn()} onImport={vi.fn()} />,
     );
+    openFilters();
     fireEvent.change(screen.getByLabelText('Filter user labelling status'), { target: { value: 'Labeled' } });
     expect(screen.getByText('review.mp4')).toBeInTheDocument();
     expect(screen.queryByText('unlabeled.mp4')).not.toBeInTheDocument();

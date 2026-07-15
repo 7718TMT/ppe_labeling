@@ -28,7 +28,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Download,
   Eye,
   EyeOff,
   HelpCircle,
@@ -1386,26 +1385,6 @@ export function VideoWorkspace() {
           {/* #5 — Source selector compact dropdown in navbar */}
           <button type="button" onClick={() => setHelpOpen(true)} className="h-8 px-2 border border-outline-variant rounded font-label text-label-sm flex items-center gap-1"><HelpCircle size={15} />Help</button>
 
-          {/* #9 — Export button replaces "Complete & Next". */}
-          <button
-            type="button"
-            disabled={!active}
-            onClick={() => setExportOpen(true)}
-            className="h-8 px-3 bg-surface-container text-on-surface border border-outline-variant rounded font-label text-label-sm flex items-center gap-2 disabled:opacity-40"
-          >
-            <Download size={15} /><span className="hidden sm:inline">Export</span>
-          </button>
-
-          <SuggestionModeButton
-            source={source}
-            disabled={!active}
-            generating={Boolean(active && processingRequests.has(active.video_id)) || activeProcessing}
-            modelAvailable={modelAvailable}
-            modelUnavailableReason={processingOptions.model_message ?? 'Model suggestions are unavailable.'}
-            onSourceChange={setSource}
-            onGenerate={() => void generateSuggestions()}
-          />
-
           <button type="button" aria-label="Toggle inspector" onClick={() => setRightOpen(!rightOpen)} className="toolbar-icon"><PanelRight size={18} /></button>
         </div>
       </header>
@@ -1432,6 +1411,7 @@ export function VideoWorkspace() {
               onSelect={setActive}
               onToggleSelection={toggleVideoSelection}
               onImport={(files) => void handleImport(files)}
+              onExport={() => setExportOpen(true)}
               onRename={handleRenameVideos}
               onDelete={requestVideoDelete}
               onDeleteSelected={() => setPendingDeleteIds([...selectedVideoIds])}
@@ -1495,6 +1475,16 @@ export function VideoWorkspace() {
                 <button type="button" aria-label="Toggle video trim mode" title="Video trim mode" onClick={() => { setTrimMode((enabled) => !enabled); setTrimPreviewing(false); }} className={`toolbar-icon ${trimMode ? 'border-primary bg-primary/10 text-primary' : ''}`}>
                   <Scissors size={16} />
                 </button>
+                <SuggestionModeButton
+                  compact
+                  source={source}
+                  disabled={!active}
+                  generating={Boolean(active && processingRequests.has(active.video_id)) || activeProcessing}
+                  modelAvailable={modelAvailable}
+                  modelUnavailableReason={processingOptions.model_message ?? 'Model suggestions are unavailable.'}
+                  onSourceChange={setSource}
+                  onGenerate={() => void generateSuggestions()}
+                />
               </div>
 
               {trimMode && trimRange && (

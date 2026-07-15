@@ -10,6 +10,7 @@ interface SuggestionModeButtonProps {
   generating?: boolean;
   modelAvailable: boolean;
   modelUnavailableReason?: string;
+  compact?: boolean;
   onSourceChange: (source: SuggestionMode) => void;
   onGenerate: () => void;
 }
@@ -21,6 +22,7 @@ export function SuggestionModeButton({
   generating = false,
   modelAvailable,
   modelUnavailableReason = 'Model suggestions are not available for this project.',
+  compact = false,
   onSourceChange,
   onGenerate,
 }: SuggestionModeButtonProps) {
@@ -48,13 +50,16 @@ export function SuggestionModeButton({
     <div ref={root} className="relative flex">
       <button
         type="button"
+        aria-label={compact ? 'Suggestion' : undefined}
         disabled={disabled || generating || generationUnavailable}
-        title={sourceBlocked ? modelUnavailableReason : source === 'Off' ? 'Select Threshold or AI to generate suggestions.' : `Generate ${source} suggestions for the selected video.`}
+        title={sourceBlocked ? modelUnavailableReason : source === 'Off' ? 'Suggestions are off. Choose Threshold or AI.' : `Suggestions: ${source}. Generate suggestions for the selected video.`}
         onClick={onGenerate}
-        className="h-8 px-3 rounded-l bg-primary-container text-on-primary-container font-label text-label-sm font-bold flex items-center gap-2 disabled:opacity-40"
+        className={compact
+          ? 'h-8 w-8 rounded-l bg-primary-container text-on-primary-container flex items-center justify-center disabled:opacity-40'
+          : 'h-8 px-3 rounded-l bg-primary-container text-on-primary-container font-label text-label-sm font-bold flex items-center gap-2 disabled:opacity-40'}
       >
         {generating ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
-        Suggestion
+        {!compact && 'Suggestion'}
       </button>
       <button
         type="button"
@@ -63,7 +68,8 @@ export function SuggestionModeButton({
         aria-expanded={open}
         disabled={generating}
         onClick={() => setOpen((current) => !current)}
-        className="h-8 w-8 rounded-r border-l border-on-primary-container/30 bg-primary-container text-on-primary-container flex items-center justify-center disabled:opacity-40"
+        title={`Suggestion mode: ${source}`}
+        className="h-8 w-6 rounded-r border-l border-on-primary-container/30 bg-primary-container text-on-primary-container flex items-center justify-center disabled:opacity-40"
       >
         <ChevronDown size={15} />
       </button>

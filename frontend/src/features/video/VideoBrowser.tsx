@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Film, Loader2, Pencil, Search, Trash2, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, Download, Film, ListFilter, Loader2, MoreHorizontal, Pencil, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { videoThumbnailUrl } from '../../api/client';
 import type { ProcessingJob, VideoItem } from '../../types';
@@ -14,6 +14,7 @@ interface Props {
   onSelect: (video: VideoItem) => void;
   onToggleSelection?: (video: VideoItem) => void;
   onImport: (files: File[]) => void;
+  onExport?: () => void;
   onRename?: (prefix: string) => Promise<void>;
   onDelete?: (video: VideoItem) => void;
   onDeleteSelected?: () => void;
@@ -53,6 +54,7 @@ export function VideoBrowser({
   onSelect,
   onToggleSelection,
   onImport,
+  onExport,
   onRename,
   onDelete,
   onDeleteSelected,
@@ -70,6 +72,8 @@ export function VideoBrowser({
   const [renamePrefix, setRenamePrefix] = useState('video');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   function resetScroll() {
     setScrollTop(0);
     if (scrollViewport.current) scrollViewport.current.scrollTop = 0;
@@ -106,6 +110,13 @@ export function VideoBrowser({
   }, [annotationFilter, jobs, orderDirection, orderField, processingFilter, videoQuery, videos]);
   const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 2);
   const visible = filtered.slice(start, start + 12);
+  const activeFilterCount = Number(processingFilter !== 'All') + Number(annotationFilter !== 'All');
+
+  function clearFilters() {
+    setProcessingFilter('All');
+    setAnnotationFilter('All');
+    resetScroll();
+  }
 
   return (
     <section
@@ -118,23 +129,53 @@ export function VideoBrowser({
       }}
     >
       <div className="p-3 border-b border-outline-variant space-y-2">
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => input.current?.click()}
-            className="h-8 bg-primary-container text-on-primary-container rounded font-label text-label-sm font-bold flex items-center justify-center gap-2"
-          >
-            <Upload size={15} />Import videos
-          </button>
-          {onRename && (
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
-              onClick={() => { setRenameOpen((open) => !open); setRenameError(''); }}
-              className="h-8 border border-outline-variant rounded font-label text-label-sm flex items-center justify-center gap-2 hover:border-primary"
+              onClick={() => input.current?.click()}
+              className="w-20 h-8 bg-primary-container text-on-primary-container rounded font-label text-label-sm font-bold flex items-center justify-center gap-1.5"
             >
-              <Pencil size={14} />Rename
+              <Upload size={15} />Import
             </button>
-          )}
+            {onExport && (
+              <button
+                type="button"
+                onClick={onExport}
+                className="w-20 h-8 border border-outline-variant bg-surface-container-low text-on-surface rounded font-label text-label-sm flex items-center justify-center gap-1.5 hover:border-primary hover:text-primary"
+              >
+                <Download size={14} className="text-primary" />Export
+              </button>
+            )}
+          </div>
+          <div className="ml-auto flex items-center gap-2 min-w-0">
+            <span aria-label="Video count" title={filtered.length === videos.length ? `${videos.length} videos` : `${filtered.length} of ${videos.length} videos`} className="min-w-8 h-8 px-2 rounded border border-outline-variant bg-surface-container-lowest font-label text-[10px] text-on-surface-variant flex items-center justify-center whitespace-nowrap">{filtered.length === videos.length ? videos.length : `${filtered.length}/${videos.length}`}</span>
+            <div className="relative">
+            {onRename && (
+              <button
+                type="button"
+                aria-label="More video actions"
+                aria-expanded={moreOpen}
+                onClick={() => setMoreOpen((open) => !open)}
+                className="toolbar-icon border border-outline-variant"
+              >
+                <MoreHorizontal size={17} />
+              </button>
+            )}
+            {moreOpen && onRename && (
+              <div role="menu" className="absolute right-0 top-9 z-20 min-w-36 rounded border border-outline-variant bg-surface-container-high p-1 shadow-lg">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setRenameOpen(true); setRenameError(''); setMoreOpen(false); }}
+                  className="w-full h-8 px-2 text-left rounded text-label-sm hover:bg-surface-container-highest flex items-center gap-2"
+                >
+                  <Pencil size={14} />Rename all
+                </button>
+              </div>
+            )}
+            </div>
+          </div>
         </div>
         <input
           ref={input}
@@ -162,6 +203,77 @@ export function VideoBrowser({
             className="w-full h-8 bg-surface-container-lowest border border-outline-variant rounded pl-8 pr-2 text-label-sm"
           />
         </label>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-expanded={filterOpen}
+            onClick={() => setFilterOpen((open) => !open)}
+            className={`h-8 px-2 border rounded font-label text-label-sm flex items-center gap-1.5 ${filterOpen || activeFilterCount ? 'border-primary text-primary bg-primary/10' : 'border-outline-variant text-on-surface-variant hover:border-primary'}`}
+          >
+            <ListFilter size={14} />Filters{activeFilterCount ? ` (${activeFilterCount})` : ''}
+          </button>
+          <label className="min-w-0 flex-1 flex items-center gap-1 h-8 px-2 bg-surface-container-lowest border border-outline-variant rounded font-label text-label-sm text-on-surface-variant">
+            <span>Sort</span>
+            <select
+              aria-label="Order videos by"
+              value={orderField}
+              onChange={(event) => {
+                setOrderField(event.target.value as OrderField);
+                resetScroll();
+              }}
+              className="min-w-0 flex-1 bg-transparent text-on-surface outline-none"
+            >
+              {ORDER_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            aria-label={orderDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+            title={orderDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+            onClick={() => {
+              setOrderDirection((current) => current === 'asc' ? 'desc' : 'asc');
+              resetScroll();
+            }}
+            className="w-8 h-8 rounded border border-outline-variant bg-surface-container-lowest flex items-center justify-center"
+          >
+            {orderDirection === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+          </button>
+        </div>
+        {activeFilterCount > 0 && (
+          <div className="flex flex-wrap gap-1" aria-label="Active filters">
+            {processingFilter !== 'All' && <button type="button" onClick={() => { setProcessingFilter('All'); resetScroll(); }} className="h-6 px-1.5 rounded border border-primary/40 text-primary text-[10px] flex items-center gap-1">{processingFilter}<X size={11} /></button>}
+            {annotationFilter !== 'All' && <button type="button" onClick={() => { setAnnotationFilter('All'); resetScroll(); }} className="h-6 px-1.5 rounded border border-primary/40 text-primary text-[10px] flex items-center gap-1">{annotationFilter}<X size={11} /></button>}
+          </div>
+        )}
+        {filterOpen && (
+          <div className="rounded border border-outline-variant bg-surface-container-low p-2 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
+                System processing
+                <select
+                  aria-label="Filter system processing status"
+                  value={processingFilter}
+                  onChange={(event) => { setProcessingFilter(event.target.value); resetScroll(); }}
+                  className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
+                >
+                  {PROCESSING_FILTERS.map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
+                User labelling
+                <select
+                  aria-label="Filter user labelling status"
+                  value={annotationFilter}
+                  onChange={(event) => { setAnnotationFilter(event.target.value); resetScroll(); }}
+                  className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
+                >
+                  {ANNOTATION_FILTERS.map((value) => <option key={value}>{value}</option>)}
+                </select>
+              </label>
+            </div>
+            {activeFilterCount > 0 && <button type="button" onClick={clearFilters} className="h-7 px-2 text-label-sm text-on-surface-variant hover:text-primary">Clear filters</button>}
+          </div>
+        )}
         {renameOpen && onRename && (
           <form
             className="rounded border border-outline-variant bg-surface-container-low p-2 space-y-2"
@@ -189,72 +301,11 @@ export function VideoBrowser({
           </form>
         )}
         {selectedIds.size > 0 && onDeleteSelected && (
-          <button
-            type="button"
-            onClick={onDeleteSelected}
-            className="w-full h-8 border border-error/50 text-error rounded font-label text-label-sm hover:bg-error/10"
-          >
-            Delete selected ({selectedIds.size})
-          </button>
+          <div className="flex items-center justify-between gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5">
+            <span className="font-label text-label-sm text-on-surface">{selectedIds.size} selected</span>
+            <button type="button" onClick={onDeleteSelected} className="h-7 px-2 border border-error/50 text-error rounded font-label text-label-sm hover:bg-error/10">Delete selected ({selectedIds.size})</button>
+          </div>
         )}
-        <div className="grid grid-cols-2 gap-2">
-          <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
-            System processing
-            <select
-              aria-label="Filter system processing status"
-              value={processingFilter}
-              onChange={(event) => {
-                setProcessingFilter(event.target.value);
-                resetScroll();
-              }}
-              className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
-            >
-              {PROCESSING_FILTERS.map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
-            User labelling
-            <select
-              aria-label="Filter user labelling status"
-              value={annotationFilter}
-              onChange={(event) => {
-                setAnnotationFilter(event.target.value);
-                resetScroll();
-              }}
-              className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
-            >
-              {ANNOTATION_FILTERS.map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
-        </div>
-        <div className="flex items-end gap-2">
-          <label className="min-w-0 flex-1 font-label text-[10px] text-on-surface-variant">
-            Order
-            <select
-              aria-label="Order videos by"
-              value={orderField}
-              onChange={(event) => {
-                setOrderField(event.target.value as OrderField);
-                resetScroll();
-              }}
-              className="mt-1 w-full h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 text-label-sm"
-            >
-              {ORDER_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-          <button
-            type="button"
-            aria-label={orderDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
-            title={orderDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
-            onClick={() => {
-              setOrderDirection((current) => current === 'asc' ? 'desc' : 'asc');
-              resetScroll();
-            }}
-            className="w-8 h-8 rounded border border-outline-variant bg-surface-container-lowest flex items-center justify-center"
-          >
-            {orderDirection === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
-          </button>
-        </div>
       </div>
       <div
         ref={scrollViewport}
