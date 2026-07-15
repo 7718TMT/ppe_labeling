@@ -67,6 +67,7 @@ import {
   getVideos,
   importVideos,
   mergeMultipleVideoTracks,
+  mergeVideoSegments,
   processVideo,
   renameVideos,
   saveVideoSegment,
@@ -746,6 +747,36 @@ export function VideoWorkspace() {
     }
   }
 
+  async function mergeSelectedSegments() {
+    if (!active || !canMergeSelectedSegments) return;
+    const videoId = active.video_id;
+    const selected = segments
+      .filter((segment) => selectedSegmentIds.has(segment.segment_id))
+      .sort((left, right) => left.start_frame - right.start_frame);
+    try {
+      const result = await mergeVideoSegments(
+        projectId, videoId, selected.map((segment) => segment.segment_id), revision,
+      );
+      if (activeIdRef.current !== videoId) return;
+      setRevision(result.revision);
+      setSegments((current) => [
+        ...current.filter((segment) => !selectedSegmentIds.has(segment.segment_id)),
+        result.segment,
+      ].sort((left, right) => left.start_frame - right.start_frame));
+      setSelectedSegment(result.segment);
+      setSelectedSegmentIds(new Set());
+      setStart(result.segment.start_frame);
+      setEnd(result.segment.end_frame);
+      setLabel(result.segment.label);
+      setMessage(`${selected.length} adjacent ${result.segment.label} segments merged.`);
+      scheduleFeatureExtraction();
+    } catch (reason) {
+      if (activeIdRef.current === videoId) {
+        setError(`Could not merge the selected segments. ${readableError(reason)}`);
+      }
+    }
+  }
+
   async function expandSegment(segment: VideoSegment) {
     if (!active) return;
     const videoId = active.video_id;
@@ -1229,6 +1260,13 @@ export function VideoWorkspace() {
   const activeTrack = tracks.find((item) => item.track_id === selectedTrack);
   const selectedVideoIndex = videos.findIndex((item) => item.video_id === active?.video_id);
   const activeSegments = segments.filter((item) => selectedTrack === undefined || item.track_id === selectedTrack);
+  const selectedSegmentsForMerge = segments
+    .filter((segment) => selectedSegmentIds.has(segment.segment_id))
+    .sort((left, right) => left.start_frame - right.start_frame);
+  const canMergeSelectedSegments = selectedSegmentsForMerge.length >= 2
+    && new Set(selectedSegmentsForMerge.map((segment) => `${segment.track_id}:${segment.label}`)).size === 1
+    && selectedSegmentsForMerge.every((segment, index) => index === 0
+      || segment.start_frame <= selectedSegmentsForMerge[index - 1].end_frame + 1);
   const activeProcessingVideoIds = new Set(
     jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status) && job.video_id).map((job) => job.video_id as string),
   );
@@ -1417,6 +1455,7 @@ export function VideoWorkspace() {
                   frameCount={active.canonical_frame_count}
                   currentFrame={frame}
                   segments={segments}
+                  tracks={tracks}
                   selectedSegment={selectedSegment?.segment_id}
                   onFrame={seek}
                   onSegment={chooseSegment}
@@ -1563,9 +1602,16 @@ export function VideoWorkspace() {
                       <div className="flex items-center justify-between mb-2">
                         <p className="font-label text-label-caps uppercase text-on-surface-variant">Segments ({activeSegments.length})</p>
                         {selectedSegmentIds.size > 0 && (
-                          <button type="button" onClick={() => void removeSelectedSegments()} className="h-7 px-2 border border-error/50 text-error rounded font-label text-label-sm">
-                            Delete selected ({selectedSegmentIds.size})
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {canMergeSelectedSegments && (
+                              <button type="button" onClick={() => void mergeSelectedSegments()} className="h-7 px-2 bg-primary-container text-on-primary-container rounded font-label text-label-sm flex items-center gap-1">
+                                <Check size={13} />Merge {selectedSegmentIds.size}
+                              </button>
+                            )}
+                            <button type="button" onClick={() => void removeSelectedSegments()} className="h-7 px-2 border border-error/50 text-error rounded font-label text-label-sm">
+                              Delete selected ({selectedSegmentIds.size})
+                            </button>
+                          </div>
                         )}
                       </div>
                       <div className="space-y-1 max-h-48 overflow-y-auto">

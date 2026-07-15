@@ -36,6 +36,26 @@ describe('VideoTimeline', () => {
     expect(screen.queryByText('QUALITY')).not.toBeInTheDocument();
   });
 
+  it('keeps an empty label bar for a detected worker without segments', () => {
+    render(
+      <VideoTimeline
+        frameCount={120}
+        currentFrame={20}
+        onFrame={vi.fn()}
+        onSegment={vi.fn()}
+        segments={[]}
+        tracks={[{
+          track_id: 1, start_frame: 0, end_frame: 119,
+          avg_keypoint_confidence: 0.9, valid_frame_ratio: 1,
+          missing_ankle_ratio: 0, quality_status: 'good', include_in_export: 1,
+        }]}
+      />,
+    );
+
+    expect(screen.getAllByText('W1')).toHaveLength(2);
+    expect(screen.queryByText('LABEL')).not.toBeInTheDocument();
+  });
+
   it('previews a resize locally and commits only once on pointer release', () => {
     const onSegmentResize = vi.fn();
     render(

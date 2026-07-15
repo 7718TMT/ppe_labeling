@@ -206,6 +206,30 @@ describe('VideoWorkspace', () => {
 
     await waitFor(() => expect(api.deleteVideoSegment).toHaveBeenCalledWith('p1', 'v1', 'delete-me', 4));
     expect(screen.queryByTitle(/others frames 0.*10/)).not.toBeInTheDocument();
+    expect(screen.getByText('W1')).toBeInTheDocument();
+  });
+
+  it('offers bulk merge only for adjacent same-label selected segments', async () => {
+    vi.mocked(api.getVideoSegments).mockResolvedValue({
+      revision: 4,
+      segments: [
+        { segment_id: 'left', track_id: 1, start_frame: 0, end_frame: 10, label: 'running', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+        { segment_id: 'right', track_id: 1, start_frame: 11, end_frame: 20, label: 'running', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+      ],
+    });
+    vi.mocked(api.mergeVideoSegments).mockResolvedValue({
+      revision: 5,
+      segment: { segment_id: 'left', track_id: 1, start_frame: 0, end_frame: 20, label: 'running', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+    });
+    renderWorkspace();
+    fireEvent.click(await screen.findByLabelText('Select running segment 0 to 10'));
+    fireEvent.click(screen.getByLabelText('Select running segment 11 to 20'));
+
+    const merge = screen.getByRole('button', { name: 'Merge 2' });
+    fireEvent.click(merge);
+
+    await waitFor(() => expect(api.mergeVideoSegments).toHaveBeenCalledWith('p1', 'v1', ['left', 'right'], 4));
+    expect(await screen.findByRole('status')).toHaveTextContent('2 adjacent running segments merged.');
   });
 
   it('expands a selected segment only through its surrounding gaps', async () => {

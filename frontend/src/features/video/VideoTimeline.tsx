@@ -11,7 +11,7 @@
  */
 
 import { useRef, useState } from 'react';
-import type { HumanVideoLabel, VideoSegment } from '../../types';
+import type { HumanVideoLabel, VideoSegment, VideoTrack } from '../../types';
 
 /** Hex color per label class matching the design palette. */
 const LABEL_COLORS: Record<HumanVideoLabel, string> = {
@@ -44,6 +44,8 @@ interface Props {
   currentFrame: number;
   /** All human segments (may span multiple tracks). */
   segments: VideoSegment[];
+  /** Detected workers, including workers that do not have a segment yet. */
+  tracks?: VideoTrack[];
   /** segment_id of the currently selected segment (for highlight ring). */
   selectedSegment?: string;
   /** Called when the user clicks a position in the timeline. */
@@ -60,6 +62,7 @@ export function VideoTimeline({
   frameCount,
   currentFrame,
   segments,
+  tracks = [],
   selectedSegment,
   onFrame,
   onSegment,
@@ -180,9 +183,11 @@ export function VideoTimeline({
 
   // ── Derive per-track grouping ────────────────────────────────────────────────
 
-  /** Unique track IDs in the order they first appear in segments; fallback to [0] */
-  const trackIds = [...new Set(segments.map((s) => s.track_id))].sort((a, b) => a - b);
-  const effectiveTracks = trackIds.length > 0 ? trackIds : [];
+  /** Keep a label row for every detected worker, even when it has no labels. */
+  const effectiveTracks = [...new Set([
+    ...tracks.map((track) => track.track_id),
+    ...segments.map((segment) => segment.track_id),
+  ])].sort((left, right) => left - right);
 
   return (
     <section
