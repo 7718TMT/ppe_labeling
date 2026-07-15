@@ -78,6 +78,7 @@ export function VideoTimeline({
   const dragRef = useRef<DragState | null>(null);
   const ignoreNextClickRef = useRef(false);
   const [previewFrame, setPreviewFrame] = useState<number>();
+  const [segmentPulse, setSegmentPulse] = useState<{ id: string; cycle: number }>();
 
   /** Convert a frame number to a CSS left percentage string relative to the timeline area. */
   const toPercent = (frame: number) =>
@@ -223,7 +224,7 @@ export function VideoTimeline({
                 LABEL
               </span>
               <div
-                className="relative flex-1 h-7 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
+                className="timeline-track relative flex-1 h-7 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
                 onClick={handleTimelineClick}
                 onMouseMove={previewTimelineFrame}
                 onMouseLeave={() => setPreviewFrame(undefined)}
@@ -231,7 +232,7 @@ export function VideoTimeline({
                 {trimMode && trimRange && <TrimOverlay range={trimRange} toPercent={toPercent} />}
                 {/* Current frame marker */}
                 <span
-                  className="absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-20"
+                  className="timeline-playhead absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-20"
                   style={{ left: toPercent(currentFrame) }}
                 />
               </div>
@@ -245,7 +246,7 @@ export function VideoTimeline({
                     W{trackId}
                   </span>
                   <div
-                    className="relative flex-1 h-8 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
+                    className="timeline-track relative flex-1 h-8 bg-surface-container-lowest border border-outline-variant cursor-crosshair"
                     onClick={handleTimelineClick}
                     onMouseMove={previewTimelineFrame}
                     onMouseLeave={() => setPreviewFrame(undefined)}
@@ -269,13 +270,16 @@ export function VideoTimeline({
                               ignoreNextClickRef.current = false;
                               return;
                             }
+                            setSegmentPulse((current) => current?.id === seg.segment_id
+                              ? { id: seg.segment_id, cycle: current.cycle + 1 }
+                              : { id: seg.segment_id, cycle: 0 });
                             onSegment(seg);
                           }}
                           onPointerDown={(e) => startSegmentDrag(e, seg, 'move')}
                           onPointerMove={handlePointerMove}
                           onPointerUp={handlePointerUp}
                           onPointerCancel={cancelSegmentDrag}
-                          className={`absolute top-1 bottom-1 rounded-sm group cursor-grab active:cursor-grabbing ${isSelected ? 'ring-1 ring-white z-10' : ''}`}
+                          className={`timeline-segment absolute top-1 bottom-1 rounded-sm group cursor-grab active:cursor-grabbing ${isSelected ? 'ring-1 ring-white z-10' : ''} ${segmentPulse?.id === seg.segment_id ? segmentPulse.cycle % 2 === 0 ? 'timeline-segment-pulse-a' : 'timeline-segment-pulse-b' : ''}`}
                           style={{ ...blockStyle(displayedBounds.start, displayedBounds.end), background: color }}
                         >
                           {/* Left drag handle */}
@@ -312,7 +316,7 @@ export function VideoTimeline({
 
                     {/* Current frame marker */}
                     <span
-                      className="absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-30"
+                    className="timeline-playhead absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-30"
                       style={{ left: toPercent(currentFrame) }}
                     />
                   </div>

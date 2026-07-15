@@ -142,7 +142,7 @@ export function PoseHelpDialog({ open, onClose }: { open: boolean; onClose: () =
         aria-modal="true"
         aria-labelledby="pose-help-title"
         onMouseDown={(event) => event.stopPropagation()}
-        className="w-full max-w-2xl max-h-[85vh] bg-surface-container-high border border-outline-variant rounded-lg shadow-2xl flex flex-col"
+        className="decorative-dialog w-full max-w-2xl max-h-[85vh] bg-surface-container-high border border-outline-variant rounded-lg flex flex-col"
       >
         <header className="h-12 px-4 border-b border-outline-variant flex items-center justify-between shrink-0">
           <h2 id="pose-help-title" className="font-headline-sm text-headline-sm">Pose labeling help</h2>

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Download, Film, ListFilter, Loader2, MoreHorizontal, Pencil, Search, Trash2, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowDownUp, ArrowUp, Download, Film, ListFilter, Loader2, MoreHorizontal, Pencil, Search, Trash2, Upload, X } from 'lucide-react';
 
 import { videoThumbnailUrl } from '../../api/client';
 import type { ProcessingJob, VideoItem } from '../../types';
@@ -163,7 +163,7 @@ export function VideoBrowser({
               </button>
             )}
             {moreOpen && onRename && (
-              <div role="menu" className="absolute right-0 top-9 z-20 min-w-36 rounded border border-outline-variant bg-surface-container-high p-1 shadow-lg">
+              <div role="menu" className="menu-surface absolute right-0 top-9 z-20 min-w-36 rounded border border-outline-variant bg-surface-container-high p-1">
                 <button
                   type="button"
                   role="menuitem"
@@ -212,8 +212,9 @@ export function VideoBrowser({
           >
             <ListFilter size={14} />Filters{activeFilterCount ? ` (${activeFilterCount})` : ''}
           </button>
-          <label className="min-w-0 flex-1 flex items-center gap-1 h-8 px-2 bg-surface-container-lowest border border-outline-variant rounded font-label text-label-sm text-on-surface-variant">
-            <span>Sort</span>
+          <label className="relative min-w-0 flex-1">
+            <ArrowDownUp size={14} className="absolute left-2 top-2.5 text-on-surface-variant pointer-events-none" aria-hidden="true" />
+            <span className="sr-only">Sort videos</span>
             <select
               aria-label="Order videos by"
               value={orderField}
@@ -221,7 +222,7 @@ export function VideoBrowser({
                 setOrderField(event.target.value as OrderField);
                 resetScroll();
               }}
-              className="min-w-0 flex-1 bg-transparent text-on-surface outline-none"
+              className="w-full h-8 bg-surface-container-lowest border border-outline-variant rounded pl-6 pr-2 font-label text-label-sm text-on-surface focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-[border-color,box-shadow] duration-150"
             >
               {ORDER_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
@@ -241,12 +242,12 @@ export function VideoBrowser({
         </div>
         {activeFilterCount > 0 && (
           <div className="flex flex-wrap gap-1" aria-label="Active filters">
-            {processingFilter !== 'All' && <button type="button" onClick={() => { setProcessingFilter('All'); resetScroll(); }} className="h-6 px-1.5 rounded border border-primary/40 text-primary text-[10px] flex items-center gap-1">{processingFilter}<X size={11} /></button>}
-            {annotationFilter !== 'All' && <button type="button" onClick={() => { setAnnotationFilter('All'); resetScroll(); }} className="h-6 px-1.5 rounded border border-primary/40 text-primary text-[10px] flex items-center gap-1">{annotationFilter}<X size={11} /></button>}
+            {processingFilter !== 'All' && <button type="button" onClick={() => { setProcessingFilter('All'); resetScroll(); }} className="filter-chip h-6 px-1.5 rounded border border-primary/40 text-primary text-[10px] flex items-center gap-1">{processingFilter}<X size={11} /></button>}
+            {annotationFilter !== 'All' && <button type="button" onClick={() => { setAnnotationFilter('All'); resetScroll(); }} className="filter-chip h-6 px-1.5 rounded border border-primary/40 text-primary text-[10px] flex items-center gap-1">{annotationFilter}<X size={11} /></button>}
           </div>
         )}
         {filterOpen && (
-          <div className="rounded border border-outline-variant bg-surface-container-low p-2 space-y-2">
+          <div className="menu-surface rounded border border-outline-variant bg-surface-container-low p-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
               <label className="min-w-0 font-label text-[10px] text-on-surface-variant">
                 System processing
@@ -342,7 +343,7 @@ export function VideoBrowser({
                     onSelect(video);
                   }
                 }}
-                className={`group absolute left-2 right-2 h-[98px] rounded border p-2 cursor-pointer transition-colors ${
+                className={`video-card group absolute left-2 right-2 h-[98px] rounded border p-2 cursor-pointer ${selected || multiSelected ? 'video-card-active' : ''} ${
                   selected || multiSelected
                     ? 'border-primary bg-primary/10 ring-1 ring-primary/50'
                     : 'border-outline-variant bg-surface-container-lowest hover:border-on-surface-variant hover:bg-surface-container-high'
@@ -406,7 +407,7 @@ export function VideoBrowser({
             );
           })}
         </div>
-        {filtered.length === 0 && <div className="p-6 text-center text-on-surface-variant text-body-md">No videos match this filter.</div>}
+        {filtered.length === 0 && <div className="p-6 flex flex-col items-center gap-3 text-center text-on-surface-variant text-body-md"><div className="empty-state-illustration" aria-hidden="true" />No videos match this filter.</div>}
       </div>
     </section>
   );

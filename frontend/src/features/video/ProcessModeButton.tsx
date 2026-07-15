@@ -77,7 +77,7 @@ export function SuggestionModeButton({
         <div
           role="menu"
           aria-label="Suggestion source"
-          className="absolute right-0 top-9 z-50 min-w-44 rounded border border-outline-variant bg-surface-container-high p-1 shadow-xl"
+          className="menu-surface absolute right-0 top-9 z-50 min-w-44 rounded border border-outline-variant bg-surface-container-high p-1"
         >
           <button
             type="button"

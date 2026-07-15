@@ -141,14 +141,14 @@ export function TrimTimeline({ frameCount, currentFrame, mediaUrl, range, minimu
         <span className="absolute inset-y-0 bg-primary/10 pointer-events-none" style={{ left: toPercent(draft.start), right: `${100 - ((draft.end / Math.max(1, frameCount - 1)) * 100)}%` }} />
         <span className="absolute inset-y-0 left-0 bg-surface-container-lowest/85 pointer-events-none" style={{ width: toPercent(draft.start) }} />
         <span className="absolute inset-y-0 right-0 bg-surface-container-lowest/85 pointer-events-none" style={{ left: toPercent(draft.end + 1) }} />
-        <span className="absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-20" style={{ left: toPercent(currentFrame) }} />
+        <span className="timeline-playhead absolute top-0 bottom-0 w-px bg-primary pointer-events-none z-20" style={{ left: toPercent(currentFrame) }} />
         {(['start', 'end'] as const).map((edge) => (
           <button
             key={edge}
             type="button"
             aria-label={`Drag trim ${edge}`}
             title={`Drag trim ${edge}`}
-            className="absolute z-30 -translate-x-1/2 top-0 bottom-0 w-5 bg-primary-container border-x border-primary-fixed cursor-ew-resize focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-fixed"
+            className="absolute z-30 -translate-x-1/2 top-0 bottom-0 w-5 bg-primary-container border-x border-primary-fixed cursor-ew-resize shadow-[0_0_12px_rgba(87,241,219,0.32)] transition-shadow hover:shadow-[0_0_18px_rgba(87,241,219,0.62)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-fixed"
             style={{ left: toPercent(draft[edge]) }}
             onPointerDown={(event) => beginHandleDrag(edge, event)}
             onPointerMove={moveHandle}

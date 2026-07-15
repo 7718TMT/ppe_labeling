@@ -33,7 +33,7 @@ export function ProcessingQueue({
         </div>
         {totalVideos > 0 ? (
           <>
-            <div className="h-1 bg-surface-container-highest mt-2" aria-label={`${remainingVideos} remaining of ${totalVideos} videos`}>
+            <div className="processing-progress h-1 bg-surface-container-highest mt-2" aria-label={`${remainingVideos} remaining of ${totalVideos} videos`}>
               <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
             </div>
             {currentJob && <p className="normal-case text-[10px] mt-2">{userJobStage(currentJob.stage)}</p>}

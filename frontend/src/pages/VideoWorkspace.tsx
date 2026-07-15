@@ -1355,7 +1355,7 @@ export function VideoWorkspace() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="h-screen bg-background text-on-background flex flex-col overflow-hidden">
+    <div className="workspace-shell h-screen bg-background text-on-background flex flex-col overflow-hidden">
 
       {/* ── Navbar ── */}
       <header className="h-toolbar-height bg-surface-container border-b border-outline-variant flex items-center px-gutter justify-between shrink-0 gap-3">
@@ -1391,7 +1391,7 @@ export function VideoWorkspace() {
 
       {/* ── Status bar ── */}
       {(error || message) && (
-        <div className={`px-4 py-2 text-label-sm border-b ${error ? 'bg-error-container/40 border-error/40 text-error' : 'bg-primary/10 border-primary/30'}`} role={error ? 'alert' : 'status'}>
+        <div className={`status-message px-4 py-2 text-label-sm border-b ${error ? 'bg-error-container/40 border-error/40 text-error' : 'bg-primary/10 border-primary/30'}`} role={error ? 'alert' : 'status'}>
           {error || message}
           <button type="button" aria-label="Dismiss message" className="float-right" onClick={() => { setError(''); setMessage(''); }}>×</button>
         </div>
@@ -1401,7 +1401,7 @@ export function VideoWorkspace() {
 
         {/* ── Left sidebar ── */}
         {leftOpen && (
-          <aside className="w-[320px] bg-surface-container border-r border-outline-variant flex flex-col shrink-0">
+          <aside className="panel-rail-left w-[320px] bg-surface-container border-r border-outline-variant flex flex-col shrink-0">
             <VideoBrowser
               videos={videos}
               jobs={jobs}
@@ -1425,9 +1425,9 @@ export function VideoWorkspace() {
         )}
 
         {/* ── Main workspace ── */}
-        <main className="flex-1 min-w-0 flex flex-col bg-surface-container-lowest" ref={containerRef}>
+        <main className="stage-ambient technical-grid flex-1 min-w-0 flex flex-col bg-surface-container-lowest" ref={containerRef}>
           {!active ? (
-            <div className="flex-1 flex items-center justify-center text-on-surface-variant">Import or select a video to begin.</div>
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 text-on-surface-variant"><div className="empty-state-illustration" aria-hidden="true" /><p>Import or select a video to begin.</p></div>
           ) : (
             <>
               <div className="flex-1 min-h-[220px]">
@@ -1528,7 +1528,7 @@ export function VideoWorkspace() {
 
         {/* ── Right sidebar ── */}
         {rightOpen && (
-          <aside className="w-[360px] bg-surface-container border-l border-outline-variant flex flex-col shrink-0 min-h-0">
+          <aside className="panel-rail-right w-[360px] bg-surface-container border-l border-outline-variant flex flex-col shrink-0 min-h-0">
             {/* Tab header — #4: only Annotate and Details */}
             <div className="grid grid-cols-2 border-b border-outline-variant shrink-0">
               {(['annotate', 'details'] as RightTab[]).map((name) => (
@@ -1573,7 +1573,7 @@ export function VideoWorkspace() {
                         return (
                           <div
                             key={track.track_id}
-                            className={`rounded border p-2 ${isSelected ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}
+                            className={`work-card rounded border p-2 ${isSelected ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}
                           >
                             <div className="flex items-center gap-2">
                               {/* Checkbox for multi-merge (#8) */}
@@ -1678,7 +1678,7 @@ export function VideoWorkspace() {
                         {activeSegments.map((seg) => {
                           const isMultiSelected = selectedSegmentIds.has(seg.segment_id);
                           return (
-                          <div key={seg.segment_id} className={`w-full rounded text-left border overflow-hidden ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>
+                          <div key={seg.segment_id} className={`work-card w-full rounded text-left border ${selectedSegment?.segment_id === seg.segment_id ? 'border-primary bg-primary/10' : 'border-outline-variant'}`}>
                             <div className="w-full p-2 text-label-sm flex items-center gap-2">
                               <input
                                 type="checkbox"
@@ -1857,7 +1857,7 @@ export function VideoWorkspace() {
       {/* Export modal (#9) */}
       {exportOpen && (
         <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-4" onMouseDown={() => setExportOpen(false)}>
-          <section role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" onMouseDown={(e) => e.stopPropagation()} className="w-full max-w-md bg-surface-container-high border border-outline-variant rounded-lg p-5 shadow-2xl">
+          <section role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" onMouseDown={(e) => e.stopPropagation()} className="decorative-dialog w-full max-w-md bg-surface-container-high border border-outline-variant rounded-lg p-5">
             <h2 id="export-dialog-title" className="font-headline-sm mb-3">Export Dataset</h2>
             <ExportPanel projectId={projectId} />
             <button type="button" onClick={() => setExportOpen(false)} className="mt-4 h-8 px-3 border border-outline-variant rounded font-label text-label-sm">Close</button>
@@ -1868,7 +1868,7 @@ export function VideoWorkspace() {
       {/* Delete confirmation */}
       {pendingDeleteIds.length > 0 && (
         <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-4" onMouseDown={() => deletingIds.size === 0 && setPendingDeleteIds([])}>
-          <section role="alertdialog" aria-modal="true" aria-labelledby="delete-video-title" onMouseDown={(e) => e.stopPropagation()} className="w-full max-w-md bg-surface-container-high border border-outline-variant rounded-lg p-5 shadow-2xl">
+          <section role="alertdialog" aria-modal="true" aria-labelledby="delete-video-title" onMouseDown={(e) => e.stopPropagation()} className="decorative-dialog w-full max-w-md bg-surface-container-high border border-outline-variant rounded-lg p-5">
             <div className="flex gap-3"><AlertTriangle className="text-error shrink-0" size={22} /><div><h2 id="delete-video-title" className="font-headline-sm">{pendingDeleteIds.length === 1 ? `Delete ${videos.find((video) => video.video_id === pendingDeleteIds[0])?.filename ?? 'video'}?` : `Delete ${pendingDeleteIds.length} videos?`}</h2><p className="text-body-md text-on-surface-variant mt-2">This removes the managed copy, annotations, jobs, thumbnail, and derived pose data.</p></div></div>
             <div className="flex justify-end gap-2 mt-5">
               <button type="button" disabled={deletingIds.size > 0} onClick={() => setPendingDeleteIds([])} className="h-8 px-3 border border-outline-variant rounded disabled:opacity-40">Cancel</button>
