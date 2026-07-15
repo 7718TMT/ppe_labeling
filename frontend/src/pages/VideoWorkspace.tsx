@@ -874,6 +874,7 @@ export function VideoWorkspace() {
       setRevision(result.revision);
       setSegments((rows) => rows.map((item) => item.segment_id === result.segment.segment_id ? result.segment : item));
       setSelectedSegment(result.segment);
+      setMessage(include ? 'Segment included in export.' : 'Segment excluded from export.');
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(readableError(reason));
     }
@@ -1060,12 +1061,16 @@ export function VideoWorkspace() {
     if (!window.confirm(`Rename all ${videos.length} videos to ${prefix}_00001, ${prefix}_00002, and so on?`)) {
       return;
     }
-    const rows = await renameVideos(projectId, prefix);
-    setVideos(rows);
-    setActive((current) => current
-      ? rows.find((video) => video.video_id === current.video_id) ?? null
-      : null);
-    setMessage(`${rows.length} videos renamed with the prefix "${prefix}".`);
+    try {
+      const rows = await renameVideos(projectId, prefix);
+      setVideos(rows);
+      setActive((current) => current
+        ? rows.find((video) => video.video_id === current.video_id) ?? null
+        : null);
+      setMessage(`${rows.length} videos renamed with the prefix "${prefix}".`);
+    } catch (reason) {
+      setError(`Could not rename videos. ${readableError(reason)}`);
+    }
   }
 
   /**
@@ -1082,6 +1087,71 @@ export function VideoWorkspace() {
       setMessage(`Merged ${trackIdList.length} workers into Worker ${trackIdList[0]}.`);
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(`Track merge failed. ${readableError(reason)}`);
+    }
+  }
+
+  async function splitWorker(track: VideoTrack) {
+    if (!active) return;
+    const videoId = active.video_id;
+    try {
+      await splitVideoTrack(projectId, videoId, track.track_id, frame);
+      if (activeIdRef.current !== videoId) return;
+      await reloadActive();
+      setMessage(`Worker ${track.track_id} split at frame ${frame}.`);
+    } catch (reason) {
+      if (activeIdRef.current === videoId) {
+        setError(`Could not split Worker ${track.track_id}. ${readableError(reason)}`);
+      }
+    }
+  }
+
+  async function toggleWorkerInclusion(track: VideoTrack) {
+    if (!active) return;
+    const videoId = active.video_id;
+    const include = !track.include_in_export;
+    try {
+      await setVideoTrackInclusion(
+        projectId, videoId, track.track_id, include,
+        include ? undefined : 'manual_exclusion',
+      );
+      if (activeIdRef.current !== videoId) return;
+      await reloadActive();
+      setMessage(include ? `Worker ${track.track_id} included in export.` : `Worker ${track.track_id} excluded from export.`);
+    } catch (reason) {
+      if (activeIdRef.current === videoId) {
+        setError(`Could not update Worker ${track.track_id}. ${readableError(reason)}`);
+      }
+    }
+  }
+
+  async function splitSelectedSegment(segment: VideoSegment) {
+    if (!active) return;
+    const videoId = active.video_id;
+    try {
+      await splitVideoSegment(projectId, videoId, segment.segment_id, frame, revision);
+      if (activeIdRef.current !== videoId) return;
+      await refreshSegments();
+      setMessage(`Segment split at frame ${frame}.`);
+    } catch (reason) {
+      if (activeIdRef.current === videoId) {
+        setError(`Could not split the segment. ${readableError(reason)}`);
+      }
+    }
+  }
+
+  async function controlProcessingJob(job: ProcessingJob, action: string) {
+    const actionMessage: Record<string, string> = {
+      pause: 'Pause requested. Processing will stop after the current step.',
+      resume: 'Processing resumed.',
+      cancel: 'Cancellation requested. Processing will stop after the current step.',
+      retry: 'Retry queued.',
+    };
+    try {
+      await controlVideoJob(projectId, job.job_id, action);
+      await refreshShell();
+      setMessage(actionMessage[action] ?? 'Processing action requested.');
+    } catch (reason) {
+      setError(`Could not ${action} processing. ${readableError(reason)}`);
     }
   }
 
@@ -1117,6 +1187,7 @@ export function VideoWorkspace() {
         setStart(result.segment.start_frame);
         setEnd(result.segment.end_frame);
       }
+      setMessage('Segment boundary updated.');
       scheduleFeatureExtraction(); // #15
     } catch {
       if (activeIdRef.current !== videoId) return;
@@ -1365,11 +1436,7 @@ export function VideoWorkspace() {
               jobs={jobs}
               remainingVideos={processingBatchRemaining}
               totalVideos={processingBatchIds.size}
-              onControl={(job, action) => {
-                void controlVideoJob(projectId, job.job_id, action)
-                  .then(refreshShell)
-                  .catch((reason) => setError(readableError(reason)));
-              }}
+              onControl={(job, action) => void controlProcessingJob(job, action)}
             />
           </aside>
         )}
@@ -1561,14 +1628,14 @@ export function VideoWorkspace() {
                               <div className="flex gap-1 mt-2 flex-wrap">
                                 <button
                                   type="button"
-                                  onClick={() => void splitVideoTrack(projectId, active.video_id, track.track_id, frame).then(() => reloadActive()).catch((r) => setError(readableError(r)))}
+                                  onClick={() => void splitWorker(track)}
                                   className="panel-button flex-1"
                                 >
                                   Split
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => void setVideoTrackInclusion(projectId, active.video_id, track.track_id, !track.include_in_export, track.include_in_export ? 'manual_exclusion' : undefined).then(() => reloadActive()).catch((r) => setError(readableError(r)))}
+                                  onClick={() => void toggleWorkerInclusion(track)}
                                   className="panel-button flex-1"
                                 >
                                   {track.include_in_export ? 'Exclude' : 'Restore'}
@@ -1652,12 +1719,7 @@ export function VideoWorkspace() {
                             </div>
                             {selectedSegment?.segment_id === seg.segment_id && (
                               <div className="px-2 pb-2 flex gap-2">
-                                <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => {
-                                  if (!active) return;
-                                  splitVideoSegment(projectId, active.video_id, seg.segment_id, frame, revision)
-                                    .then(() => refreshSegments())
-                                    .catch(e => setError(readableError(e)));
-                                }} className="panel-button flex-1 disabled:opacity-40">Split</button>
+                                <button type="button" disabled={frame <= seg.start_frame || frame >= seg.end_frame} onClick={() => void splitSelectedSegment(seg)} className="panel-button flex-1 disabled:opacity-40">Split</button>
                                 <button type="button" onClick={() => void expandSegment(seg)} className="panel-button flex-1">Expand</button>
                                 <button type="button" onClick={() => void removeSegment()} className="panel-button flex-1 text-error border-error/50 hover:bg-error/10 hover:border-error">Delete</button>
                               </div>

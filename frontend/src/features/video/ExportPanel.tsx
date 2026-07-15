@@ -48,18 +48,27 @@ export function ExportPanel({ projectId }: { projectId: string }) {
   }, [activeExport?.export_id, activeExport?.status, projectId]);
 
   async function validate() {
-    setValidation(await validateVideoExport(projectId));
+    try {
+      setValidation(await validateVideoExport(projectId));
+      setMessage('Export validation completed.');
+    } catch {
+      setMessage('Could not validate the export. Please try again.');
+    }
   }
 
   async function create() {
-    const result = await createVideoExport(projectId);
-    setValidation(result.validation);
-    if (!result.queued) {
-      setMessage('Resolve validation errors first.');
-      return;
+    try {
+      const result = await createVideoExport(projectId);
+      setValidation(result.validation);
+      if (!result.queued) {
+        setMessage('Resolve validation errors first.');
+        return;
+      }
+      setActiveExport(result.export);
+      setMessage('Preparing your export. The download will start when it is ready.');
+    } catch {
+      setMessage('Could not create the export. Please try again.');
     }
-    setActiveExport(result.export);
-    setMessage('Preparing your export. The download will start when it is ready.');
   }
 
   const creating = activeExport?.status === 'queued' || activeExport?.status === 'running';
