@@ -51,7 +51,6 @@ import {
 
 import {
   approveVideo,
-  controlVideoJob,
   createVideoExport,
   deleteVideo as deleteImportedVideo,
   deleteVideoSegment,
@@ -313,6 +312,20 @@ export function VideoWorkspace() {
       return new Set(currentHasActiveWork ? [...current, ...videoIds] : videoIds);
     });
   }
+
+  useEffect(() => {
+    const activeVideoIds = new Set(
+      jobs.filter((job) => ACTIVE_JOB_STATUSES.has(job.status) && job.video_id)
+        .map((job) => job.video_id as string),
+    );
+    setProcessingBatchVideoIds((current) => {
+      const next = new Set([...current].filter((videoId) => activeVideoIds.has(videoId)));
+      if (next.size === current.size && [...next].every((videoId) => current.has(videoId))) {
+        return current;
+      }
+      return next;
+    });
+  }, [jobs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1010,8 +1023,15 @@ export function VideoWorkspace() {
     const activeTargetIndex = targets.findIndex((video) => video.video_id === activeIdRef.current);
     const deletingActive = activeTargetIndex >= 0;
     const activeIndex = videos.findIndex((video) => video.video_id === activeIdRef.current);
+    const removed = new Set(targets.map((video) => video.video_id));
     setDeletingIds(new Set(targets.map((video) => video.video_id)));
     setError('');
+    // Hide the deleted videos from the batch immediately. The backend deletion
+    // transaction cascades their queued and running job records as well.
+    setJobs((current) => current.filter((job) => !job.video_id || !removed.has(job.video_id)));
+    setProcessingBatchVideoIds((current) => new Set(
+      [...current].filter((videoId) => !removed.has(videoId)),
+    ));
     if (deletingActive) {
       player.current?.pause();
       setPlaying(false);
@@ -1021,7 +1041,6 @@ export function VideoWorkspace() {
     }
     try {
       await Promise.all(targets.map((video) => deleteImportedVideo(projectId, video.video_id)));
-      const removed = new Set(targets.map((video) => video.video_id));
       const remaining = videos.filter((item) => !removed.has(item.video_id));
       const next = remaining[Math.min(activeIndex, Math.max(0, remaining.length - 1))] ?? null;
       setVideos(remaining);
@@ -1031,6 +1050,7 @@ export function VideoWorkspace() {
       setPendingDeleteIds([]);
       setMessage(`${targets.length} video${targets.length === 1 ? '' : 's'} deleted.`);
     } catch (reason) {
+      void refreshShell();
       if (deletingActive) setActive(videos[activeIndex] ?? null);
       setError(`Could not delete the selected videos. ${readableError(reason)}`);
     } finally {
@@ -1136,22 +1156,6 @@ export function VideoWorkspace() {
       if (activeIdRef.current === videoId) {
         setError(`Could not split the segment. ${readableError(reason)}`);
       }
-    }
-  }
-
-  async function controlProcessingJob(job: ProcessingJob, action: string) {
-    const actionMessage: Record<string, string> = {
-      pause: 'Pause requested. Processing will stop after the current step.',
-      resume: 'Processing resumed.',
-      cancel: 'Cancellation requested. Processing will stop after the current step.',
-      retry: 'Retry queued.',
-    };
-    try {
-      await controlVideoJob(projectId, job.job_id, action);
-      await refreshShell();
-      setMessage(actionMessage[action] ?? 'Processing action requested.');
-    } catch (reason) {
-      setError(`Could not ${action} processing. ${readableError(reason)}`);
     }
   }
 
@@ -1436,7 +1440,6 @@ export function VideoWorkspace() {
               jobs={jobs}
               remainingVideos={processingBatchRemaining}
               totalVideos={processingBatchIds.size}
-              onControl={(job, action) => void controlProcessingJob(job, action)}
             />
           </aside>
         )}

@@ -599,6 +599,20 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByText('Worker 2')).toBeInTheDocument();
   });
 
+  it('removes a deleted processing video from the unified queue immediately', async () => {
+    vi.mocked(api.getVideoJobs).mockResolvedValue([{
+      job_id: 'processing-v1', video_id: 'v1', stage: 'pose_track', status: 'running', priority: 1, progress: 0.5,
+    }]);
+    renderWorkspace();
+    expect(await screen.findByText('1 remaining / 1 videos')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete shift-a.mp4' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete video' }));
+
+    await waitFor(() => expect(screen.queryByText('1 remaining / 1 videos')).not.toBeInTheDocument());
+    expect(screen.getByText('No active processing.')).toBeInTheDocument();
+  });
+
   it('deletes multiple checked videos through one confirmation', async () => {
     vi.mocked(api.deleteVideo).mockResolvedValue(undefined);
     renderWorkspace();
