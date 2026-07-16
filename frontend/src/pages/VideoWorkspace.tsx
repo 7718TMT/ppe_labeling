@@ -107,6 +107,17 @@ type RightTab = 'annotate' | 'details';
 type SelectionScope = 'video' | 'worker' | 'segment';
 
 const ACTIVE_JOB_STATUSES = new Set(['queued', 'running', 'paused']);
+const LEFT_SIDEBAR_WIDTH_KEY = 'video-workspace-left-sidebar-width';
+const RIGHT_SIDEBAR_WIDTH_KEY = 'video-workspace-right-sidebar-width';
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 520;
+
+function savedSidebarWidth(key: string, fallback: number): number {
+  const parsed = Number(window.localStorage.getItem(key));
+  return Number.isFinite(parsed) && parsed >= SIDEBAR_MIN_WIDTH && parsed <= SIDEBAR_MAX_WIDTH
+    ? parsed
+    : fallback;
+}
 /** A five-second overlay batch balances playback smoothness and request count. */
 const OVERLAY_CHUNK_FRAMES = 120;
 const OVERLAY_RETRY_BASE_MS = 1_000;
@@ -296,6 +307,9 @@ export function VideoWorkspace() {
   const [selectedOnly, setSelectedOnly] = useState(false);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth >= 900);
   const [rightOpen, setRightOpen] = useState(() => window.innerWidth >= 1200);
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(() => savedSidebarWidth(LEFT_SIDEBAR_WIDTH_KEY, 320));
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(() => savedSidebarWidth(RIGHT_SIDEBAR_WIDTH_KEY, 360));
+  const sidebarResizeRef = useRef<{ side: 'left' | 'right'; startX: number; startWidth: number }>();
   const [tab, setTab] = useState<RightTab>('annotate');
   const [saving, setSaving] = useState(false);
   const [autosaveFailedDraft, setAutosaveFailedDraft] = useState<string>();
@@ -319,6 +333,32 @@ export function VideoWorkspace() {
   revisionRef.current = revision;
 
   useEffect(() => () => { activeIdRef.current = undefined; }, []);
+
+  /** Resize a sidebar locally; persistence happens only after the drag ends. */
+  const resizeSidebar = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = sidebarResizeRef.current;
+    if (!drag) return;
+    const direction = drag.side === 'left' ? 1 : -1;
+    const maximum = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth * 0.48));
+    const width = Math.max(SIDEBAR_MIN_WIDTH, Math.min(maximum, drag.startWidth + (event.clientX - drag.startX) * direction));
+    if (drag.side === 'left') setLeftSidebarWidth(width);
+    else setRightSidebarWidth(width);
+  }, []);
+
+  const finishSidebarResize = useCallback(() => {
+    const drag = sidebarResizeRef.current;
+    if (!drag) return;
+    const width = drag.side === 'left' ? leftSidebarWidth : rightSidebarWidth;
+    window.localStorage.setItem(drag.side === 'left' ? LEFT_SIDEBAR_WIDTH_KEY : RIGHT_SIDEBAR_WIDTH_KEY, String(Math.round(width)));
+    sidebarResizeRef.current = undefined;
+    document.body.classList.remove('cursor-col-resize', 'select-none');
+  }, [leftSidebarWidth, rightSidebarWidth]);
+
+  const startSidebarResize = useCallback((side: 'left' | 'right', event: React.PointerEvent<HTMLDivElement>) => {
+    sidebarResizeRef.current = { side, startX: event.clientX, startWidth: side === 'left' ? leftSidebarWidth : rightSidebarWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.body.classList.add('cursor-col-resize', 'select-none');
+  }, [leftSidebarWidth, rightSidebarWidth]);
 
   useEffect(() => {
     if (!active) return;
@@ -1703,7 +1743,8 @@ export function VideoWorkspace() {
 
         {/* ── Left sidebar ── */}
         {leftOpen && (
-          <aside className="panel-rail-left w-[320px] bg-surface-container border-r border-outline-variant flex flex-col shrink-0">
+          <>
+          <aside className="panel-rail-left bg-surface-container border-r border-outline-variant flex flex-col shrink-0" style={{ width: leftSidebarWidth }}>
             <VideoBrowser
               videos={videos}
               jobs={jobs}
@@ -1724,6 +1765,17 @@ export function VideoWorkspace() {
               totalVideos={processingBatchIds.size}
             />
           </aside>
+          <div
+            role="separator"
+            aria-label="Resize video browser"
+            aria-orientation="vertical"
+            className="w-1 shrink-0 cursor-col-resize bg-outline-variant/60 hover:bg-primary transition-colors touch-none"
+            onPointerDown={(event) => startSidebarResize('left', event)}
+            onPointerMove={resizeSidebar}
+            onPointerUp={finishSidebarResize}
+            onPointerCancel={finishSidebarResize}
+          />
+          </>
         )}
 
         {/* ── Main workspace ── */}
@@ -1830,7 +1882,18 @@ export function VideoWorkspace() {
 
         {/* ── Right sidebar ── */}
         {rightOpen && (
-          <aside className="panel-rail-right w-[360px] bg-surface-container border-l border-outline-variant flex flex-col shrink-0 min-h-0">
+          <>
+          <div
+            role="separator"
+            aria-label="Resize inspector"
+            aria-orientation="vertical"
+            className="w-1 shrink-0 cursor-col-resize bg-outline-variant/60 hover:bg-primary transition-colors touch-none"
+            onPointerDown={(event) => startSidebarResize('right', event)}
+            onPointerMove={resizeSidebar}
+            onPointerUp={finishSidebarResize}
+            onPointerCancel={finishSidebarResize}
+          />
+          <aside className="panel-rail-right bg-surface-container border-l border-outline-variant flex flex-col shrink-0 min-h-0" style={{ width: rightSidebarWidth }}>
             {/* Tab header — #4: only Annotate and Details */}
             <div className="grid grid-cols-2 border-b border-outline-variant shrink-0">
               {(['annotate', 'details'] as RightTab[]).map((name) => (
@@ -2196,6 +2259,7 @@ export function VideoWorkspace() {
               </div>
             )}
           </aside>
+          </>
         )}
       </div>
 

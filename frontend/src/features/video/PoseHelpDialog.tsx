@@ -11,9 +11,9 @@ const HELP_SECTIONS: HelpSection[] = [
     title: 'Workspace zones',
     content: [
       'Top bar: open Help, see save state, undo or redo annotation changes, move to the previous or next video, and open or close the sidebars.',
-      'Left sidebar: import, export, find, filter, sort, rename, select, and delete videos. Its Processing queue gives one progress bar for the current batch.',
+      'Left sidebar: import, export, find, filter, sort, rename, select, and delete videos. Drag its inner edge to resize it. Its Processing queue gives one progress bar for the current batch.',
       'Centre: play the selected video, view pose overlays, trim media, generate suggestions, and edit labels on the timeline.',
-      'Right sidebar: select workers, manage their segments, fill gaps, inspect video details, and approve or unapprove the current video.',
+      'Right sidebar: select workers, manage their segments, fill gaps, inspect video details, and approve or unapprove the current video. Drag its inner edge to resize it.',
     ],
   },
   {

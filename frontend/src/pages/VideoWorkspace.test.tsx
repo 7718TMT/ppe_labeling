@@ -110,6 +110,15 @@ function renderWorkspace() {
 }
 
 describe('VideoWorkspace', () => {
+  it('renders persisted resize handles for both sidebars', async () => {
+    renderWorkspace();
+
+    const leftHandle = await screen.findByLabelText('Resize video browser');
+    const rightHandle = screen.getByLabelText('Resize inspector');
+    expect(leftHandle).toHaveAttribute('role', 'separator');
+    expect(rightHandle).toHaveAttribute('role', 'separator');
+  });
+
   let videos: VideoItem[];
   let jobs: ProcessingJob[];
   let processingOptions: ProcessingOptions;
