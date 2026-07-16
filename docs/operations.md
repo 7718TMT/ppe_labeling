@@ -8,6 +8,19 @@ directory unless absolute paths are supplied.
 
 Start the complete local product with one command:
 
+When a prior local run leaves either application port occupied, free ports
+`8000` and `5173` before launching. The following PowerShell command stops only
+processes listening on those ports:
+
+```powershell
+$ports = 8000, 5173
+foreach ($port in $ports) {
+  Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force }
+}
+```
+
 ```powershell
 uv run python -m backend.scripts.start_app
 ```

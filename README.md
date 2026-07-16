@@ -194,6 +194,21 @@ npm install
 Start the complete PPE, Sign, and Pose product from the repository root with
 one command:
 
+If a previous local run did not exit cleanly, first free the backend (`8000`)
+and frontend (`5173`) ports in PowerShell. This stops only processes currently
+listening on those two ports:
+
+```powershell
+$ports = 8000, 5173
+foreach ($port in $ports) {
+  Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force }
+}
+```
+
+Then start the application:
+
 ```powershell
 uv run python -m backend.scripts.start_app
 ```
