@@ -1,2 +1,1 @@
-"""Thin FastAPI controllers for the supported task-scoped API."""
-"""FastAPI controller modules."""
+"""Feature-grouped FastAPI controllers for image and video workflows."""

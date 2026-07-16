@@ -1,8 +1,10 @@
+"""HTTP routes for image-dataset exports."""
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from backend.app.api.dependencies import get_export_service
+from backend.app.api.dependencies.image import get_export_service
 from backend.app.domain.models import ExportResult
 from backend.app.services.export import DatasetExportService
 

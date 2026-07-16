@@ -25,11 +25,17 @@ API schemas or storage implementations.
 ```text
 backend/app/
   api/
-    controllers/       HTTP route definitions and response mapping
-    dependencies.py    FastAPI dependency wiring
+    controllers/
+      image/           image-task, annotation, media, and export routes
+      video/           video-labeling routes and their aggregate router
+    dependencies/
+      image.py         image-task dependency wiring
+      video.py         video-labeling dependency wiring
     errors.py          application-error to HTTP-response mapping
-    schemas.py         Pydantic request and response contracts
-    router.py          router registration
+    schemas/
+      image.py         image Pydantic request and response contracts
+      video/           video-labeling contracts grouped by concern
+    router.py          image/video router registration
   core/                configuration and device resolution
   domain/              framework-independent models, errors, and geometry
   inference/           detector protocol and detector implementations
@@ -41,8 +47,11 @@ backend/app/
 
 Controllers in `backend/app/api/controllers/` only validate HTTP input, resolve
 dependencies, call an application service, and serialize the response. The
-controllers are grouped by cohesive delivery concern: tasks, annotation,
-exports, and media.
+controllers are first grouped by product capability (`image` or `video`) and
+then by delivery concern. Each capability provides an aggregate router, while
+the top-level router only composes those public route groups. This keeps image
+annotation independent from the separate video-labeling capability without
+changing their public HTTP paths.
 
 ### Services
 

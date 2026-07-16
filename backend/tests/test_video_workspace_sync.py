@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.api.controllers.video_controller import _sse_message
+from backend.app.api.controllers.video.controller import _sse_message
 from backend.app.api.dependencies import (
     get_video_annotation_service,
     get_video_export_service,

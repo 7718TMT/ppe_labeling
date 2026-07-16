@@ -1,4 +1,4 @@
-"""Thin HTTP controller for pose-video labeling APIs."""
+"""HTTP routes for the pose-video labeling capability."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
-from backend.app.api.dependencies import (
+from backend.app.api.dependencies.video import (
     get_video_annotation_service,
     get_video_export_service,
     get_video_feature_service,
@@ -19,7 +19,7 @@ from backend.app.api.dependencies import (
     get_video_service,
     get_video_workspace_sync_service,
 )
-from backend.app.api.video_schemas import (
+from backend.app.api.schemas.video import (
     AnnotationDerivativeRefreshResponse,
     InclusionPayload,
     JobControl,

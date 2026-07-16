@@ -1,7 +1,9 @@
+"""HTTP routes for image annotation and image-labeling actions."""
+
 from fastapi import APIRouter, Depends, File, UploadFile
 
-from backend.app.api.dependencies import get_annotation_service, get_inference_annotation_service
-from backend.app.api.schemas import ApprovePayload, BoundingBox, ImageItem, LabelPayload, LabelResponse, OperationResponse
+from backend.app.api.dependencies.image import get_annotation_service, get_inference_annotation_service
+from backend.app.api.schemas.image import ApprovePayload, BoundingBox, ImageItem, LabelPayload, LabelResponse, OperationResponse
 from backend.app.services.annotation import AnnotationService
 
 

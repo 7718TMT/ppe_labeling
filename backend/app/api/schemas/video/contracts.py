@@ -1,4 +1,8 @@
-"""Pydantic HTTP contracts for the separate video-labeling capability."""
+"""Compatibility module for video-labeling HTTP contracts.
+
+New code imports the cohesive modules in this package; this module remains the
+single implementation source during the staged API-package migration.
+"""
 
 from __future__ import annotations
 

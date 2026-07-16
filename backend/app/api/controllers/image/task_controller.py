@@ -1,7 +1,9 @@
+"""HTTP routes for selecting image-annotation tasks."""
+
 from fastapi import APIRouter, Depends
 
-from backend.app.api.dependencies import get_task_service
-from backend.app.api.schemas import TaskInfo
+from backend.app.api.dependencies.image import get_task_service
+from backend.app.api.schemas.image import TaskInfo
 from backend.app.services.tasks import TaskService
 
 

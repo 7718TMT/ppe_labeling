@@ -1,3 +1,5 @@
+"""Pydantic HTTP contracts for image annotation."""
+
 from pydantic import BaseModel, Field
 
 from backend.app.domain.models import BoundingBox as DomainBoundingBox

@@ -1,7 +1,9 @@
+"""HTTP routes for image and visualization media files."""
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 
-from backend.app.api.dependencies import get_media_service
+from backend.app.api.dependencies.image import get_media_service
 from backend.app.services.media import MediaService
 
 

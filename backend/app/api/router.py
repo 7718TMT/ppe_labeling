@@ -1,11 +1,9 @@
 from fastapi import APIRouter
 
-from backend.app.api.controllers import annotation_controller, export_controller, media_controller, task_controller, video_controller
+from backend.app.api.controllers.image.router import router as image_router
+from backend.app.api.controllers.video.router import router as video_router
 
 
 router = APIRouter()
-router.include_router(task_controller.router)
-router.include_router(annotation_controller.router)
-router.include_router(export_controller.router)
-router.include_router(media_controller.router)
-router.include_router(video_controller.router)
+router.include_router(image_router)
+router.include_router(video_router)
