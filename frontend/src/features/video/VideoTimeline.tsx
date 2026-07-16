@@ -84,9 +84,15 @@ export function VideoTimeline({
   const toPercent = (frame: number) =>
     `${(frame / Math.max(1, frameCount - 1)) * 100}%`;
 
-  /** Compute left + width CSS for a [start, end] inclusive frame range. */
+  /**
+   * Compute left + width CSS for an inclusive frame range.
+   *
+   * Segment blocks occupy whole frame cells, whereas the playhead is a point
+   * positioned from the first to the final frame. Keeping those scales
+   * separate makes adjacent ranges share exactly one visual boundary.
+   */
   const blockStyle = (start: number, end: number) => ({
-    left: toPercent(start),
+    left: `${(start / Math.max(1, frameCount)) * 100}%`,
     width: `${Math.max(0.25, ((end - start + 1) / Math.max(1, frameCount)) * 100)}%`,
   });
 

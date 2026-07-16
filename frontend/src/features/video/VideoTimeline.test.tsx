@@ -56,6 +56,26 @@ describe('VideoTimeline', () => {
     expect(screen.queryByText('LABEL')).not.toBeInTheDocument();
   });
 
+  it('renders adjacent segments with one shared visual boundary', () => {
+    render(
+      <VideoTimeline
+        frameCount={120}
+        currentFrame={20}
+        onFrame={vi.fn()}
+        onSegment={vi.fn()}
+        segments={[
+          { segment_id: 's1', track_id: 1, start_frame: 0, end_frame: 59, label: 'others', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+          { segment_id: 's2', track_id: 1, start_frame: 60, end_frame: 119, label: 'falling', quality_status: 'good', include_in_export: 1, source_type: 'manual' },
+        ]}
+      />,
+    );
+
+    const first = screen.getByTitle(/others frames 0.*59/);
+    const second = screen.getByTitle(/falling frames 60.*119/);
+    expect(first).toHaveStyle({ left: '0%', width: '50%' });
+    expect(second).toHaveStyle({ left: '50%', width: '50%' });
+  });
+
   it('previews a resize locally and commits only once on pointer release', () => {
     const onSegmentResize = vi.fn();
     render(
