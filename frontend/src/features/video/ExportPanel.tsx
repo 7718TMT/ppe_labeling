@@ -4,48 +4,52 @@ import { CheckCircle2, Download, Loader2, ShieldCheck } from 'lucide-react';
 import {
   createVideoExport,
   downloadVideoExport,
-  getVideoExports,
   type VideoExportRecord,
   validateVideoExport,
 } from '../../api/client';
 
 type Validation = { errors: string[]; warnings: string[] };
 
-/** Queue an atomic export, then deliver its ZIP once the worker completes it. */
-export function ExportPanel({ projectId }: { projectId: string }) {
+/** Queue an atomic export, then react to workspace-synchronized export updates. */
+export function ExportPanel({
+  projectId,
+  exports,
+}: {
+  projectId: string;
+  /** Event-synchronized project exports; this avoids a separate polling loop. */
+  exports: VideoExportRecord[];
+}) {
   const [validation, setValidation] = useState<Validation | null>(null);
   const [message, setMessage] = useState('');
   const [activeExport, setActiveExport] = useState<VideoExportRecord | null>(null);
+  const [autoDownloadExportId, setAutoDownloadExportId] = useState<string>();
   const downloadedIds = useRef(new Set<string>());
 
   useEffect(() => {
-    const exportId = activeExport?.export_id;
-    if (!exportId || ['completed', 'failed'].includes(activeExport.status)) return undefined;
-    let cancelled = false;
-    async function refreshExport() {
-      try {
-        const exports = await getVideoExports(projectId);
-        const current = exports.find((item) => item.export_id === exportId);
-        if (!current || cancelled) return;
-        setActiveExport(current);
-        if (current.status === 'completed' && !downloadedIds.current.has(current.export_id)) {
-          downloadedIds.current.add(current.export_id);
-          downloadVideoExport(projectId, current.export_id);
-          setMessage('Export is ready. Your dataset download has started.');
-        } else if (current.status === 'failed') {
-          setMessage('Export failed in the background. Validate the project and try again.');
-        }
-      } catch {
-        if (!cancelled) setMessage('Could not check export progress. You can reopen Export to try again.');
+    setActiveExport((current) => {
+      if (current) {
+        return exports.find((item) => item.export_id === current.export_id) ?? current;
       }
+      // A reopened dialog can still surface an in-progress or completed
+      // export without restoring the removed polling loop.
+      return exports.find((item) => item.status === 'queued' || item.status === 'running')
+        ?? exports[0]
+        ?? null;
+    });
+  }, [exports]);
+
+  useEffect(() => {
+    if (!activeExport || activeExport.export_id !== autoDownloadExportId) return;
+    if (activeExport.status === 'completed' && !downloadedIds.current.has(activeExport.export_id)) {
+      downloadedIds.current.add(activeExport.export_id);
+      downloadVideoExport(projectId, activeExport.export_id);
+      setMessage('Export is ready. Your dataset download has started.');
+      setAutoDownloadExportId(undefined);
+    } else if (activeExport.status === 'failed') {
+      setMessage('Export failed in the background. Validate the project and try again.');
+      setAutoDownloadExportId(undefined);
     }
-    void refreshExport();
-    const timer = window.setInterval(() => void refreshExport(), 1500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [activeExport?.export_id, activeExport?.status, projectId]);
+  }, [activeExport, autoDownloadExportId, projectId]);
 
   async function validate() {
     try {
@@ -65,6 +69,7 @@ export function ExportPanel({ projectId }: { projectId: string }) {
         return;
       }
       setActiveExport(result.export);
+      setAutoDownloadExportId(result.export.export_id);
       setMessage('Preparing your export. The download will start when it is ready.');
     } catch {
       setMessage('Could not create the export. Please try again.');

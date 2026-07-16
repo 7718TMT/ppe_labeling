@@ -79,9 +79,10 @@ class VideoExportService:
             return {"queued": False, "validation": validation}
         export = self.repository.create_export(project_id)
         job = self.repository.enqueue_job(project_id, f"export:{export['export_id']}", None, 80)
-        self.repository.execute(
-            "UPDATE video_exports SET job_id=?,validation_json=? WHERE export_id=?",
-            (job["job_id"], json.dumps(validation), export["export_id"]),
+        self.repository.update_export(
+            export["export_id"],
+            job_id=job["job_id"],
+            validation_json=json.dumps(validation),
         )
         return {"queued": True, "export": self.repository.get_export(export["export_id"]), "job": job, "validation": validation}
 
@@ -91,18 +92,33 @@ class VideoExportService:
         project_id = export["project_id"]
         validation = self.validate(project_id)
         if validation["errors"]:
+            self.repository.update_export(
+                export_id,
+                status="failed",
+                validation_json=json.dumps(validation),
+            )
             raise ValueError("Export validation failed: " + "; ".join(validation["errors"]))
+        self.repository.update_export(
+            export_id,
+            status="running",
+            validation_json=json.dumps(validation),
+        )
         staging, final = self.storage.create_export_staging(project_id, export_id)
         try:
             self._generate(project_id, staging, progress)
             self.storage.publish_export(staging, final)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
+            self.repository.update_export(export_id, status="failed")
             raise
         manifest = json.loads((final / "manifest.json").read_text(encoding="utf-8"))
-        self.repository.execute(
-            "UPDATE video_exports SET status='completed',artifact_path=?,manifest_json=?,validation_json=?,finished_at=CURRENT_TIMESTAMP WHERE export_id=?",
-            (str(final), json.dumps(manifest), json.dumps(validation), export_id),
+        self.repository.update_export(
+            export_id,
+            status="completed",
+            artifact_path=str(final),
+            manifest_json=json.dumps(manifest),
+            validation_json=json.dumps(validation),
+            finished_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         )
 
     def _generate(self, project_id: str, directory: Path, progress: Callable[[float], None]) -> None:

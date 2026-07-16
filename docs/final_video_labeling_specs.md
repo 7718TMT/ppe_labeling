@@ -657,22 +657,15 @@ Shortcuts should be configurable.
 
 ## 16. Timeline Layers
 
-The timeline can contain:
+The interactive timeline renders saved ground-truth segments, the current frame
+marker, and the selected segment. Manual labels and generated Threshold/Model
+labels use the same editable segment bars; generated labels retain their source
+for provenance but do not create a separate suggestion overlay. Generated
+windows, pose quality, and feature curves remain backend/export derivatives,
+not playback timeline layers.
 
-1. human annotations,
-2. active suggestions from the selected source,
-3. generated sliding windows,
-4. pose quality,
-5. transformed feature curves,
-6. current frame marker,
-7. selected segment.
-
-The timeline must support:
-
-- clicking a suggestion to select it,
-- dragging suggestion boundaries before acceptance,
-- jumping to feature peaks,
-- filtering to only `falling` or `running` suggestions.
+The timeline must support selecting a saved segment, dragging its body or
+boundaries, filtering saved labels, and returning to full-video mode.
 
 ---
 
@@ -1874,8 +1867,8 @@ YOLO-Pose is expected to dominate compute cost. Feature transforms, threshold su
 5. Open the first annotation-ready video while the rest continue processing.
 6. Extract raw and transformed features in the background.
 7. Choose suggestion source: Off, Threshold, or Model.
-8. Review suggested falling/running segments when available.
-9. Accept, modify, reject, or manually create segments.
+8. Generate editable ground-truth segments when desired.
+9. Modify, delete, merge, or manually create segments.
 10. Annotate using only others/running/falling.
 11. Validate and approve the track/video.
 12. Generate deterministic 60-frame windows with stride 12.
@@ -1914,8 +1907,7 @@ YOLO-Pose is expected to dominate compute cost. Feature transforms, threshold su
 - transformed feature scores,
 - threshold profile management,
 - falling/running candidate generation,
-- timeline overlay,
-- accept/modify/reject,
+- generated ground-truth segment materialization,
 - threshold provenance inspector.
 
 ### Phase 4: External-model suggestions
@@ -1926,7 +1918,7 @@ YOLO-Pose is expected to dominate compute cost. Feature transforms, threshold su
 - per-window probability storage,
 - window-to-segment merging,
 - Model toggle mode,
-- accept/modify/reject.
+- generated ground-truth segment materialization.
 
 ### Phase 5: Windows and exports
 

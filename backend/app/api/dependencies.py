@@ -19,6 +19,7 @@ from backend.app.services.video_export_service import VideoExportService
 from backend.app.services.video_feature_service import VideoFeatureService
 from backend.app.services.video_model_service import VideoModelService
 from backend.app.services.video_service import VideoService
+from backend.app.services.video_workspace_sync_service import VideoWorkspaceSyncService
 
 
 def get_task_profile(task: str, settings: Settings = Depends(get_settings)) -> TaskProfile:
@@ -152,6 +153,15 @@ def get_video_service(
     storage: VideoStorageRepository = Depends(get_video_storage),
 ) -> VideoService:
     return VideoService(repository, storage)
+
+
+def get_video_workspace_sync_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    video_service: VideoService = Depends(get_video_service),
+) -> VideoWorkspaceSyncService:
+    """Provide snapshot/delta sync reads backed by the durable video outbox."""
+
+    return VideoWorkspaceSyncService(repository, video_service)
 
 
 def get_video_annotation_service(

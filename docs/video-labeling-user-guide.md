@@ -175,6 +175,13 @@ When processing finishes, the generated segments appear in both the timeline's
 human-label bar and the segment group. Review, edit, delete, or approve them as
 needed; they are included as ground-truth annotations even before review.
 
+After you manually create, change, delete, merge, resize, include, exclude,
+undo, or redo annotations, the application refreshes the affected window and
+feature data in the background. This refresh never generates new suggestions or
+changes the saved segments. Select **Suggestion** yourself when you want to run
+Threshold or AI generation again; if labels already exist, the application asks
+before it overwrites them.
+
 - **Threshold** generates falling and running suggestions from motion rules.
 - **AI** uses the compatible pretrained model configured by the application
   administrator.
@@ -209,8 +216,10 @@ The workspace has four areas:
 
 - **Left:** video cards, import, filters, deletion, and processing queue.
 - **Center:** video, pose overlay, playback controls, and frame number.
-- **Timeline:** human labels, active suggestions, windows, and current frame.
-- **Right:** only **Annotate**, **Suggestions**, and **Details**.
+- **Timeline:** saved worker label bars, the selected segment, and the current
+  frame. Generated labels are saved directly in these bars rather than shown as
+  a separate overlay layer.
+- **Right:** **Annotate** and **Details**.
 
 Use the panel buttons in the toolbar to collapse the left or right side. On
 smaller displays the panels start collapsed so the player remains usable.
@@ -251,8 +260,9 @@ The longest track is selected automatically when appropriate. Available tools:
 - **Exclude** omits a bad track from normal export;
 - **Restore** includes it again.
 
-Track edits preserve human segments. Affected segments are marked for review,
-and only dependent pose-derived data is invalidated.
+Track edits preserve the saved segments and refresh only dependent
+pose-derived windows and features in the background. They do not generate new
+suggestions.
 
 ## 9. Create and edit human segments
 
@@ -319,42 +329,25 @@ Use `others` for all normal work behavior that is not running or falling,
 including standing, walking, bending, crouching, kneeling, sitting, equipment
 work, and stable recovery after a fall.
 
-## 11. Review suggestions
+## 11. Generate suggestions
 
-Open **Suggestions**. The display toggle is:
+Use the **Suggestion** split control in the video toolbar to select **Off**,
+**Threshold**, or **AI**, then select its main button to generate a new result
+for the current video. Threshold and AI outputs are saved directly as editable
+ground-truth segments, with their source retained for provenance. There is no
+separate pending-suggestion lane or accept/reject step.
 
-```text
-Off | Threshold | AI
-```
+If the video already has labels, generation asks whether to overwrite them.
+Choose **Cancel** to preserve the current timeline, or confirm only when the
+new generated result should replace it. Choosing **Off** prevents generation
+from the control; it does not delete existing labels.
 
-- **Off** hides suggestions and shows human labels only.
-- **Threshold** shows the active threshold suggestion set.
-- **AI** shows suggestions from the configured external model.
-
-Threshold suggestions use translucent blocks with solid outlines. AI
-suggestions use dashed outlines. Neither style can be confused with solid human
-labels.
-
-Select a pending suggestion, then choose:
-
-- **Accept** to copy it into the human annotation layer unchanged;
-- **Modify** to create a human segment with the edited frames or class;
-- **Reject** to retain an auditable rejection without creating a label.
-
-Regenerating either suggestion source preserves all manual labels and keeps the
-two suggestion sources separate.
-
-## 12. Use Details, window review, and export
+## 12. Use Details and export
 
 The **Details** tab shows essential video and selected-worker information plus
-overlay controls. It contains optional collapsible sections:
-
-- **Window review** includes or excludes deterministic 60-frame windows with
-  stride 12;
-- **Motion details** shows generated read-only feature and quality information;
-- **Export dataset** validates and queues an atomic export. When the background
-  job finishes, the browser automatically downloads one ZIP file; use
-  **Download ZIP** if the browser blocked the automatic download.
+overlay controls. **Export** validates and queues an atomic dataset export.
+When the background job finishes, the browser automatically downloads one ZIP
+file; use **Download ZIP** if the browser blocked the automatic download.
 
 Unresolved or low-quality windows do not create a fourth class. Mixed window
 priority is `falling > running > others`.
@@ -373,10 +366,10 @@ splits.
 
 ## 13. Complete a video
 
-Resolve invalid or review-required segments, then select **Complete & Next**.
-The application validates the video, records approval, and opens the next
-available video. Editing a completed video invalidates its prior approval so it
-can be reviewed again.
+Resolve invalid segments, then select **Complete & Next**. The application
+validates the video, records approval, and opens the next available video.
+Editing a completed video invalidates its prior approval so it can be approved
+again.
 
 ## 14. Delete videos, workers, or segments
 

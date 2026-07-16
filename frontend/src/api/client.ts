@@ -2,11 +2,14 @@ import axios from 'axios';
 
 import type { BBox, ImageData, TaskInfo } from '../types';
 import type {
-  ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
+  AnnotationDerivativeRefresh, ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
   ProcessingOptions,
   SuggestionSource, ThresholdProfile, VideoItem, VideoProject, VideoSegment,
-  VideoTrack, VideoWorkspaceState, HumanVideoLabel,
+  VideoExportRecord, VideoTrack, VideoWorkspaceChanges, VideoWorkspaceSnapshot, VideoWorkspaceState,
+  HumanVideoLabel,
 } from '../types';
+
+export type { VideoExportRecord } from '../types';
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -176,6 +179,16 @@ export async function processVideo(
   )).data;
 }
 
+/** Rebuild label-derived windows/features without generating new suggestions. */
+export async function refreshAnnotationDerivatives(
+  projectId: string,
+  videoId: string,
+): Promise<AnnotationDerivativeRefresh> {
+  return (await api.post<AnnotationDerivativeRefresh>(
+    `/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/annotation-derivatives/refresh`,
+  )).data;
+}
+
 export async function getProcessingOptions(projectId: string): Promise<ProcessingOptions> {
   return (await api.get<ProcessingOptions>(
     `/video-projects/${encodeURIComponent(projectId)}/processing-options`,
@@ -186,16 +199,67 @@ export async function getVideoJobs(projectId: string): Promise<ProcessingJob[]> 
   return (await api.get<ProcessingJob[]>(`/video-projects/${projectId}/jobs`)).data;
 }
 
+/**
+ * Load the compact, internally consistent state required to initialize an
+ * event-driven video workspace. Detailed active-video resources remain lazy.
+ */
+export async function getVideoWorkspaceSnapshot(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<VideoWorkspaceSnapshot> {
+  return (await api.get<VideoWorkspaceSnapshot>(
+    `/video-projects/${encodeURIComponent(projectId)}/workspace-snapshot`,
+    { signal },
+  )).data;
+}
+
+/**
+ * Fetch only durable changes after a known workspace event cursor.
+ *
+ * This is the recovery path for a reconnect or a browser tab that becomes
+ * visible again; it intentionally does not re-fetch the full video list.
+ */
+export async function getVideoWorkspaceChanges(
+  projectId: string,
+  after: number,
+  signal?: AbortSignal,
+): Promise<VideoWorkspaceChanges> {
+  return (await api.get<VideoWorkspaceChanges>(
+    `/video-projects/${encodeURIComponent(projectId)}/workspace-changes`,
+    { params: { after }, signal },
+  )).data;
+}
+
+/** Return the same-origin SSE URL used to receive project-scoped updates. */
+export function videoWorkspaceEventsUrl(projectId: string, after?: number): string {
+  const query = after === undefined ? '' : `?after=${encodeURIComponent(after)}`;
+  return `/api/v1/video-projects/${encodeURIComponent(projectId)}/events${query}`;
+}
+
 export async function controlVideoJob(projectId: string, jobId: string, action: string): Promise<ProcessingJob> {
   return (await api.post<ProcessingJob>(`/video-projects/${projectId}/jobs/${jobId}/control`, { action })).data;
 }
 
-export async function getVideoTracks(projectId: string, videoId: string): Promise<VideoTrack[]> {
-  return (await api.get<VideoTrack[]>(`/video-projects/${projectId}/videos/${videoId}/tracks`)).data;
+export async function getVideoTracks(
+  projectId: string,
+  videoId: string,
+  signal?: AbortSignal,
+): Promise<VideoTrack[]> {
+  return (await api.get<VideoTrack[]>(
+    `/video-projects/${projectId}/videos/${videoId}/tracks`,
+    { signal },
+  )).data;
 }
 
-export async function getVideoSegments(projectId: string, videoId: string): Promise<{ revision: number; segments: VideoSegment[] }> {
-  return (await api.get(`/video-projects/${projectId}/videos/${videoId}/segments`)).data;
+export async function getVideoSegments(
+  projectId: string,
+  videoId: string,
+  signal?: AbortSignal,
+): Promise<{ revision: number; segments: VideoSegment[] }> {
+  return (await api.get(
+    `/video-projects/${projectId}/videos/${videoId}/segments`,
+    { signal },
+  )).data;
 }
 
 export async function saveVideoSegment(
@@ -253,19 +317,31 @@ export async function saveVideoWorkspaceState(projectId: string, state: VideoWor
   return (await api.put<VideoWorkspaceState>(`/video-projects/${projectId}/workspace-state`, state)).data;
 }
 
+/**
+ * Best-effort final recovery checkpoint for page shutdown.
+ *
+ * ``sendBeacon`` cannot be used because the API deliberately requires PUT.
+ * A small same-origin keepalive fetch preserves that contract while giving a
+ * closing browser page a chance to persist its latest resume position.
+ */
+export function flushVideoWorkspaceStateOnExit(
+  projectId: string,
+  state: VideoWorkspaceState,
+): void {
+  void fetch(`/api/v1/video-projects/${encodeURIComponent(projectId)}/workspace-state`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state),
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
 export async function validateVideoExport(projectId: string): Promise<{ errors: string[]; warnings: string[] }> {
   return (await api.get(`/video-projects/${projectId}/exports/validate`)).data;
 }
 
 export async function createVideoExport(projectId: string): Promise<any> {
   return (await api.post(`/video-projects/${projectId}/exports`)).data;
-}
-
-export interface VideoExportRecord {
-  export_id: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
-  created_at: string;
-  finished_at?: string | null;
 }
 
 export async function getVideoExports(projectId: string): Promise<VideoExportRecord[]> {

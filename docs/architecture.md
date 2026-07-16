@@ -153,10 +153,58 @@ startup. Structured track/segment/window/history/model/export state is
 transactional SQLite data; keypoint matrices, feature arrays, model artifacts,
 and export files remain project-scoped filesystem artifacts.
 
+### Event-driven workspace synchronization
+
+The API server and `VideoWorker` are separate processes, so project workspace
+updates cannot rely on in-memory pub/sub. `VideoRepository` writes compact,
+project-scoped `video_workspace_events` outbox rows in the same SQLite
+transactions as video, job, track, annotation, and export mutations.
+`VideoWorkspaceSyncService` exposes a compact initial snapshot, cursor-based
+delta reads, and a same-origin Server-Sent Events stream. The React workspace
+opens one stream while visible; after a reconnect or hidden-tab restore it
+replays only missed events, and it falls back to a snapshot when the bounded
+outbox has expired the requested cursor. REST remains the mutation interface.
+
+This replaces fixed-interval full `/videos`, `/jobs`, and `/exports` polling.
+Small event payloads update cards and queue state directly; tracks and segments
+remain lazy resources and are refreshed only for the active affected video.
+See `docs/video-workspace-sync.md` for route and lifecycle details.
+
 When a Threshold or Model stage completes for an initially unlabeled video, the
 worker materializes generated source records as editable video segments. The
 segments retain their suggestion ID and source for provenance; regeneration does
 not replace existing annotations.
+
+### Revision-aware annotation derivatives
+
+Manual segment, worker, inclusion, and history edits advance the video's
+annotation revision. Their backend mutation transaction also records a
+dedicated annotation-derivative refresh request instead of the suggestion
+pipeline. The request is coalesced per video in SQLite and may be deferred
+until an active pipeline reaches a terminal state.
+The `annotation_derivatives` worker stage rebuilds only the label-derived
+windows and feature artifacts needed by export and later training; it never
+executes Threshold or Model inference and never materializes new suggestion
+segments. The Suggestions control is therefore the sole intentional trigger for
+new generated labels.
+
+Each derivative job records the revision it serves. If another edit arrives
+while it is waiting or running, stale partial output is discarded and the
+newest requested revision is queued, keeping exported derivatives consistent
+with the saved annotation timeline without unnecessary repeated work.
+
+Suggestion materialization follows the same durability rule. It writes the
+complete generated segment set, its provenance/history, and a deferred
+derivative intent atomically. The terminal Threshold or Model job promotes that
+intent to `annotation_derivatives`; therefore a worker restart after labels are
+committed cannot strand an export with stale window or feature artifacts.
+
+Manual worker merge and split operations also stage a new immutable pose
+artifact version. Their SQLite transaction switches `pose_cache_version` only
+alongside the changed worker rows, annotation revision, derivative intent, and
+outbox events. A pre-commit process crash therefore leaves the old artifact
+pointer authoritative; a newly written but unreferenced pose artifact is safe
+to clean up later.
 
 The React/Vite video routes reuse the image application's toolbar, tonal panel,
 typography, spacing, focus, feedback, and responsive-collapse conventions. The

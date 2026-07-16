@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Sequence
+from uuid import uuid4
 
 from backend.app.domain.errors import VideoResourceNotFoundError, VideoValidationError
 from backend.app.domain.video import HUMAN_LABELS
 from backend.app.repositories.video_db import VideoRepository
 from backend.app.repositories.video_storage import VideoStorageRepository
+
+
+@dataclass(frozen=True)
+class StagedPoseTrackRewrite:
+    """One immutable pose artifact and the pointer it was derived from."""
+
+    expected_version: str
+    staged_version: str
 
 
 class VideoAnnotationService:
@@ -28,6 +38,9 @@ class VideoAnnotationService:
         segment_id: str | None = None,
         source_type: str = "manual",
         source_id: str | None = None,
+        *,
+        emit_event: bool = True,
+        schedule_derivatives: bool = True,
     ) -> dict[str, Any]:
         self._validate_segment(video_id, track_id, start_frame, end_frame, label, segment_id)
         segment, revision = self.repository.write_segment(
@@ -45,8 +58,9 @@ class VideoAnnotationService:
             },
             expected_revision,
             segment_id,
+            emit_event=emit_event,
+            schedule_derivatives=schedule_derivatives,
         )
-        self._refresh_annotation_status(video_id)
         return {"segment": segment, "revision": revision}
 
     def list_tracks(self, video_id: str) -> list[dict[str, Any]]:
@@ -59,7 +73,13 @@ class VideoAnnotationService:
     def history(self, video_id: str) -> list[dict[str, Any]]:
         return self.repository.list_history(video_id)
 
-    def materialize_suggestions(self, video_id: str, source: str) -> list[dict[str, Any]]:
+    def materialize_suggestions(
+        self,
+        video_id: str,
+        source: str,
+        *,
+        expected_revision: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Create editable ground-truth segments from a new suggestion set.
 
         Automatic materialization is intentionally limited to an unlabeled video.
@@ -68,9 +88,6 @@ class VideoAnnotationService:
         """
         if source not in {"threshold", "model"}:
             raise VideoValidationError("Suggestion source must be threshold or model")
-        if self.repository.list_segments(video_id):
-            return []
-
         table = "threshold_suggestions" if source == "threshold" else "model_suggestions"
         candidates = [
             suggestion for suggestion in self.repository.list_suggestions(table, video_id)
@@ -116,30 +133,30 @@ class VideoAnnotationService:
                     "source_type": "auto_default", "source_id": None,
                 })
 
-        created: list[dict[str, Any]] = []
-        revision = int(self.repository.get_video(video_id)["annotation_revision"])
-        for segment in segments_to_create:
-            result = self.save_segment(
-                video_id,
-                int(segment["track_id"]),
-                int(segment["start_frame"]),
-                int(segment["end_frame"]),
-                str(segment["label"]),
-                revision,
-                source_type=str(segment["source_type"]),
-                source_id=segment["source_id"],
-            )
-            revision = int(result["revision"])
-            created.append(result["segment"])
+        return self.repository.materialize_suggestion_segments(
+            video_id,
+            table,
+            [str(suggestion["suggestion_id"]) for suggestion in selected],
+            segments_to_create,
+            expected_revision=expected_revision,
+        )
 
-        for suggestion in selected:
-            self.repository.review_suggestion(table, str(suggestion["suggestion_id"]), "accepted")
-        return created
+    def delete_segment(
+        self,
+        video_id: str,
+        segment_id: str,
+        expected_revision: int,
+        *,
+        schedule_derivatives: bool = True,
+    ) -> int:
+        """Delete one segment and persist its derivative refresh intent."""
 
-    def delete_segment(self, video_id: str, segment_id: str, expected_revision: int) -> int:
-        revision = self.repository.delete_segment(video_id, segment_id, expected_revision)
-        self._refresh_annotation_status(video_id)
-        return revision
+        return self.repository.delete_segment(
+            video_id,
+            segment_id,
+            expected_revision,
+            schedule_derivatives=schedule_derivatives,
+        )
 
     def set_segment_inclusion(
         self, video_id: str, segment_id: str, include: bool, reason: str | None, expected_revision: int
@@ -161,18 +178,13 @@ class VideoAnnotationService:
             expected_revision,
             segment_id,
         )
-        self._refresh_annotation_status(video_id)
         return {"segment": updated, "revision": revision}
 
     def undo(self, video_id: str, expected_revision: int) -> int:
-        revision = self.repository.undo_or_redo(video_id, expected_revision, "undo")
-        self._refresh_annotation_status(video_id)
-        return revision
+        return self.repository.undo_or_redo(video_id, expected_revision, "undo")
 
     def redo(self, video_id: str, expected_revision: int) -> int:
-        revision = self.repository.undo_or_redo(video_id, expected_revision, "redo")
-        self._refresh_annotation_status(video_id)
-        return revision
+        return self.repository.undo_or_redo(video_id, expected_revision, "redo")
 
     def extend_segment(self, video_id: str, segment_id: str, expected_revision: int) -> dict[str, Any]:
         segments = self.repository.list_segments(video_id)
@@ -297,23 +309,29 @@ class VideoAnnotationService:
                 errors.append(f"{segment['segment_id']}: {exc}")
         return errors
 
-    def merge_tracks(self, video_id: str, target_track_id: int, source_track_id: int) -> dict[str, Any]:
+    def merge_tracks(
+        self,
+        video_id: str,
+        target_track_id: int,
+        source_track_id: int,
+    ) -> dict[str, Any]:
+        """Merge two workers through one durable database mutation."""
+
         if target_track_id == source_track_id:
             raise VideoValidationError("Choose two different tracks")
-        target = self.repository.get_track(video_id, target_track_id)
-        source = self.repository.get_track(video_id, source_track_id)
-        self.repository.update_track(
-            video_id, target_track_id,
-            start_frame=min(target["start_frame"], source["start_frame"]),
-            end_frame=max(target["end_frame"], source["end_frame"]),
-            valid_frame_count=int(target["valid_frame_count"]) + int(source["valid_frame_count"]),
-            quality_status=target["quality_status"],
+        staged_pose = self._stage_pose_track_rewrites(
+            video_id,
+            [(source_track_id, target_track_id, 0)],
         )
-        self.repository.execute("UPDATE video_segments SET track_id=? WHERE video_id=? AND track_id=?", (target_track_id, video_id, source_track_id))
-        self.repository.execute("DELETE FROM video_tracks WHERE video_id=? AND track_id=?", (video_id, source_track_id))
-        self._rewrite_pose_track_ids(video_id, source_track_id, target_track_id)
-        self._invalidate_tracks(video_id, {target_track_id, source_track_id})
-        return self.repository.get_track(video_id, target_track_id)
+        return self.repository.merge_tracks_atomically(
+            video_id,
+            target_track_id,
+            source_track_id,
+            pose_cache_version=(staged_pose.staged_version if staged_pose else None),
+            expected_pose_cache_version=(
+                staged_pose.expected_version if staged_pose else None
+            ),
+        )
 
     def merge_multiple_tracks(self, video_id: str, track_ids: list[int]) -> dict[str, Any]:
         """Merge all listed tracks into the first track ID in the list.
@@ -321,35 +339,44 @@ class VideoAnnotationService:
         Iterates pairwise, merging each subsequent track into the target.
         Returns the final merged track.
         """
-        if len(track_ids) < 2:
+        if len(track_ids) < 2 or len(set(track_ids)) != len(track_ids):
             raise VideoValidationError("At least two track IDs are required for a multi-merge")
         target_id = track_ids[0]
-        for source_id in track_ids[1:]:
-            self.merge_tracks(video_id, target_id, source_id)
-        return self.repository.get_track(video_id, target_id)
+        staged_pose = self._stage_pose_track_rewrites(
+            video_id,
+            [(source_id, target_id, 0) for source_id in track_ids[1:]],
+        )
+        return self.repository.merge_multiple_tracks_atomically(
+            video_id,
+            track_ids,
+            pose_cache_version=(staged_pose.staged_version if staged_pose else None),
+            expected_pose_cache_version=(
+                staged_pose.expected_version if staged_pose else None
+            ),
+        )
 
     def split_track(self, video_id: str, track_id: int, frame: int) -> list[dict[str, Any]]:
         track = self.repository.get_track(video_id, track_id)
         if not int(track["start_frame"]) < frame <= int(track["end_frame"]):
             raise VideoValidationError("Track split frame must be inside its lifespan")
-        new_id = max((item["track_id"] for item in self.repository.list_tracks(video_id)), default=0) + 1
-        new_track = {key: value for key, value in track.items() if key in {
-            "valid_frame_count", "gap_count", "avg_person_confidence", "avg_keypoint_confidence",
-            "valid_frame_ratio", "missing_ankle_ratio", "quality_status", "include_in_export", "exclude_reason"
-        }}
-        new_track.update({"track_id": new_id, "start_frame": frame, "end_frame": track["end_frame"]})
-        with self.repository.connection() as connection, connection:
-            fields = ["track_pk", "video_id", *new_track.keys()]
-            from uuid import uuid4
-            connection.execute(
-                f"INSERT INTO video_tracks({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})",
-                [uuid4().hex, video_id, *new_track.values()],
-            )
-        self.repository.update_track(video_id, track_id, end_frame=frame - 1)
-        self.repository.execute("UPDATE video_segments SET track_id=? WHERE video_id=? AND track_id=? AND start_frame>=?", (new_id, video_id, track_id, frame))
-        self._rewrite_pose_track_ids(video_id, track_id, new_id, from_frame=frame)
-        self._invalidate_tracks(video_id, {track_id, new_id})
-        return [self.repository.get_track(video_id, track_id), self.repository.get_track(video_id, new_id)]
+        new_id = max(
+            (item["track_id"] for item in self.repository.list_tracks(video_id)),
+            default=0,
+        ) + 1
+        staged_pose = self._stage_pose_track_rewrites(
+            video_id,
+            [(track_id, new_id, frame)],
+        )
+        return self.repository.split_track_atomically(
+            video_id,
+            track_id,
+            frame,
+            new_track_id=new_id,
+            pose_cache_version=(staged_pose.staged_version if staged_pose else None),
+            expected_pose_cache_version=(
+                staged_pose.expected_version if staged_pose else None
+            ),
+        )
 
     def reassign_segment(self, video_id: str, segment_id: str, target_track_id: int, expected_revision: int) -> dict[str, Any]:
         segment = next((item for item in self.repository.list_segments(video_id) if item["segment_id"] == segment_id), None)
@@ -363,22 +390,17 @@ class VideoAnnotationService:
     def set_track_inclusion(self, video_id: str, track_id: int, include: bool, reason: str | None) -> dict[str, Any]:
         if not include and not reason:
             raise VideoValidationError("An exclusion reason is required")
-        track = self.repository.update_track(
-            video_id, track_id, include_in_export=int(include),
-            exclude_reason=None if include else reason,
-            quality_status="good" if include else "excluded",
+        track = self.repository.set_track_inclusion_atomically(
+            video_id,
+            track_id,
+            include,
+            reason,
         )
-        self._invalidate_tracks(video_id, {track_id})
         return track
 
     def delete_track(self, video_id: str, track_id: int) -> dict[str, Any]:
         """Delete a worker track and all its segments."""
-        self.repository.get_track(video_id, track_id)
-        with self.repository.connection() as connection, connection:
-            connection.execute("DELETE FROM video_segments WHERE video_id=? AND track_id=?", (video_id, track_id))
-            connection.execute("DELETE FROM video_tracks WHERE video_id=? AND track_id=?", (video_id, track_id))
-        self._invalidate_tracks(video_id, {track_id})
-        self._refresh_annotation_status(video_id)
+        self.repository.delete_track_atomically(video_id, track_id)
         return {"status": "success"}
 
     def _validate_segment(
@@ -397,32 +419,61 @@ class VideoAnnotationService:
             if existing["segment_id"] != segment_id and start_frame <= int(existing["end_frame"]) and end_frame >= int(existing["start_frame"]):
                 raise VideoValidationError("This segment conflicts with another segment.")
 
-    def _refresh_annotation_status(self, video_id: str) -> None:
-        segments = self.repository.list_segments(video_id)
-        status = "unlabeled" if not segments else "labeled"
-        self.repository.update_video(video_id, annotation_status=status)
+    def _stage_pose_track_rewrites(
+        self,
+        video_id: str,
+        rewrites: Sequence[tuple[int, int, int]],
+    ) -> StagedPoseTrackRewrite | None:
+        """Publish a new immutable pose artifact for a pending track edit.
 
-    def _invalidate_tracks(self, video_id: str, track_ids: set[int]) -> None:
-        video = self.repository.get_video(video_id)
-        placeholders = ",".join("?" for _ in track_ids)
-        values = [video_id, *sorted(track_ids)]
-        self.repository.execute(f"DELETE FROM threshold_suggestions WHERE video_id=? AND track_id IN ({placeholders})", values)
-        self.repository.execute(f"DELETE FROM generated_windows WHERE video_id=? AND track_id IN ({placeholders})", values)
-        self.repository.execute(f"DELETE FROM model_suggestions WHERE video_id=? AND track_id IN ({placeholders})", values)
-        self.repository.update_video(video_id, feature_cache_version=None, threshold_cache_version=None, window_cache_version=None)
-        self.storage.remove_artifacts(video["project_id"], video_id, ("features",))
+        The old artifact is never overwritten. The caller passes the returned
+        version to its locked repository mutation, which switches
+        ``videos.pose_cache_version`` in that same SQLite commit as tracks,
+        revision, derivative intent, and outbox events. A process crash before
+        commit therefore leaves the old pointer authoritative and the new file
+        as harmless unreferenced staging data.
+        """
 
-    def _rewrite_pose_track_ids(self, video_id: str, old_id: int, new_id: int, from_frame: int = 0) -> None:
         video = self.repository.get_video(video_id)
         version = video.get("pose_cache_version")
-        if not version:
-            return
-        path = self.storage.artifact_path(video["project_id"], "pose", video_id, version)
-        artifact = self.storage.read_json(path)
-        for frame in artifact.get("frames", []):
-            if int(frame["frame_index"]) < from_frame:
-                continue
-            for detection in frame.get("tracks", []):
-                if int(detection["track_id"]) == old_id:
-                    detection["track_id"] = new_id
-        self.storage.write_json(path, artifact)
+        if not version or not rewrites:
+            return None
+        source_path = self.storage.artifact_path(
+            str(video["project_id"]),
+            "pose",
+            video_id,
+            str(version),
+        )
+        if not source_path.is_file():
+            # Track corrections remain useful after an interrupted cache
+            # cleanup. The revision-pinned derivative job will rebuild its
+            # dependants; a missing pose artifact must not block the edit.
+            return None
+        try:
+            original = self.storage.read_json(source_path)
+        except (OSError, ValueError, EOFError, VideoResourceNotFoundError):
+            # Keep historical tolerant behavior for damaged pose caches. The
+            # database mutation still invalidates all stale derivatives.
+            return None
+        # The source artifact stays on disk untouched, so rewriting its loaded
+        # in-memory value does not need a second full pose-data copy.
+        rewritten = original
+        for old_id, new_id, from_frame in rewrites:
+            for frame in rewritten.get("frames", []):
+                if int(frame["frame_index"]) < from_frame:
+                    continue
+                for detection in frame.get("tracks", []):
+                    if int(detection["track_id"]) == old_id:
+                        detection["track_id"] = new_id
+        staged_version = f"{version}-track-edit-{uuid4().hex[:12]}"
+        staged_path = self.storage.artifact_path(
+            str(video["project_id"]),
+            "pose",
+            video_id,
+            staged_version,
+        )
+        self.storage.write_json(staged_path, rewritten)
+        return StagedPoseTrackRewrite(
+            expected_version=str(version),
+            staged_version=staged_version,
+        )

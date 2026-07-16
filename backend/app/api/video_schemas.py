@@ -65,10 +65,49 @@ class ProcessingJobResponse(BaseModel):
     error_message: str | None = None
 
 
+class AnnotationDerivativeRefreshResponse(BaseModel):
+    """Result of requesting label-derived windows/features to be rebuilt."""
+
+    requested_revision: int = Field(ge=0)
+    status: Literal["queued", "deferred", "already_queued"]
+    job: ProcessingJobResponse | None = None
+
+
 class ProcessingOptionsResponse(BaseModel):
     threshold_available: bool
     model_available: bool
     model_message: str | None = None
+
+
+class WorkspaceEventResponse(BaseModel):
+    """One durable workspace event delivered by delta polling or SSE."""
+
+    event_id: int = Field(ge=1)
+    project_id: str
+    video_id: str | None = None
+    event_type: str
+    payload: dict[str, Any]
+    created_at: str
+
+
+class WorkspaceChangesResponse(BaseModel):
+    """A bounded cursor-based event delta for workspace reconnection."""
+
+    events: list[WorkspaceEventResponse]
+    last_event_id: int = Field(ge=0)
+    resync_required: bool = False
+    has_more: bool = False
+
+
+class WorkspaceSnapshotResponse(BaseModel):
+    """The initial compact state read for one video-labeling workspace."""
+
+    project: dict[str, Any]
+    videos: list[dict[str, Any]]
+    jobs: list[dict[str, Any]]
+    processing_options: ProcessingOptionsResponse
+    exports: list[dict[str, Any]] = Field(default_factory=list)
+    last_event_id: int = Field(ge=0)
 
 
 class InclusionPayload(BaseModel):

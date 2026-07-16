@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any
+from datetime import datetime, timezone
+from time import monotonic
+from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.api.dependencies import (
     get_video_annotation_service,
@@ -14,8 +17,10 @@ from backend.app.api.dependencies import (
     get_video_feature_service,
     get_video_model_service,
     get_video_service,
+    get_video_workspace_sync_service,
 )
 from backend.app.api.video_schemas import (
+    AnnotationDerivativeRefreshResponse,
     InclusionPayload,
     JobControl,
     ProcessRequest,
@@ -39,15 +44,48 @@ from backend.app.api.video_schemas import (
     VideoTrimPayload,
     WindowReviewPayload,
     WorkspaceStatePayload,
+    WorkspaceChangesResponse,
+    WorkspaceSnapshotResponse,
 )
 from backend.app.services.video_annotation_service import VideoAnnotationService
 from backend.app.services.video_export_service import VideoExportService
 from backend.app.services.video_feature_service import VideoFeatureService
 from backend.app.services.video_model_service import VideoModelService
 from backend.app.services.video_service import VideoService
+from backend.app.services.video_workspace_sync_service import VideoWorkspaceSyncService
 
 
 router = APIRouter(prefix="/api/v1/video-projects", tags=["video-labeling"])
+
+SSE_POLL_SECONDS = 0.5
+SSE_HEARTBEAT_SECONDS = 15.0
+
+
+def _sse_message(event_type: str, payload: dict[str, Any]) -> str:
+    """Encode one standards-compliant server-sent event message."""
+
+    event_id = payload.get("event_id")
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event_type}")
+    lines.append(
+        "data: " + json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    )
+    return "\n".join(lines) + "\n\n"
+
+
+def _event_cursor(request: Request, after: int) -> int:
+    """Prefer EventSource's reconnect cursor when the browser supplies it."""
+
+    header = request.headers.get("last-event-id")
+    if header is None:
+        return after
+    try:
+        parsed = int(header)
+    except ValueError:
+        return after
+    return parsed if parsed >= 0 else after
 
 
 @router.post("")
@@ -63,6 +101,101 @@ def list_projects(service: VideoService = Depends(get_video_service)) -> list[di
 @router.get("/{project_id}")
 def get_project(project_id: str, service: VideoService = Depends(get_video_service)) -> dict[str, Any]:
     return service.get_project(project_id)
+
+
+@router.get(
+    "/{project_id}/workspace-snapshot",
+    response_model=WorkspaceSnapshotResponse,
+)
+def workspace_snapshot(
+    project_id: str,
+    service: VideoWorkspaceSyncService = Depends(get_video_workspace_sync_service),
+) -> dict[str, Any]:
+    """Return the one initial state read required to open a workspace."""
+
+    return service.snapshot(project_id)
+
+
+@router.get(
+    "/{project_id}/workspace-changes",
+    response_model=WorkspaceChangesResponse,
+)
+def workspace_changes(
+    project_id: str,
+    after: int = Query(default=0, ge=0),
+    service: VideoWorkspaceSyncService = Depends(get_video_workspace_sync_service),
+) -> dict[str, Any]:
+    """Return a compact durable event delta for fallback synchronization."""
+
+    return service.changes(project_id, after)
+
+
+@router.get("/{project_id}/events")
+async def workspace_events(
+    project_id: str,
+    request: Request,
+    after: int = Query(default=0, ge=0),
+    service: VideoWorkspaceSyncService = Depends(get_video_workspace_sync_service),
+) -> StreamingResponse:
+    """Stream durable workspace events, with cursor-based reconnection support.
+
+    HTTP mutations remain REST calls. SSE is intentionally one-way: it removes
+    repeated full-project polling while retaining standard EventSource retries.
+    """
+
+    # Validate project ownership before returning a long-lived response so a
+    # missing project is a normal 404 rather than a silent closed stream.
+    service.repository.get_project(project_id)
+    cursor = _event_cursor(request, after)
+
+    async def stream() -> AsyncIterator[str]:
+        nonlocal cursor
+        last_heartbeat = monotonic()
+        while True:
+            if await request.is_disconnected():
+                return
+            # Repository reads use SQLite's synchronous driver. Offload the
+            # short delta read so a busy database never blocks unrelated ASGI
+            # requests while this long-lived response is open.
+            changes = await asyncio.to_thread(service.changes, project_id, cursor)
+            if changes["resync_required"]:
+                resync_event = {
+                    "event_id": int(changes["last_event_id"]),
+                    "project_id": project_id,
+                    "video_id": None,
+                    "event_type": "resync.required",
+                    "payload": {
+                        "last_event_id": int(changes["last_event_id"]),
+                        "resync_required": True,
+                    },
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                yield _sse_message(
+                    "resync.required",
+                    resync_event,
+                )
+                return
+            for event in changes["events"]:
+                cursor = int(event["event_id"])
+                yield _sse_message(str(event["event_type"]), event)
+            if changes["has_more"]:
+                # Drain large backlogs without an artificial polling delay.
+                continue
+            now = monotonic()
+            if now - last_heartbeat >= SSE_HEARTBEAT_SECONDS:
+                yield ": keep-alive\n\n"
+                last_heartbeat = now
+            await asyncio.sleep(SSE_POLL_SECONDS)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.put("/{project_id}/config")
@@ -213,6 +346,20 @@ def process_video(
         payload.priority,
         payload.overwrite_labels,
     )
+
+
+@router.post(
+    "/{project_id}/videos/{video_id}/annotation-derivatives/refresh",
+    response_model=AnnotationDerivativeRefreshResponse,
+)
+def refresh_annotation_derivatives(
+    project_id: str,
+    video_id: str,
+    service: VideoService = Depends(get_video_service),
+) -> dict[str, Any]:
+    """Refresh training/export derivatives without generating suggestions."""
+
+    return service.refresh_annotation_derivatives(project_id, video_id)
 
 
 @router.get(

@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as api from '../api/client';
-import type { VideoItem } from '../types';
+import type { ProcessingJob, ProcessingOptions, VideoItem, VideoWorkspaceEvent } from '../types';
 import { VideoWorkspace } from './VideoWorkspace';
 
 vi.mock('../api/client', () => ({
@@ -13,6 +13,7 @@ vi.mock('../api/client', () => ({
   deleteVideoSegment: vi.fn(),
   deleteVideoTrack: vi.fn(),
   extendVideoSegment: vi.fn(),
+  flushVideoWorkspaceStateOnExit: vi.fn(),
   getProcessingOptions: vi.fn(),
   getFeatures: vi.fn(),
   getPoseOverlay: vi.fn(),
@@ -21,12 +22,15 @@ vi.mock('../api/client', () => ({
   getVideoSegments: vi.fn(),
   getVideoTracks: vi.fn(),
   getVideos: vi.fn(),
+  getVideoWorkspaceChanges: vi.fn(),
+  getVideoWorkspaceSnapshot: vi.fn(),
   importVideos: vi.fn(),
   labelFullVideoTrack: vi.fn(),
   mergeMultipleVideoTracks: vi.fn(),
   mergeVideoSegments: vi.fn(),
   mergeVideoTracks: vi.fn(),
   processVideo: vi.fn(),
+  refreshAnnotationDerivatives: vi.fn(),
   saveVideoSegment: vi.fn(),
   saveVideoWorkspaceState: vi.fn(),
   setVideoSegmentInclusion: vi.fn(),
@@ -40,7 +44,39 @@ vi.mock('../api/client', () => ({
   videoHistoryAction: vi.fn(),
   videoMediaUrl: vi.fn((projectId: string, videoId: string) => `/api/v1/video-projects/${encodeURIComponent(projectId)}/videos/${encodeURIComponent(videoId)}/media`),
   videoThumbnailUrl: vi.fn((projectId: string, videoId: string) => `/thumbnail/${projectId}/${videoId}`),
+  videoWorkspaceEventsUrl: vi.fn((projectId: string, after?: number) => `/events/${projectId}${after === undefined ? '' : `?after=${after}`}`),
 }));
+
+/** Small controllable stream for page tests; transport behavior has hook tests. */
+class WorkspaceEventStream {
+  static instances: WorkspaceEventStream[] = [];
+
+  onopen: ((event: Event) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent<string>) => void) | null = null;
+  private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+
+  constructor(_url: string) {
+    WorkspaceEventStream.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: Event) => void): void {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  close(): void {
+    // The production hook owns lifecycle; tests only need a no-op close.
+  }
+
+  emit(event: VideoWorkspaceEvent): void {
+    const nativeEvent = {
+      type: event.event_type,
+      data: JSON.stringify(event),
+      lastEventId: String(event.event_id),
+    } as MessageEvent<string>;
+    this.listeners.get(event.event_type)?.forEach((listener) => listener(nativeEvent));
+  }
+}
 
 const makeVideo = (id: string, filename: string): VideoItem => ({
   video_id: id,
@@ -75,11 +111,21 @@ function renderWorkspace() {
 
 describe('VideoWorkspace', () => {
   let videos: VideoItem[];
+  let jobs: ProcessingJob[];
+  let processingOptions: ProcessingOptions;
 
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
     videos = [VIDEO_A, VIDEO_B];
+    jobs = [];
+    processingOptions = {
+      threshold_available: true,
+      model_available: false,
+      model_message: 'Model suggestions are not configured for this project.',
+    };
+    WorkspaceEventStream.instances = [];
+    vi.stubGlobal('EventSource', WorkspaceEventStream);
     Object.defineProperty(window, 'innerWidth', { value: 1440, configurable: true });
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined);
     vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
@@ -89,6 +135,19 @@ describe('VideoWorkspace', () => {
     });
     vi.mocked(api.getVideos).mockImplementation(async () => videos);
     vi.mocked(api.getVideoJobs).mockResolvedValue([]);
+    vi.mocked(api.getVideoWorkspaceSnapshot).mockImplementation(async () => ({
+      project: {
+        project_id: 'p1', name: 'Factory', config: {}, created_at: '', updated_at: '', workspace_state: null,
+      },
+      videos,
+      jobs,
+      processing_options: processingOptions,
+      exports: [],
+      last_event_id: 0,
+    }));
+    vi.mocked(api.getVideoWorkspaceChanges).mockResolvedValue({
+      events: [], last_event_id: 0, resync_required: false, has_more: false,
+    });
     vi.mocked(api.getVideoTracks).mockImplementation(async (_projectId, videoId) => [{
       track_id: videoId === 'v1' ? 1 : 2,
       start_frame: 0,
@@ -106,9 +165,7 @@ describe('VideoWorkspace', () => {
       video_id: 'v1', track_id: 1, frame_index: 0, suggestion_source: 'Threshold',
     });
     vi.mocked(api.getProcessingOptions).mockResolvedValue({
-      threshold_available: true,
-      model_available: false,
-      model_message: 'Model suggestions are not configured for this project.',
+      ...processingOptions,
     });
     vi.mocked(api.saveVideoSegment).mockResolvedValue({
       revision: 1,
@@ -121,6 +178,14 @@ describe('VideoWorkspace', () => {
     vi.mocked(api.processVideo).mockResolvedValue([{
       job_id: 'j1', video_id: 'v1', stage: 'features', status: 'queued', priority: 1000, progress: 0,
     }]);
+    vi.mocked(api.refreshAnnotationDerivatives).mockResolvedValue({
+      requested_revision: 1,
+      status: 'queued',
+      job: {
+        job_id: 'derivatives-1', video_id: 'v1', stage: 'annotation_derivatives',
+        status: 'queued', priority: 250, progress: 0,
+      },
+    });
     vi.mocked(api.deleteVideo).mockImplementation(async (_projectId, videoId) => {
       videos = videos.filter((video) => video.video_id !== videoId);
     });
@@ -129,6 +194,7 @@ describe('VideoWorkspace', () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('synchronizes track and segment controls without triggering shortcuts while typing', async () => {
@@ -152,11 +218,50 @@ describe('VideoWorkspace', () => {
     expect(screen.getByRole('button', { name: 'running' })).toHaveClass('border-primary');
   });
 
+  it('does not create a client-side derivative request after an edit', async () => {
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    fireEvent.click(screen.getByRole('button', { name: '+ Create Segment' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add segment' }));
+    await waitFor(() => expect(api.saveVideoSegment).toHaveBeenCalledOnce());
+
+    expect(api.refreshAnnotationDerivatives).not.toHaveBeenCalled();
+    expect(api.processVideo).not.toHaveBeenCalled();
+  });
+
   it('shows approved and remaining video counts in the approval progress', async () => {
     videos = [{ ...VIDEO_A, is_approved: 1 }, VIDEO_B];
     renderWorkspace();
     expect(await screen.findByLabelText('Approval progress: 1 approved, 1 remaining, 2 total')).toBeInTheDocument();
     expect(screen.getByText('1 / 2 approved · 1 left')).toBeInTheDocument();
+  });
+
+  it('preserves every video-card update delivered in one live-event burst', async () => {
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    await waitFor(() => expect(WorkspaceEventStream.instances).toHaveLength(1));
+    const importedA = makeVideo('v3', 'imported-a.mp4');
+    const importedB = makeVideo('v4', 'imported-b.mp4');
+
+    await act(async () => {
+      WorkspaceEventStream.instances[0].emit({
+        event_id: 1,
+        project_id: 'p1',
+        video_id: 'v3',
+        event_type: 'video.changed',
+        payload: { video_id: 'v3', deleted: false, video: importedA },
+      });
+      WorkspaceEventStream.instances[0].emit({
+        event_id: 2,
+        project_id: 'p1',
+        video_id: 'v4',
+        event_type: 'video.changed',
+        payload: { video_id: 'v4', deleted: false, video: importedB },
+      });
+    });
+
+    expect(await screen.findByText('imported-a.mp4')).toBeInTheDocument();
+    expect(screen.getByText('imported-b.mp4')).toBeInTheDocument();
   });
 
   it('replaces worker rows with a dedicated video trim timeline', async () => {
@@ -299,26 +404,26 @@ describe('VideoWorkspace', () => {
   });
 
   it('shows the actual persisted mode for an active pipeline', async () => {
-    vi.mocked(api.getProcessingOptions).mockResolvedValue({
+    processingOptions = {
       threshold_available: true,
       model_available: true,
       model_message: null,
-    });
-    vi.mocked(api.getVideoJobs).mockResolvedValue([{
+    };
+    jobs = [{
       job_id: 'threshold-job', video_id: 'v1', stage: 'features', status: 'running',
       priority: 100, progress: 0.5, target_mode: 'threshold', external_model_id: null,
-    }]);
+    }];
     renderWorkspace();
     await screen.findByText('Worker 1');
     expect(screen.getByRole('button', { name: 'Suggestion' })).toBeDisabled();
   });
 
   it('generates AI suggestions after confirmed label replacement', async () => {
-    vi.mocked(api.getProcessingOptions).mockResolvedValue({
+    processingOptions = {
       threshold_available: true,
       model_available: true,
       model_message: null,
-    });
+    };
     vi.mocked(api.getVideoSegments).mockResolvedValue({
       revision: 1,
       segments: [{
@@ -484,6 +589,34 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByText('Worker 1')).toBeInTheDocument();
   });
 
+  it('does not fetch pose-overlay chunks while the overlay is hidden', async () => {
+    videos = [{ ...VIDEO_A, canonical_frame_count: 240, duration_seconds: 10 }, VIDEO_B];
+    renderWorkspace();
+    await screen.findByText('Worker 1');
+    await waitFor(() => expect(api.getPoseOverlay).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByTitle('Hide overlay'));
+    fireEvent.change(screen.getByLabelText('Current frame'), { target: { value: '120' } });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(api.getPoseOverlay).toHaveBeenCalledOnce();
+  });
+
+  it('backs off a failed overlay chunk instead of retrying it on every frame', async () => {
+    videos = [{ ...VIDEO_A, canonical_frame_count: 240, duration_seconds: 10 }, VIDEO_B];
+    vi.mocked(api.getPoseOverlay).mockRejectedValue(new Error('overlay unavailable'));
+    renderWorkspace();
+    await waitFor(() => expect(api.getPoseOverlay).toHaveBeenCalledOnce());
+    await act(async () => { await Promise.resolve(); });
+
+    fireEvent.change(screen.getByLabelText('Current frame'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText('Current frame'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Current frame'), { target: { value: '3' } });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(api.getPoseOverlay).toHaveBeenCalledOnce();
+  });
+
   it('does not request or render legacy suggestion overlays', async () => {
     renderWorkspace();
     await screen.findByText('Worker 1');
@@ -508,14 +641,10 @@ describe('VideoWorkspace', () => {
     expect(await screen.findByTitle('falling frames 5\u201315')).toBeInTheDocument();
   });
 
-  it('refreshes derived data after an active processing pipeline completes', async () => {
-    vi.mocked(api.getVideoJobs)
-      .mockResolvedValueOnce([{
-        job_id: 'pipeline-1', video_id: 'v1', stage: 'pose_track', status: 'running', priority: 100, progress: 0.5,
-      }])
-      .mockResolvedValue([{
-        job_id: 'pipeline-1', video_id: 'v1', stage: 'pose_track', status: 'completed', priority: 100, progress: 1,
-      }]);
+  it('refreshes active details when processing publishes new worker tracks', async () => {
+    jobs = [{
+      job_id: 'pipeline-1', video_id: 'v1', stage: 'pose_track', status: 'running', priority: 100, progress: 0.5,
+    }];
     vi.mocked(api.getVideoTracks)
       .mockResolvedValueOnce([])
       .mockResolvedValue([{
@@ -524,8 +653,18 @@ describe('VideoWorkspace', () => {
       }]);
     renderWorkspace();
     expect(await screen.findByText('Process the video to detect worker tracks.')).toBeInTheDocument();
-    expect(await screen.findByText('Worker 1', {}, { timeout: 7000 })).toBeInTheDocument();
-    expect(api.getFeatures).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(WorkspaceEventStream.instances).toHaveLength(1));
+    await act(async () => {
+      WorkspaceEventStream.instances[0].emit({
+        event_id: 1,
+        project_id: 'p1',
+        video_id: 'v1',
+        event_type: 'tracks.changed',
+        payload: { video_id: 'v1', annotation_revision: 0, reason: 'tracks_replaced' },
+      });
+    });
+    expect(await screen.findByText('Worker 1')).toBeInTheDocument();
+    expect(api.getFeatures).not.toHaveBeenCalled();
   });
 
   it('keeps an in-flight processing request scoped to its original video', async () => {
@@ -576,7 +715,11 @@ describe('VideoWorkspace', () => {
   });
 
   it('keeps annotations usable when Model availability cannot be loaded', async () => {
-    vi.mocked(api.getProcessingOptions).mockRejectedValue(new Error('model service unavailable'));
+    processingOptions = {
+      threshold_available: true,
+      model_available: false,
+      model_message: 'model service unavailable',
+    };
     renderWorkspace();
     expect(await screen.findByText('Worker 1')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Choose suggestion source' }));
@@ -586,11 +729,11 @@ describe('VideoWorkspace', () => {
   it('imports videos using the method selected by the suggestion control', async () => {
     const imported = makeVideo('v3', 'new-video.mp4');
     const file = new File(['video'], 'new-video.mp4', { type: 'video/mp4' });
-    vi.mocked(api.getProcessingOptions).mockResolvedValue({
+    processingOptions = {
       threshold_available: true,
       model_available: true,
       model_message: null,
-    });
+    };
     vi.mocked(api.importVideos).mockResolvedValue([imported]);
     renderWorkspace();
     await screen.findByText('Worker 1');
@@ -615,9 +758,9 @@ describe('VideoWorkspace', () => {
   });
 
   it('removes a deleted processing video from the unified queue immediately', async () => {
-    vi.mocked(api.getVideoJobs).mockResolvedValue([{
+    jobs = [{
       job_id: 'processing-v1', video_id: 'v1', stage: 'pose_track', status: 'running', priority: 1, progress: 0.5,
-    }]);
+    }];
     renderWorkspace();
     expect(await screen.findByText('1 remaining / 1 videos')).toBeInTheDocument();
 

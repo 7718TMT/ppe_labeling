@@ -16,7 +16,18 @@ from backend.app.domain.errors import (
 )
 
 
-VIDEO_SCHEMA_VERSION = 2
+VIDEO_SCHEMA_VERSION = 4
+
+# Workspace events are intentionally retained in SQLite rather than memory.
+# The API and the processing worker run in separate processes, so an in-memory
+# pub/sub object would lose events across restarts and would not cross process
+# boundaries. The bounded retention keeps the local database compact while
+# allowing reconnecting browsers to recover from short outages.
+WORKSPACE_EVENT_RETENTION = 10_000
+WORKSPACE_EVENT_RETENTION_HOURS = 24
+WORKSPACE_EVENT_BATCH_SIZE = 500
+ANNOTATION_DERIVATIVE_STAGE = "annotation_derivatives"
+ANNOTATION_DERIVATIVE_PRIORITY = 250
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS video_schema_migrations (
@@ -311,6 +322,7 @@ JSON_COLUMNS = {
     "merge_config_json",
     "manifest_json",
     "validation_json",
+    "payload_json",
 }
 
 
@@ -351,6 +363,16 @@ class VideoRepository:
                 self._migrate_v2(connection)
                 connection.execute(
                     "INSERT INTO video_schema_migrations(version) VALUES (2)"
+                )
+            if 3 not in applied:
+                self._migrate_v3(connection)
+                connection.execute(
+                    "INSERT INTO video_schema_migrations(version) VALUES (3)"
+                )
+            if 4 not in applied:
+                self._migrate_v4(connection)
+                connection.execute(
+                    "INSERT INTO video_schema_migrations(version) VALUES (4)"
                 )
 
     @staticmethod
@@ -467,6 +489,64 @@ class VideoRepository:
         )
 
     @staticmethod
+    def _migrate_v3(connection: sqlite3.Connection) -> None:
+        """Add the durable, project-scoped workspace event outbox.
+
+        ``video_id`` deliberately has no foreign-key constraint. A video-delete
+        event must remain readable after the video row and its dependent rows
+        have been removed by SQLite's cascading delete.
+        """
+
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS video_workspace_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL REFERENCES video_projects(project_id)
+                    ON DELETE CASCADE,
+                video_id TEXT,
+                event_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_workspace_events_project_event
+                ON video_workspace_events(project_id, event_id);
+            """
+        )
+
+    @staticmethod
+    def _migrate_v4(connection: sqlite3.Connection) -> None:
+        """Persist revision-aware annotation derivative refresh requests.
+
+        A request survives while a suggestion pipeline is active, then becomes
+        a distinct worker stage after that pipeline finishes. This prevents a
+        label edit from being accidentally coalesced into Threshold or model
+        inference work.
+        """
+
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(processing_jobs)")
+        }
+        if "annotation_revision" not in columns:
+            connection.execute(
+                "ALTER TABLE processing_jobs ADD COLUMN annotation_revision INTEGER"
+            )
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS annotation_derivative_refreshes (
+                video_id TEXT PRIMARY KEY REFERENCES videos(video_id)
+                    ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES video_projects(project_id)
+                    ON DELETE CASCADE,
+                requested_revision INTEGER NOT NULL,
+                requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_derivative_refreshes_project
+                ON annotation_derivative_refreshes(project_id, requested_at);
+            """
+        )
+
+    @staticmethod
     def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None
@@ -475,6 +555,406 @@ class VideoRepository:
             if result[key] is not None:
                 result[key.removesuffix("_json")] = json.loads(result[key])
         return result
+
+    @staticmethod
+    def _public_workspace_event(event: dict[str, Any]) -> dict[str, Any]:
+        """Return the stable wire representation without persistence fields."""
+
+        return {
+            "event_id": int(event["event_id"]),
+            "project_id": str(event["project_id"]),
+            "video_id": event.get("video_id"),
+            "event_type": str(event["event_type"]),
+            "payload": event.get("payload", {}),
+            "created_at": str(event["created_at"]),
+        }
+
+    @staticmethod
+    def _job_event_payload(job: dict[str, Any]) -> dict[str, Any]:
+        """Keep job events compact and aligned with the existing job API."""
+
+        fields = (
+            "job_id",
+            "project_id",
+            "video_id",
+            "stage",
+            "status",
+            "priority",
+            "progress",
+            "target_mode",
+            "external_model_id",
+            "error_message",
+            "updated_at",
+        )
+        return {"job": {field: job.get(field) for field in fields}}
+
+    @staticmethod
+    def _job_event_is_meaningful(
+        previous: dict[str, Any],
+        current: dict[str, Any],
+        changed_values: dict[str, Any],
+    ) -> bool:
+        """Suppress heartbeat-only events and coalesce noisy progress writes."""
+
+        visible_fields = (
+            "stage",
+            "status",
+            "priority",
+            "target_mode",
+            "external_model_id",
+            "error_message",
+            "control_requested",
+        )
+        if any(previous.get(field) != current.get(field) for field in visible_fields):
+            return True
+        if "progress" not in changed_values:
+            return False
+        previous_progress = float(previous.get("progress") or 0)
+        current_progress = float(current.get("progress") or 0)
+        return current_progress >= 0.999 or abs(current_progress - previous_progress) >= 0.01
+
+    @staticmethod
+    def _video_event_payload(
+        video: dict[str, Any] | None,
+        *,
+        video_id: str | None = None,
+        deleted: bool = False,
+    ) -> dict[str, Any]:
+        """Represent one changed video without publishing a full project list."""
+
+        identifier = video_id or (str(video["video_id"]) if video else None)
+        payload: dict[str, Any] = {
+            "video_id": identifier,
+            "deleted": deleted,
+        }
+        if video is not None:
+            payload["video"] = video
+        return payload
+
+    @staticmethod
+    def _export_event_payload(export: dict[str, Any]) -> dict[str, Any]:
+        """Return export state without repeatedly sending its full manifest."""
+
+        fields = (
+            "export_id",
+            "project_id",
+            "job_id",
+            "status",
+            "artifact_path",
+            "validation",
+            "created_at",
+            "finished_at",
+        )
+        return {"export": {field: export.get(field) for field in fields}}
+
+    def _emit_workspace_event(
+        self,
+        connection: sqlite3.Connection,
+        project_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        video_id: str | None = None,
+    ) -> int:
+        """Write an outbox event using the caller's active transaction.
+
+        All public mutation methods call this helper before committing their
+        state change. This makes the event durable and prevents a completed
+        worker action from becoming invisible to an already-open workspace.
+        """
+
+        cursor = connection.execute(
+            """
+            INSERT INTO video_workspace_events(
+                project_id, video_id, event_type, payload_json
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                project_id,
+                video_id,
+                event_type,
+                json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            ),
+        )
+        event_id = int(cursor.lastrowid)
+        # The indexed existence check enforces the hard per-project count
+        # bound. Periodic pruning also removes events older than the time
+        # window without adding a delete to every worker progress write.
+        over_count_limit = bool(
+            connection.execute(
+                """
+                SELECT EXISTS(
+                    SELECT 1 FROM video_workspace_events
+                    WHERE project_id=?
+                    LIMIT 1 OFFSET ?
+                )
+                """,
+                (project_id, WORKSPACE_EVENT_RETENTION),
+            ).fetchone()[0]
+        )
+        if over_count_limit or event_id % 100 == 0:
+            self._prune_workspace_events(connection, project_id)
+        return event_id
+
+    def _emit_annotation_changed(
+        self,
+        connection: sqlite3.Connection,
+        video_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Publish a compact annotation invalidation without full segment data.
+
+        Segment and track payloads can be large enough to make event streaming
+        counterproductive. Clients receive the revision and re-read only the
+        currently open video's tracks/segments when necessary. The annotation
+        summary fields are sufficient to update a sidebar card without a second
+        full ``video.changed`` event for every small edit.
+        """
+
+        row = connection.execute(
+            "SELECT * FROM videos WHERE video_id=?", (video_id,)
+        ).fetchone()
+        if row is None:
+            raise VideoResourceNotFoundError("Video not found")
+        video = self._decode(row) or {}
+        project_id = str(video["project_id"])
+        self._emit_workspace_event(
+            connection,
+            project_id,
+            "annotation.changed",
+            {
+                "video_id": video_id,
+                "annotation_revision": int(video["annotation_revision"]),
+                "annotation_status": video["annotation_status"],
+                "is_approved": bool(video["is_approved"]),
+                "approval_revision": video.get("approval_revision"),
+                "reason": reason,
+            },
+            video_id=video_id,
+        )
+        return video
+
+    def publish_annotation_changed(self, video_id: str, reason: str) -> None:
+        """Publish a post-transaction notification for a composed edit.
+
+        Most annotation repository methods emit inside their own transaction.
+        This public helper is reserved for legacy callers that have already
+        committed their state. New persistence operations should emit within
+        their primary transaction so state and outbox rows stay atomic.
+        """
+
+        with self.connection() as connection, connection:
+            self._emit_annotation_changed(connection, video_id, reason)
+
+    def publish_tracks_changed(self, video_id: str, reason: str) -> None:
+        """Publish one compact worker-list invalidation for a composed edit.
+
+        Atomic manual track mutations emit this event in their own repository
+        transaction. This compatibility helper is only for legacy callers that
+        already committed their state and need a compact remote refresh.
+        """
+
+        with self.connection() as connection, connection:
+            self._emit_tracks_changed(connection, video_id, reason)
+
+    def _invalidate_track_derivatives_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        video_id: str,
+        track_ids: set[int],
+    ) -> None:
+        """Drop dependent rows for changed workers while the writer lock is held."""
+
+        if not track_ids:
+            return
+        placeholders = ",".join("?" for _ in track_ids)
+        values = [video_id, *sorted(track_ids)]
+        for table in (
+            "threshold_suggestions",
+            "model_suggestions",
+            "generated_windows",
+        ):
+            connection.execute(
+                f"DELETE FROM {table} WHERE video_id=? AND track_id IN ({placeholders})",
+                values,
+            )
+
+    @staticmethod
+    def _assert_expected_pose_cache_version(
+        connection: sqlite3.Connection,
+        video_id: str,
+        expected_pose_cache_version: str | None,
+    ) -> None:
+        """Reject a staged pose pointer if another edit already replaced it."""
+
+        if expected_pose_cache_version is None:
+            return
+        row = connection.execute(
+            "SELECT pose_cache_version FROM videos WHERE video_id=?",
+            (video_id,),
+        ).fetchone()
+        if row is None:
+            raise VideoResourceNotFoundError("Video not found")
+        if row["pose_cache_version"] != expected_pose_cache_version:
+            raise RevisionConflictError(
+                "Pose data changed while this worker edit was being applied. "
+                "Please try the edit again."
+            )
+
+    def _finalize_track_mutation_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        video_id: str,
+        reason: str,
+        *,
+        pose_cache_version: str | None = None,
+    ) -> dict[str, Any]:
+        """Advance the durable annotation input revision for one track edit.
+
+        Callers must have already changed the worker rows and invalidated their
+        direct dependants in the same ``BEGIN IMMEDIATE`` transaction. This
+        finalizer makes the revision, optional staged pose pointer, derivative
+        intent, and outbox events one commit, so a worker never publishes
+        artifacts for a mixed track shape.
+        """
+
+        row = connection.execute(
+            "SELECT * FROM videos WHERE video_id=?",
+            (video_id,),
+        ).fetchone()
+        if row is None:
+            raise VideoResourceNotFoundError("Video not found")
+        video = self._decode(row) or {}
+        revision = int(video["annotation_revision"]) + 1
+        has_segments = connection.execute(
+            "SELECT 1 FROM video_segments WHERE video_id=? LIMIT 1",
+            (video_id,),
+        ).fetchone()
+        annotation_status = "labeled" if has_segments is not None else "unlabeled"
+        connection.execute(
+            """
+            UPDATE videos
+            SET annotation_revision=?,
+                is_approved=0,
+                approval_revision=NULL,
+                approved_at=NULL,
+                annotation_status=?,
+                pose_cache_version=COALESCE(?, pose_cache_version),
+                feature_cache_version=NULL,
+                threshold_cache_version=NULL,
+                window_cache_version=NULL,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE video_id=?
+            """,
+            (revision, annotation_status, pose_cache_version, video_id),
+        )
+        connection.execute(
+            """
+            UPDATE generated_windows
+            SET stale=1, feature_status='pending', updated_at=CURRENT_TIMESTAMP
+            WHERE video_id=?
+            """,
+            (video_id,),
+        )
+        # Do not delete the old feature file here. The null cache version above
+        # makes it unreachable, while the queued derivative worker publishes
+        # its replacement atomically without a cross-process delete/write race.
+        self._emit_annotation_changed(connection, video_id, reason)
+        self._schedule_annotation_derivatives_if_ready(
+            connection,
+            video_id,
+            revision,
+        )
+        self._emit_tracks_changed(connection, video_id, reason)
+        updated = connection.execute(
+            "SELECT * FROM videos WHERE video_id=?",
+            (video_id,),
+        ).fetchone()
+        return self._decode(updated) or {}
+
+    def publish_track_mutation(self, video_id: str, reason: str) -> dict[str, Any]:
+        """Finalize a legacy pre-committed track edit as one revision event.
+
+        New track operations use the atomic repository methods below. This
+        compatibility helper remains for callers that have no row mutation to
+        perform, but it is intentionally not used by the annotation service.
+        """
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                updated = self._finalize_track_mutation_in_transaction(
+                    connection,
+                    video_id,
+                    reason,
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return updated
+
+    def _emit_tracks_changed(
+        self,
+        connection: sqlite3.Connection,
+        video_id: str,
+        reason: str,
+    ) -> None:
+        """Publish a track-only invalidation with its current annotation revision."""
+
+        row = connection.execute(
+            """
+            SELECT project_id, annotation_revision, annotation_status,
+                   is_approved, approval_revision
+            FROM videos WHERE video_id=?
+            """,
+            (video_id,),
+        ).fetchone()
+        if row is None:
+            raise VideoResourceNotFoundError("Video not found")
+        self._emit_workspace_event(
+            connection,
+            str(row["project_id"]),
+            "tracks.changed",
+            {
+                "video_id": video_id,
+                "annotation_revision": int(row["annotation_revision"]),
+                "annotation_status": row["annotation_status"],
+                "is_approved": bool(row["is_approved"]),
+                "approval_revision": row["approval_revision"],
+                "reason": reason,
+            },
+            video_id=video_id,
+        )
+
+    @staticmethod
+    def _prune_workspace_events(
+        connection: sqlite3.Connection,
+        project_id: str,
+    ) -> None:
+        """Retain recent events by age and by per-project count."""
+
+        connection.execute(
+            """
+            DELETE FROM video_workspace_events
+            WHERE project_id=?
+              AND created_at < datetime('now', ?)
+            """,
+            (project_id, f"-{WORKSPACE_EVENT_RETENTION_HOURS} hours"),
+        )
+        connection.execute(
+            """
+            DELETE FROM video_workspace_events
+            WHERE event_id IN (
+                SELECT event_id
+                FROM video_workspace_events
+                WHERE project_id=?
+                ORDER BY event_id DESC
+                LIMIT -1 OFFSET ?
+            )
+            """,
+            (project_id, WORKSPACE_EVENT_RETENTION),
+        )
 
     def one(self, sql: str, values: Sequence[Any] = ()) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -487,6 +967,82 @@ class VideoRepository:
     def execute(self, sql: str, values: Sequence[Any] = ()) -> None:
         with self.connection() as connection, connection:
             connection.execute(sql, values)
+
+    def latest_workspace_event_id(self, project_id: str) -> int:
+        """Return the latest durable event cursor for one project."""
+
+        self.get_project(project_id)
+        row = self.one(
+            """
+            SELECT COALESCE(MAX(event_id), 0) AS event_id
+            FROM video_workspace_events
+            WHERE project_id=?
+            """,
+            (project_id,),
+        )
+        return int((row or {}).get("event_id", 0))
+
+    def workspace_event_changes(
+        self,
+        project_id: str,
+        after: int,
+        *,
+        limit: int = WORKSPACE_EVENT_BATCH_SIZE,
+    ) -> dict[str, Any]:
+        """Return a bounded event delta or request a snapshot resynchronization.
+
+        Cursors are project-local from the client's perspective even though the
+        SQLite primary key is global. If retention removed the requested cursor,
+        a partial delta could leave the UI inconsistent, so callers receive a
+        deterministic ``resync_required`` signal instead.
+        """
+
+        if after < 0:
+            raise ValueError("Workspace event cursor cannot be negative")
+        if limit < 1:
+            raise ValueError("Workspace event limit must be positive")
+
+        self.get_project(project_id)
+        batch_limit = min(limit, WORKSPACE_EVENT_BATCH_SIZE)
+        with self.connection() as connection:
+            bounds = connection.execute(
+                """
+                SELECT MIN(event_id) AS oldest_event_id,
+                       MAX(event_id) AS newest_event_id
+                FROM video_workspace_events
+                WHERE project_id=?
+                """,
+                (project_id,),
+            ).fetchone()
+            oldest = int(bounds["oldest_event_id"]) if bounds and bounds["oldest_event_id"] is not None else 0
+            newest = int(bounds["newest_event_id"]) if bounds and bounds["newest_event_id"] is not None else 0
+            if after > 0 and oldest and after < oldest - 1:
+                return {
+                    "events": [],
+                    "last_event_id": newest,
+                    "resync_required": True,
+                    "has_more": False,
+                }
+            rows = connection.execute(
+                """
+                SELECT * FROM video_workspace_events
+                WHERE project_id=? AND event_id > ?
+                ORDER BY event_id
+                LIMIT ?
+                """,
+                (project_id, after, batch_limit + 1),
+            ).fetchall()
+
+        has_more = len(rows) > batch_limit
+        rows = rows[:batch_limit]
+        events = [self._public_workspace_event(self._decode(row) or {}) for row in rows]
+        cursor = int(events[-1]["event_id"]) if events else max(after, newest)
+        return {
+            "events": events,
+            "last_event_id": cursor,
+            "resync_required": False,
+            "has_more": has_more,
+        }
 
     def create_project(self, name: str, config: dict[str, Any], application_version: str) -> dict[str, Any]:
         project_id = uuid4().hex
@@ -523,7 +1079,18 @@ class VideoRepository:
                 f"INSERT INTO videos({','.join(fields)}) VALUES ({placeholders})",
                 [video_id, project_id, *values.values()],
             )
-        return self.get_video(video_id)
+            row = connection.execute(
+                "SELECT * FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            video = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "video.changed",
+                self._video_event_payload(video),
+                video_id=video_id,
+            )
+        return video
 
     def get_video(self, video_id: str) -> dict[str, Any]:
         video = self.one("SELECT * FROM videos WHERE video_id=?", (video_id,))
@@ -543,13 +1110,75 @@ class VideoRepository:
     def update_video(self, video_id: str, **values: Any) -> dict[str, Any]:
         if not values:
             return self.get_video(video_id)
-        self.get_video(video_id)
         assignments = ",".join(f"{key}=?" for key in values)
-        self.execute(
-            f"UPDATE videos SET {assignments}, updated_at=CURRENT_TIMESTAMP WHERE video_id=?",
-            [*values.values(), video_id],
-        )
-        return self.get_video(video_id)
+        with self.connection() as connection, connection:
+            current = connection.execute(
+                "SELECT project_id FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            if current is None:
+                raise VideoResourceNotFoundError("Video not found")
+            connection.execute(
+                f"UPDATE videos SET {assignments}, updated_at=CURRENT_TIMESTAMP WHERE video_id=?",
+                [*values.values(), video_id],
+            )
+            row = connection.execute(
+                "SELECT * FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            video = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                str(current["project_id"]),
+                "video.changed",
+                self._video_event_payload(video),
+                video_id=video_id,
+            )
+        return video
+
+    def invalidate_annotation_derivatives(self, video_id: str) -> dict[str, Any]:
+        """Mark windows and label-bearing feature artifacts stale atomically.
+
+        Raw pose data remains valid after an annotation edit, but generated
+        windows and feature artifacts include human labels. Clearing their
+        cache versions prevents an interrupted derivative job from being
+        mistaken for a fresh training-data artifact.
+        """
+
+        with self.connection() as connection, connection:
+            existing = connection.execute(
+                "SELECT project_id FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            if existing is None:
+                raise VideoResourceNotFoundError("Video not found")
+            connection.execute(
+                """
+                UPDATE generated_windows
+                SET stale=1, feature_status='pending', updated_at=CURRENT_TIMESTAMP
+                WHERE video_id=?
+                """,
+                (video_id,),
+            )
+            connection.execute(
+                """
+                UPDATE videos
+                SET feature_cache_version=NULL,
+                    window_cache_version=NULL,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE video_id=?
+                """,
+                (video_id,),
+            )
+            row = connection.execute(
+                "SELECT * FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            video = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                str(existing["project_id"]),
+                "video.changed",
+                self._video_event_payload(video),
+                video_id=video_id,
+            )
+        return video
 
     def delete_video(self, project_id: str, video_id: str) -> dict[str, Any]:
         """Delete one project video and all rows that depend on it.
@@ -579,6 +1208,17 @@ class VideoRepository:
                 """,
                 (project_id, video_id),
             )
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "video.changed",
+                self._video_event_payload(
+                    None,
+                    video_id=video_id,
+                    deleted=True,
+                ),
+                video_id=video_id,
+            )
             connection.execute(
                 "DELETE FROM videos WHERE project_id=? AND video_id=?",
                 (project_id, video_id),
@@ -596,6 +1236,17 @@ class VideoRepository:
                 )
                 if updated.rowcount != 1:
                     raise VideoResourceNotFoundError("Video not found in project")
+                row = connection.execute(
+                    "SELECT * FROM videos WHERE video_id=?", (video_id,)
+                ).fetchone()
+                video = self._decode(row) or {}
+                self._emit_workspace_event(
+                    connection,
+                    project_id,
+                    "video.changed",
+                    self._video_event_payload(video),
+                    video_id=video_id,
+                )
 
     def replace_frame_mapping(self, video_id: str, mapping: Sequence[tuple[int, int, float]]) -> None:
         with self.connection() as connection, connection:
@@ -666,7 +1317,23 @@ class VideoRepository:
                 """,
                 (video_id,),
             )
-        return self.get_video(video_id)
+            row = connection.execute(
+                "SELECT * FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            video = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                str(video["project_id"]),
+                "video.changed",
+                self._video_event_payload(video),
+                video_id=video_id,
+            )
+            self._emit_annotation_changed(
+                connection,
+                video_id,
+                "trimmed_video_reset",
+            )
+        return video
 
     def trimmed_annotation_snapshot(
         self, video_id: str, start_frame: int, end_frame: int
@@ -756,6 +1423,22 @@ class VideoRepository:
                 """,
                 (1 if has_labels else 0, "labeled" if has_labels else "unlabeled", video_id),
             )
+            row = connection.execute(
+                "SELECT * FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
+            video = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                str(video["project_id"]),
+                "video.changed",
+                self._video_event_payload(video),
+                video_id=video_id,
+            )
+            self._emit_annotation_changed(
+                connection,
+                video_id,
+                "trimmed_annotations_restored",
+            )
 
     def frame_mapping(self, video_id: str) -> list[dict[str, Any]]:
         return self.all(
@@ -782,18 +1465,38 @@ class VideoRepository:
                 external_model_id,
                 priority,
             )
-        existing = self.one(
-            "SELECT * FROM processing_jobs WHERE project_id=? AND video_id IS ? AND stage=? AND status IN ('queued','running','paused') ORDER BY created_at DESC LIMIT 1",
-            (project_id, video_id, stage),
-        )
-        if existing:
-            return existing
         job_id = uuid4().hex
-        self.execute(
-            "INSERT INTO processing_jobs(job_id,project_id,video_id,stage,priority) VALUES (?,?,?,?,?)",
-            (job_id, project_id, video_id, stage, priority),
-        )
-        return self.get_job(job_id)
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """
+                SELECT * FROM processing_jobs
+                WHERE project_id=? AND video_id IS ? AND stage=?
+                  AND status IN ('queued','running','paused')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (project_id, video_id, stage),
+            ).fetchone()
+            if existing is not None:
+                connection.commit()
+                return self._decode(existing) or {}
+            connection.execute(
+                "INSERT INTO processing_jobs(job_id,project_id,video_id,stage,priority) VALUES (?,?,?,?,?)",
+                (job_id, project_id, video_id, stage, priority),
+            )
+            row = connection.execute(
+                "SELECT * FROM processing_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            job = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "job.changed",
+                self._job_event_payload(job),
+                video_id=None,
+            )
+            connection.commit()
+        return job
 
     def enqueue_pipeline_job(
         self,
@@ -803,6 +1506,8 @@ class VideoRepository:
         target_mode: str,
         external_model_id: str | None,
         priority: int = 100,
+        *,
+        annotation_revision: int | None = None,
     ) -> dict[str, Any]:
         """Create one persistent video pipeline or reuse its identical intent."""
 
@@ -816,11 +1521,13 @@ class VideoRepository:
         with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             video = connection.execute(
-                "SELECT project_id FROM videos WHERE video_id=?",
+                "SELECT project_id, annotation_revision FROM videos WHERE video_id=?",
                 (video_id,),
             ).fetchone()
             if video is None or str(video["project_id"]) != project_id:
                 raise VideoResourceNotFoundError("Video not found in project")
+            if annotation_revision is None:
+                annotation_revision = int(video["annotation_revision"])
 
             active = connection.execute(
                 """
@@ -834,6 +1541,14 @@ class VideoRepository:
             ).fetchone()
             if active is not None:
                 decoded = self._decode(active) or {}
+                active_is_derivative = (
+                    decoded.get("stage") == ANNOTATION_DERIVATIVE_STAGE
+                )
+                requested_is_derivative = stage == ANNOTATION_DERIVATIVE_STAGE
+                if active_is_derivative != requested_is_derivative:
+                    raise VideoProcessingConflictError(
+                        "This video already has a different active processing job"
+                    )
                 same_model = (
                     decoded.get("external_model_id") == external_model_id
                 )
@@ -850,8 +1565,8 @@ class VideoRepository:
                 """
                 INSERT INTO processing_jobs(
                     job_id, project_id, video_id, stage, priority,
-                    target_mode, external_model_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    target_mode, external_model_id, annotation_revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -861,14 +1576,350 @@ class VideoRepository:
                     priority,
                     target_mode,
                     external_model_id,
+                    annotation_revision,
                 ),
             )
             row = connection.execute(
                 "SELECT * FROM processing_jobs WHERE job_id=?",
                 (job_id,),
             ).fetchone()
+            job = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "job.changed",
+                self._job_event_payload(job),
+                video_id=video_id,
+            )
             connection.commit()
-        return self._decode(row) or {}
+        return job
+
+    def _insert_annotation_derivative_job(
+        self,
+        connection: sqlite3.Connection,
+        project_id: str,
+        video_id: str,
+        annotation_revision: int,
+        priority: int,
+        *,
+        emit_event: bool,
+    ) -> dict[str, Any]:
+        """Insert the dedicated refresh stage inside an existing transaction."""
+
+        job_id = uuid4().hex
+        connection.execute(
+            """
+            INSERT INTO processing_jobs(
+                job_id, project_id, video_id, stage, priority,
+                target_mode, external_model_id, annotation_revision
+            ) VALUES (?, ?, ?, ?, ?, 'threshold', NULL, ?)
+            """,
+            (
+                job_id,
+                project_id,
+                video_id,
+                ANNOTATION_DERIVATIVE_STAGE,
+                priority,
+                annotation_revision,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM processing_jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
+        job = self._decode(row) or {}
+        if emit_event:
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "job.changed",
+                self._job_event_payload(job),
+                video_id=video_id,
+            )
+        return job
+
+    def _request_annotation_derivative_refresh_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        project_id: str,
+        video_id: str,
+        annotation_revision: int,
+        priority: int,
+        *,
+        emit_event: bool,
+    ) -> dict[str, Any]:
+        """Coalesce one derivative intent while the caller owns the lock."""
+
+        connection.execute(
+            """
+            INSERT INTO annotation_derivative_refreshes(
+                video_id, project_id, requested_revision
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                requested_revision=MAX(
+                    annotation_derivative_refreshes.requested_revision,
+                    excluded.requested_revision
+                ),
+                requested_at=CURRENT_TIMESTAMP
+            """,
+            (video_id, project_id, annotation_revision),
+        )
+        request = connection.execute(
+            """
+            SELECT requested_revision
+            FROM annotation_derivative_refreshes
+            WHERE video_id=?
+            """,
+            (video_id,),
+        ).fetchone()
+        requested_revision = int(request["requested_revision"])
+        active = connection.execute(
+            """
+            SELECT * FROM processing_jobs
+            WHERE video_id=?
+              AND status IN ('queued', 'running', 'paused')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (video_id,),
+        ).fetchone()
+        if active is not None:
+            active_job = self._decode(active) or {}
+            return {
+                "requested_revision": requested_revision,
+                "status": (
+                    "already_queued"
+                    if active_job.get("stage") == ANNOTATION_DERIVATIVE_STAGE
+                    else "deferred"
+                ),
+                "job": (
+                    active_job
+                    if active_job.get("stage") == ANNOTATION_DERIVATIVE_STAGE
+                    else None
+                ),
+            }
+        job = self._insert_annotation_derivative_job(
+            connection,
+            project_id,
+            video_id,
+            requested_revision,
+            priority,
+            emit_event=emit_event,
+        )
+        return {
+            "requested_revision": requested_revision,
+            "status": "queued",
+            "job": job,
+        }
+
+    def _schedule_annotation_derivatives_if_ready(
+        self,
+        connection: sqlite3.Connection,
+        video_id: str,
+        annotation_revision: int,
+        *,
+        priority: int = ANNOTATION_DERIVATIVE_PRIORITY,
+    ) -> dict[str, Any] | None:
+        """Record an edit-derived refresh when pose data can support it.
+
+        Segment and worker mutations own this call so a navigation, reload, or
+        failed frontend follow-up cannot leave label-bearing artifacts stale.
+        Pre-pose/manual fixture edits intentionally do not create a job because
+        a feature refresh could not run yet. A zero-worker mutation still
+        queues cleanup once pose data exists, producing a valid empty artifact
+        instead of leaving a stale feature cache behind.
+        """
+
+        video = connection.execute(
+            "SELECT project_id, pose_cache_version FROM videos WHERE video_id=?",
+            (video_id,),
+        ).fetchone()
+        if video is None:
+            raise VideoResourceNotFoundError("Video not found")
+        if not video["pose_cache_version"]:
+            return None
+        return self._request_annotation_derivative_refresh_in_transaction(
+            connection,
+            str(video["project_id"]),
+            video_id,
+            annotation_revision,
+            priority,
+            emit_event=True,
+        )
+
+    def request_annotation_derivative_refresh(
+        self,
+        project_id: str,
+        video_id: str,
+        *,
+        priority: int = ANNOTATION_DERIVATIVE_PRIORITY,
+    ) -> dict[str, Any]:
+        """Persist one revision-aware derivative request without inference work.
+
+        The per-video request row coalesces repeated annotation edits. If a
+        Threshold or model job is active, the request is deferred instead of
+        being returned as though it were that suggestion job. The final active
+        stage atomically queues this distinct refresh after it completes.
+        """
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            video = connection.execute(
+                """
+                SELECT project_id, annotation_revision
+                FROM videos WHERE video_id=?
+                """,
+                (video_id,),
+            ).fetchone()
+            if video is None or str(video["project_id"]) != project_id:
+                raise VideoResourceNotFoundError("Video not found in project")
+            result = self._request_annotation_derivative_refresh_in_transaction(
+                connection,
+                project_id,
+                video_id,
+                int(video["annotation_revision"]),
+                priority,
+                emit_event=True,
+            )
+            connection.commit()
+        return result
+
+    def supersede_queued_annotation_derivative_refresh(
+        self,
+        project_id: str,
+        video_id: str,
+    ) -> dict[str, Any] | None:
+        """Retire queued maintenance work before an explicit overwrite run.
+
+        A confirmed Threshold/Model overwrite is user-directed work and takes
+        precedence over a queued or paused derivative refresh. A running
+        derivative is left intact because it may be writing artifacts; callers
+        receive a clear conflict before they clear any labels.
+        """
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            video = connection.execute(
+                "SELECT project_id FROM videos WHERE video_id=?",
+                (video_id,),
+            ).fetchone()
+            if video is None or str(video["project_id"]) != project_id:
+                raise VideoResourceNotFoundError("Video not found in project")
+            active = connection.execute(
+                """
+                SELECT * FROM processing_jobs
+                WHERE video_id=?
+                  AND status IN ('queued', 'running', 'paused')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (video_id,),
+            ).fetchone()
+            if active is None:
+                # A failed/cancelled derivative can leave its coalesced intent
+                # behind for a later retry. An explicit overwrite replaces that
+                # maintenance intent as well.
+                connection.execute(
+                    "DELETE FROM annotation_derivative_refreshes WHERE video_id=?",
+                    (video_id,),
+                )
+                connection.commit()
+                return None
+            if active["stage"] != ANNOTATION_DERIVATIVE_STAGE:
+                connection.commit()
+                return None
+            if active["status"] == "running":
+                raise VideoProcessingConflictError(
+                    "A derivative refresh is running. Wait for it to finish before "
+                    "overwriting labels with new suggestions."
+                )
+            connection.execute(
+                """
+                UPDATE processing_jobs
+                SET status='cancelled',
+                    control_requested=NULL,
+                    finished_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE job_id=?
+                """,
+                (active["job_id"],),
+            )
+            row = connection.execute(
+                "SELECT * FROM processing_jobs WHERE job_id=?",
+                (active["job_id"],),
+            ).fetchone()
+            retired = self._decode(row) or {}
+            connection.execute(
+                "DELETE FROM annotation_derivative_refreshes WHERE video_id=?",
+                (video_id,),
+            )
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "job.changed",
+                self._job_event_payload(retired),
+                video_id=video_id,
+            )
+            connection.commit()
+        return retired
+
+    def _enqueue_pending_annotation_derivative_after_terminal_stage(
+        self,
+        connection: sqlite3.Connection,
+        terminal_job: sqlite3.Row,
+    ) -> sqlite3.Row | None:
+        """Resolve a durable edit request after a stage cannot continue.
+
+        Callers use this only once a stage has no successor: after a successful
+        final stage or after a Threshold/model pipeline is failed or cancelled.
+        The latter matters because a reviewer edit must not stay stale simply
+        because unrelated suggestion inference did not finish.
+        """
+
+        video_id = terminal_job["video_id"]
+        if video_id is None:
+            return None
+        request = connection.execute(
+            """
+            SELECT requested_revision
+            FROM annotation_derivative_refreshes
+            WHERE video_id=?
+            """,
+            (video_id,),
+        ).fetchone()
+        if request is None:
+            return None
+        video = connection.execute(
+            """
+            SELECT project_id, annotation_revision
+            FROM videos WHERE video_id=?
+            """,
+            (video_id,),
+        ).fetchone()
+        if video is None:
+            return None
+        desired_revision = max(
+            int(request["requested_revision"]),
+            int(video["annotation_revision"]),
+        )
+        if terminal_job["stage"] == ANNOTATION_DERIVATIVE_STAGE:
+            completed_revision = int(terminal_job["annotation_revision"] or -1)
+            if completed_revision >= desired_revision:
+                connection.execute(
+                    "DELETE FROM annotation_derivative_refreshes WHERE video_id=?",
+                    (video_id,),
+                )
+                return None
+        inserted = self._insert_annotation_derivative_job(
+            connection,
+            str(video["project_id"]),
+            str(video_id),
+            desired_revision,
+            max(ANNOTATION_DERIVATIVE_PRIORITY, int(terminal_job["priority"])),
+            emit_event=False,
+        )
+        return connection.execute(
+            "SELECT * FROM processing_jobs WHERE job_id=?", (inserted["job_id"],)
+        ).fetchone()
 
     def active_job_for_video(self, video_id: str) -> dict[str, Any] | None:
         """Return the single queued, running, or paused pipeline for a video."""
@@ -907,18 +1958,74 @@ class VideoRepository:
             )
             if updated.rowcount != 1:
                 return None
-            return self._decode(connection.execute("SELECT * FROM processing_jobs WHERE job_id=?", (row["job_id"],)).fetchone())
+            claimed = self._decode(
+                connection.execute(
+                    "SELECT * FROM processing_jobs WHERE job_id=?", (row["job_id"],)
+                ).fetchone()
+            ) or {}
+            self._emit_workspace_event(
+                connection,
+                str(claimed["project_id"]),
+                "job.changed",
+                self._job_event_payload(claimed),
+                video_id=claimed.get("video_id"),
+            )
+            return claimed
 
     def update_job(self, job_id: str, **values: Any) -> dict[str, Any]:
         if "log" in values:
             values["log_json"] = json.dumps(values.pop("log"))
         assignments = ",".join(f"{key}=?" for key in values)
-        if assignments:
-            self.execute(
+        if not assignments:
+            return self.get_job(job_id)
+        with self.connection() as connection, connection:
+            before_row = connection.execute(
+                "SELECT * FROM processing_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            if before_row is None:
+                raise VideoResourceNotFoundError("Processing job not found")
+            before = self._decode(before_row) or {}
+            connection.execute(
                 f"UPDATE processing_jobs SET {assignments},heartbeat_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE job_id=?",
                 [*values.values(), job_id],
             )
-        return self.get_job(job_id)
+            after_row = connection.execute(
+                "SELECT * FROM processing_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+            job = self._decode(after_row) or {}
+            derivative_row: sqlite3.Row | None = None
+            terminal_status = str(values.get("status") or "")
+            if (
+                terminal_status in {"failed", "cancelled"}
+                and str(before.get("status")) in {"queued", "running", "paused"}
+                and job.get("stage") != ANNOTATION_DERIVATIVE_STAGE
+            ):
+                # A label refresh can be deferred behind an active suggestion
+                # pipeline. If that pipeline ends unsuccessfully, promote the
+                # intent in this same transaction rather than leaving edited
+                # training/export derivatives stale until another UI action.
+                derivative_row = self._enqueue_pending_annotation_derivative_after_terminal_stage(
+                    connection,
+                    after_row,
+                )
+            if self._job_event_is_meaningful(before, job, values):
+                self._emit_workspace_event(
+                    connection,
+                    str(job["project_id"]),
+                    "job.changed",
+                    self._job_event_payload(job),
+                    video_id=job.get("video_id"),
+                )
+            derivative_job = self._decode(derivative_row)
+            if derivative_job is not None:
+                self._emit_workspace_event(
+                    connection,
+                    str(derivative_job["project_id"]),
+                    "job.changed",
+                    self._job_event_payload(derivative_job),
+                    video_id=derivative_job.get("video_id"),
+                )
+        return job
 
     def complete_job_and_enqueue_next(
         self,
@@ -959,8 +2066,8 @@ class VideoRepository:
                     """
                     INSERT INTO processing_jobs(
                         job_id, project_id, video_id, stage, priority,
-                        target_mode, external_model_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        target_mode, external_model_id, annotation_revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         next_id,
@@ -974,18 +2081,41 @@ class VideoRepository:
                         int(row["priority"]) + 1,
                         row["target_mode"],
                         row["external_model_id"],
+                        row["annotation_revision"],
                     ),
                 )
                 next_row = connection.execute(
                     "SELECT * FROM processing_jobs WHERE job_id=?",
                     (next_id,),
                 ).fetchone()
+            else:
+                next_row = self._enqueue_pending_annotation_derivative_after_terminal_stage(
+                    connection,
+                    row,
+                )
             completed = connection.execute(
                 "SELECT * FROM processing_jobs WHERE job_id=?",
                 (job_id,),
             ).fetchone()
+            completed_job = self._decode(completed) or {}
+            self._emit_workspace_event(
+                connection,
+                str(completed_job["project_id"]),
+                "job.changed",
+                self._job_event_payload(completed_job),
+                video_id=completed_job.get("video_id"),
+            )
+            decoded_next = self._decode(next_row)
+            if decoded_next is not None:
+                self._emit_workspace_event(
+                    connection,
+                    str(decoded_next["project_id"]),
+                    "job.changed",
+                    self._job_event_payload(decoded_next),
+                    video_id=decoded_next.get("video_id"),
+                )
             connection.commit()
-        return self._decode(completed) or {}, self._decode(next_row)
+        return completed_job, decoded_next
 
     def retry_job(self, job_id: str) -> dict[str, Any]:
         """Requeue a failed stage without violating the active-video invariant."""
@@ -1037,15 +2167,43 @@ class VideoRepository:
                 "SELECT * FROM processing_jobs WHERE job_id=?",
                 (job_id,),
             ).fetchone()
+            retried_job = self._decode(retried) or {}
+            self._emit_workspace_event(
+                connection,
+                str(retried_job["project_id"]),
+                "job.changed",
+                self._job_event_payload(retried_job),
+                video_id=retried_job.get("video_id"),
+            )
             connection.commit()
-        return self._decode(retried) or {}
+        return retried_job
 
     def recover_stale_jobs(self, stale_seconds: int = 60) -> int:
         with self.connection() as connection, connection:
+            stale_rows = connection.execute(
+                """
+                SELECT job_id FROM processing_jobs
+                WHERE status='running'
+                  AND (heartbeat_at IS NULL OR heartbeat_at <= datetime('now', ?))
+                """,
+                (f"-{max(1, stale_seconds)} seconds",),
+            ).fetchall()
             cursor = connection.execute(
                 "UPDATE processing_jobs SET status='queued',worker_id=NULL,control_requested=NULL,error_message='Recovered after stale worker heartbeat',updated_at=CURRENT_TIMESTAMP WHERE status='running' AND (heartbeat_at IS NULL OR heartbeat_at <= datetime('now', ?))",
                 (f"-{max(1, stale_seconds)} seconds",),
             )
+            for stale in stale_rows:
+                row = connection.execute(
+                    "SELECT * FROM processing_jobs WHERE job_id=?", (stale["job_id"],)
+                ).fetchone()
+                job = self._decode(row) or {}
+                self._emit_workspace_event(
+                    connection,
+                    str(job["project_id"]),
+                    "job.changed",
+                    self._job_event_payload(job),
+                    video_id=job.get("video_id"),
+                )
             return cursor.rowcount
 
     def replace_tracks(
@@ -1058,6 +2216,10 @@ class VideoRepository:
         """Replace track summaries while optionally invalidating dependants."""
 
         with self.connection() as connection, connection:
+            if connection.execute(
+                "SELECT 1 FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone() is None:
+                raise VideoResourceNotFoundError("Video not found")
             connection.execute("DELETE FROM video_tracks WHERE video_id=?", (video_id,))
             for track in tracks:
                 fields = ["track_pk", "video_id", *track.keys()]
@@ -1089,6 +2251,7 @@ class VideoRepository:
                     """,
                     (video_id,),
                 )
+            self._emit_tracks_changed(connection, video_id, "tracks_replaced")
 
     def list_tracks(self, video_id: str, include_excluded: bool = True) -> list[dict[str, Any]]:
         self.get_video(video_id)
@@ -1101,14 +2264,427 @@ class VideoRepository:
             raise VideoResourceNotFoundError("Track not found")
         return track
 
-    def update_track(self, video_id: str, track_id: int, **values: Any) -> dict[str, Any]:
-        self.get_track(video_id, track_id)
+    def update_track(
+        self,
+        video_id: str,
+        track_id: int,
+        *,
+        emit_event: bool = True,
+        **values: Any,
+    ) -> dict[str, Any]:
+        """Update one worker and optionally finalize a durable manual mutation.
+
+        The annotation service uses the specialized atomic methods below for
+        multi-row operations. Keeping the default path revision-aware prevents
+        an ad-hoc single-track update from bypassing cache invalidation.
+        """
+
         assignments = ",".join(f"{key}=?" for key in values)
-        self.execute(
-            f"UPDATE video_tracks SET {assignments},revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE video_id=? AND track_id=?",
-            [*values.values(), video_id, track_id],
-        )
-        return self.get_track(video_id, track_id)
+        if not assignments:
+            return self.get_track(video_id, track_id)
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                ).fetchone()
+                if existing is None:
+                    raise VideoResourceNotFoundError("Track not found")
+                connection.execute(
+                    f"UPDATE video_tracks SET {assignments},revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE video_id=? AND track_id=?",
+                    [*values.values(), video_id, track_id],
+                )
+                if emit_event:
+                    self._invalidate_track_derivatives_in_transaction(
+                        connection,
+                        video_id,
+                        {track_id},
+                    )
+                    self._finalize_track_mutation_in_transaction(
+                        connection,
+                        video_id,
+                        "track_updated",
+                    )
+                row = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                ).fetchone()
+                track = self._decode(row) or {}
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return track
+
+    def merge_tracks_atomically(
+        self,
+        video_id: str,
+        target_track_id: int,
+        source_track_id: int,
+        *,
+        pose_cache_version: str | None = None,
+        expected_pose_cache_version: str | None = None,
+    ) -> dict[str, Any]:
+        """Merge two workers with invalidation and revision events in one commit."""
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._assert_expected_pose_cache_version(
+                    connection,
+                    video_id,
+                    expected_pose_cache_version,
+                )
+                target = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, target_track_id),
+                ).fetchone()
+                source = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, source_track_id),
+                ).fetchone()
+                if target is None or source is None:
+                    raise VideoResourceNotFoundError("Track not found")
+                connection.execute(
+                    """
+                    UPDATE video_tracks
+                    SET start_frame=?,
+                        end_frame=?,
+                        valid_frame_count=?,
+                        quality_status=?,
+                        revision=revision+1,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE video_id=? AND track_id=?
+                    """,
+                    (
+                        min(int(target["start_frame"]), int(source["start_frame"])),
+                        max(int(target["end_frame"]), int(source["end_frame"])),
+                        int(target["valid_frame_count"])
+                        + int(source["valid_frame_count"]),
+                        target["quality_status"],
+                        video_id,
+                        target_track_id,
+                    ),
+                )
+                connection.execute(
+                    "UPDATE video_segments SET track_id=? "
+                    "WHERE video_id=? AND track_id=?",
+                    (target_track_id, video_id, source_track_id),
+                )
+                connection.execute(
+                    "DELETE FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, source_track_id),
+                )
+                self._invalidate_track_derivatives_in_transaction(
+                    connection,
+                    video_id,
+                    {target_track_id, source_track_id},
+                )
+                self._finalize_track_mutation_in_transaction(
+                    connection,
+                    video_id,
+                    "tracks_merged",
+                    pose_cache_version=pose_cache_version,
+                )
+                row = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, target_track_id),
+                ).fetchone()
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return self._decode(row) or {}
+
+    def merge_multiple_tracks_atomically(
+        self,
+        video_id: str,
+        track_ids: Sequence[int],
+        *,
+        pose_cache_version: str | None = None,
+        expected_pose_cache_version: str | None = None,
+    ) -> dict[str, Any]:
+        """Merge a worker selection in one transaction and emit one refresh."""
+
+        if len(track_ids) < 2 or len(set(track_ids)) != len(track_ids):
+            raise ValueError("At least two distinct track IDs are required")
+        target_track_id = int(track_ids[0])
+        source_track_ids = [int(track_id) for track_id in track_ids[1:]]
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._assert_expected_pose_cache_version(
+                    connection,
+                    video_id,
+                    expected_pose_cache_version,
+                )
+                target = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, target_track_id),
+                ).fetchone()
+                if target is None:
+                    raise VideoResourceNotFoundError("Track not found")
+                sources = [
+                    connection.execute(
+                        "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                        (video_id, source_track_id),
+                    ).fetchone()
+                    for source_track_id in source_track_ids
+                ]
+                if any(source is None for source in sources):
+                    raise VideoResourceNotFoundError("Track not found")
+                valid_sources = [source for source in sources if source is not None]
+                connection.execute(
+                    """
+                    UPDATE video_tracks
+                    SET start_frame=?,
+                        end_frame=?,
+                        valid_frame_count=?,
+                        quality_status=?,
+                        revision=revision+1,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE video_id=? AND track_id=?
+                    """,
+                    (
+                        min(
+                            int(target["start_frame"]),
+                            *(int(source["start_frame"]) for source in valid_sources),
+                        ),
+                        max(
+                            int(target["end_frame"]),
+                            *(int(source["end_frame"]) for source in valid_sources),
+                        ),
+                        int(target["valid_frame_count"])
+                        + sum(
+                            int(source["valid_frame_count"])
+                            for source in valid_sources
+                        ),
+                        target["quality_status"],
+                        video_id,
+                        target_track_id,
+                    ),
+                )
+                placeholders = ",".join("?" for _ in source_track_ids)
+                connection.execute(
+                    "UPDATE video_segments SET track_id=? "
+                    f"WHERE video_id=? AND track_id IN ({placeholders})",
+                    [target_track_id, video_id, *source_track_ids],
+                )
+                connection.execute(
+                    "DELETE FROM video_tracks WHERE video_id=? "
+                    f"AND track_id IN ({placeholders})",
+                    [video_id, *source_track_ids],
+                )
+                self._invalidate_track_derivatives_in_transaction(
+                    connection,
+                    video_id,
+                    {target_track_id, *source_track_ids},
+                )
+                self._finalize_track_mutation_in_transaction(
+                    connection,
+                    video_id,
+                    "tracks_merged",
+                    pose_cache_version=pose_cache_version,
+                )
+                row = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, target_track_id),
+                ).fetchone()
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return self._decode(row) or {}
+
+    def split_track_atomically(
+        self,
+        video_id: str,
+        track_id: int,
+        frame: int,
+        *,
+        new_track_id: int | None = None,
+        pose_cache_version: str | None = None,
+        expected_pose_cache_version: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Split one worker and finalize all dependent state in one commit."""
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._assert_expected_pose_cache_version(
+                    connection,
+                    video_id,
+                    expected_pose_cache_version,
+                )
+                track = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                ).fetchone()
+                if track is None:
+                    raise VideoResourceNotFoundError("Track not found")
+                if not int(track["start_frame"]) < frame <= int(track["end_frame"]):
+                    raise ValueError("Track split frame must be inside its lifespan")
+                if new_track_id is None:
+                    highest = connection.execute(
+                        "SELECT COALESCE(MAX(track_id), 0) AS value "
+                        "FROM video_tracks WHERE video_id=?",
+                        (video_id,),
+                    ).fetchone()
+                    new_track_id = int(highest["value"]) + 1
+                elif connection.execute(
+                    "SELECT 1 FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, new_track_id),
+                ).fetchone() is not None:
+                    raise ValueError("A concurrent track edit changed the split target")
+                fields = {
+                    "track_id": new_track_id,
+                    "start_frame": frame,
+                    "end_frame": int(track["end_frame"]),
+                    "valid_frame_count": int(track["valid_frame_count"]),
+                    "gap_count": int(track["gap_count"]),
+                    "avg_person_confidence": float(track["avg_person_confidence"]),
+                    "avg_keypoint_confidence": float(track["avg_keypoint_confidence"]),
+                    "valid_frame_ratio": float(track["valid_frame_ratio"]),
+                    "missing_ankle_ratio": float(track["missing_ankle_ratio"]),
+                    "quality_status": str(track["quality_status"]),
+                    "include_in_export": int(track["include_in_export"]),
+                    "exclude_reason": track["exclude_reason"],
+                }
+                names = ["track_pk", "video_id", *fields.keys()]
+                connection.execute(
+                    f"INSERT INTO video_tracks({','.join(names)}) "
+                    f"VALUES ({','.join('?' for _ in names)})",
+                    [uuid4().hex, video_id, *fields.values()],
+                )
+                connection.execute(
+                    """
+                    UPDATE video_tracks
+                    SET end_frame=?, revision=revision+1, updated_at=CURRENT_TIMESTAMP
+                    WHERE video_id=? AND track_id=?
+                    """,
+                    (frame - 1, video_id, track_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE video_segments
+                    SET track_id=?
+                    WHERE video_id=? AND track_id=? AND start_frame>=?
+                    """,
+                    (new_track_id, video_id, track_id, frame),
+                )
+                self._invalidate_track_derivatives_in_transaction(
+                    connection,
+                    video_id,
+                    {track_id, new_track_id},
+                )
+                self._finalize_track_mutation_in_transaction(
+                    connection,
+                    video_id,
+                    "track_split",
+                    pose_cache_version=pose_cache_version,
+                )
+                rows = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id IN (?, ?) "
+                    "ORDER BY track_id",
+                    (video_id, track_id, new_track_id),
+                ).fetchall()
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return [self._decode(row) or {} for row in rows]
+
+    def set_track_inclusion_atomically(
+        self,
+        video_id: str,
+        track_id: int,
+        include: bool,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        """Change worker export inclusion with its revision and events together."""
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                ).fetchone()
+                if existing is None:
+                    raise VideoResourceNotFoundError("Track not found")
+                connection.execute(
+                    """
+                    UPDATE video_tracks
+                    SET include_in_export=?,
+                        exclude_reason=?,
+                        quality_status=?,
+                        revision=revision+1,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE video_id=? AND track_id=?
+                    """,
+                    (
+                        int(include),
+                        None if include else reason,
+                        "good" if include else "excluded",
+                        video_id,
+                        track_id,
+                    ),
+                )
+                self._invalidate_track_derivatives_in_transaction(
+                    connection,
+                    video_id,
+                    {track_id},
+                )
+                self._finalize_track_mutation_in_transaction(
+                    connection,
+                    video_id,
+                    "track_inclusion_changed",
+                )
+                row = connection.execute(
+                    "SELECT * FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                ).fetchone()
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return self._decode(row) or {}
+
+    def delete_track_atomically(self, video_id: str, track_id: int) -> None:
+        """Delete a worker and its labels with all invalidation state atomically."""
+
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                existing = connection.execute(
+                    "SELECT 1 FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                ).fetchone()
+                if existing is None:
+                    raise VideoResourceNotFoundError("Track not found")
+                connection.execute(
+                    "DELETE FROM video_segments WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                )
+                connection.execute(
+                    "DELETE FROM video_tracks WHERE video_id=? AND track_id=?",
+                    (video_id, track_id),
+                )
+                self._invalidate_track_derivatives_in_transaction(
+                    connection,
+                    video_id,
+                    {track_id},
+                )
+                self._finalize_track_mutation_in_transaction(
+                    connection,
+                    video_id,
+                    "track_deleted",
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
 
     def list_segments(self, video_id: str, track_id: int | None = None) -> list[dict[str, Any]]:
         self.get_video(video_id)
@@ -1125,9 +2701,14 @@ class VideoRepository:
         payload: dict[str, Any],
         expected_revision: int,
         segment_id: str | None = None,
+        *,
+        emit_event: bool = True,
+        schedule_derivatives: bool = True,
     ) -> tuple[dict[str, Any], int]:
         with self.connection() as connection, connection:
-            video = connection.execute("SELECT annotation_revision FROM videos WHERE video_id=?", (video_id,)).fetchone()
+            video = connection.execute(
+                "SELECT annotation_revision FROM videos WHERE video_id=?", (video_id,)
+            ).fetchone()
             if video is None:
                 raise VideoResourceNotFoundError("Video not found")
             if video["annotation_revision"] != expected_revision:
@@ -1160,9 +2741,158 @@ class VideoRepository:
             new = dict(connection.execute("SELECT * FROM video_segments WHERE segment_id=?", (segment_id,)).fetchone())
             self._record_history(connection, video_id, segment_id, operation, old, new, revision)
             self._bump_annotation_revision(connection, video_id, revision)
+            if emit_event:
+                self._emit_annotation_changed(connection, video_id, f"segment_{operation}")
+            if schedule_derivatives:
+                self._schedule_annotation_derivatives_if_ready(
+                    connection,
+                    video_id,
+                    revision,
+                )
         return new, revision
 
-    def delete_segment(self, video_id: str, segment_id: str, expected_revision: int) -> int:
+    def materialize_suggestion_segments(
+        self,
+        video_id: str,
+        suggestion_table: str,
+        selected_suggestion_ids: Sequence[str],
+        segments: Sequence[dict[str, Any]],
+        *,
+        expected_revision: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Atomically turn one suggestion set into editable ground truth.
+
+        The worker must never partially write automatic labels if a manual edit
+        interleaves. An immediate SQLite transaction rechecks the pinned
+        revision and blank annotation state, writes every segment/history row,
+        accepts its source suggestions, bumps the revision, and emits one
+        annotation event as one durable unit.
+        """
+
+        if suggestion_table not in {"threshold_suggestions", "model_suggestions"}:
+            raise ValueError("Unsupported suggestion table")
+        suggestion_ids = list(dict.fromkeys(str(item) for item in selected_suggestion_ids))
+        with self.connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                video_row = connection.execute(
+                    "SELECT annotation_revision FROM videos WHERE video_id=?",
+                    (video_id,),
+                ).fetchone()
+                if video_row is None:
+                    raise VideoResourceNotFoundError("Video not found")
+                current_revision = int(video_row["annotation_revision"])
+                if (
+                    expected_revision is not None
+                    and current_revision != expected_revision
+                ):
+                    connection.commit()
+                    return []
+                has_segments = connection.execute(
+                    "SELECT 1 FROM video_segments WHERE video_id=? LIMIT 1",
+                    (video_id,),
+                ).fetchone()
+                if has_segments is not None:
+                    connection.commit()
+                    return []
+                if suggestion_ids:
+                    placeholders = ",".join("?" for _ in suggestion_ids)
+                    pending_rows = connection.execute(
+                        f"""
+                        SELECT suggestion_id FROM {suggestion_table}
+                        WHERE video_id=?
+                          AND review_status='pending'
+                          AND suggestion_id IN ({placeholders})
+                        """,
+                        [video_id, *suggestion_ids],
+                    ).fetchall()
+                    if {str(row["suggestion_id"]) for row in pending_rows} != set(
+                        suggestion_ids
+                    ):
+                        connection.commit()
+                        return []
+
+                created: list[dict[str, Any]] = []
+                revision = current_revision
+                for segment in segments:
+                    revision += 1
+                    segment_id = uuid4().hex
+                    fields = {
+                        "track_id": int(segment["track_id"]),
+                        "start_frame": int(segment["start_frame"]),
+                        "end_frame": int(segment["end_frame"]),
+                        "label": str(segment["label"]),
+                        "quality_status": str(segment.get("quality_status", "good")),
+                        "include_in_export": int(segment.get("include_in_export", 1)),
+                        "exclude_reason": segment.get("exclude_reason"),
+                        "annotation_version": revision,
+                        "source_type": str(segment["source_type"]),
+                        "source_id": segment.get("source_id"),
+                    }
+                    names = ["segment_id", "video_id", *fields.keys()]
+                    connection.execute(
+                        f"INSERT INTO video_segments({','.join(names)}) "
+                        f"VALUES ({','.join('?' for _ in names)})",
+                        [segment_id, video_id, *fields.values()],
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM video_segments WHERE segment_id=?",
+                        (segment_id,),
+                    ).fetchone()
+                    created_segment = dict(row)
+                    self._record_history(
+                        connection,
+                        video_id,
+                        segment_id,
+                        "create",
+                        None,
+                        created_segment,
+                        revision,
+                    )
+                    created.append(created_segment)
+
+                if not created:
+                    connection.commit()
+                    return []
+                if suggestion_ids:
+                    placeholders = ",".join("?" for _ in suggestion_ids)
+                    connection.execute(
+                        f"""
+                        UPDATE {suggestion_table}
+                        SET review_status='accepted', updated_at=CURRENT_TIMESTAMP
+                        WHERE video_id=? AND suggestion_id IN ({placeholders})
+                        """,
+                        [video_id, *suggestion_ids],
+                    )
+                self._bump_annotation_revision(connection, video_id, revision)
+                self._emit_annotation_changed(
+                    connection,
+                    video_id,
+                    "suggestions_materialized",
+                )
+                # The final suggestion stage may crash after this committed
+                # ground-truth write. Persist the derivative intent before
+                # returning so recovery can enqueue a fresh, revision-pinned
+                # windows/features job without relying on an in-process call.
+                self._schedule_annotation_derivatives_if_ready(
+                    connection,
+                    video_id,
+                    revision,
+                )
+                connection.commit()
+                return created
+            except Exception:
+                connection.rollback()
+                raise
+
+    def delete_segment(
+        self,
+        video_id: str,
+        segment_id: str,
+        expected_revision: int,
+        *,
+        schedule_derivatives: bool = True,
+    ) -> int:
         with self.connection() as connection, connection:
             video = connection.execute("SELECT annotation_revision FROM videos WHERE video_id=?", (video_id,)).fetchone()
             if video is None:
@@ -1175,7 +2905,22 @@ class VideoRepository:
             revision = expected_revision + 1
             connection.execute("DELETE FROM video_segments WHERE segment_id=?", (segment_id,))
             self._record_history(connection, video_id, segment_id, "delete", dict(old_row), None, revision)
-            self._bump_annotation_revision(connection, video_id, revision)
+            remaining = connection.execute(
+                "SELECT 1 FROM video_segments WHERE video_id=? LIMIT 1", (video_id,)
+            ).fetchone()
+            self._bump_annotation_revision(
+                connection,
+                video_id,
+                revision,
+                annotation_status="labeled" if remaining is not None else "unlabeled",
+            )
+            self._emit_annotation_changed(connection, video_id, "segment_delete")
+            if schedule_derivatives:
+                self._schedule_annotation_derivatives_if_ready(
+                    connection,
+                    video_id,
+                    revision,
+                )
         return revision
 
     @staticmethod
@@ -1194,17 +2939,30 @@ class VideoRepository:
         )
 
     @staticmethod
-    def _bump_annotation_revision(connection: sqlite3.Connection, video_id: str, revision: int) -> None:
+    def _bump_annotation_revision(
+        connection: sqlite3.Connection,
+        video_id: str,
+        revision: int,
+        *,
+        annotation_status: str = "labeled",
+    ) -> None:
         connection.execute(
-            "UPDATE videos SET annotation_revision=?,is_approved=0,approval_revision=NULL,approved_at=NULL,annotation_status='labeled',window_cache_version=NULL,updated_at=CURRENT_TIMESTAMP WHERE video_id=?",
-            (revision, video_id),
+            "UPDATE videos SET annotation_revision=?,is_approved=0,approval_revision=NULL,approved_at=NULL,annotation_status=?,feature_cache_version=NULL,window_cache_version=NULL,updated_at=CURRENT_TIMESTAMP WHERE video_id=?",
+            (revision, annotation_status, video_id),
         )
         connection.execute("UPDATE generated_windows SET stale=1 WHERE video_id=?", (video_id,))
 
     def list_history(self, video_id: str) -> list[dict[str, Any]]:
         return self.all("SELECT * FROM annotation_history WHERE video_id=? ORDER BY revision DESC", (video_id,))
 
-    def undo_or_redo(self, video_id: str, expected_revision: int, mode: str) -> int:
+    def undo_or_redo(
+        self,
+        video_id: str,
+        expected_revision: int,
+        mode: str,
+        *,
+        schedule_derivatives: bool = True,
+    ) -> int:
         """Apply one history transition while retaining a complete audit trail."""
 
         if mode not in {"undo", "redo"}:
@@ -1255,7 +3013,22 @@ class VideoRepository:
                 "INSERT INTO annotation_history(history_id,video_id,entity_type,entity_id,operation,old_value_json,new_value_json,revision,user_id) VALUES (?,?,?,?,?,?,?,?,?)",
                 (uuid4().hex, video_id, "segment", history["entity_id"], mode, json.dumps(current), json.dumps(desired), revision, f"{mode}:{source_history_id}"),
             )
-            self._bump_annotation_revision(connection, video_id, revision)
+            remaining = connection.execute(
+                "SELECT 1 FROM video_segments WHERE video_id=? LIMIT 1", (video_id,)
+            ).fetchone()
+            self._bump_annotation_revision(
+                connection,
+                video_id,
+                revision,
+                annotation_status="labeled" if remaining is not None else "unlabeled",
+            )
+            self._emit_annotation_changed(connection, video_id, f"history_{mode}")
+            if schedule_derivatives:
+                self._schedule_annotation_derivatives_if_ready(
+                    connection,
+                    video_id,
+                    revision,
+                )
         return revision
 
     def replace_windows(self, video_id: str, windows: Sequence[dict[str, Any]]) -> None:
@@ -1428,9 +3201,50 @@ class VideoRepository:
 
     def create_export(self, project_id: str) -> dict[str, Any]:
         export_id = uuid4().hex
-        self.execute("INSERT INTO video_exports(export_id,project_id) VALUES (?,?)", (export_id, project_id))
-        export = self.one("SELECT * FROM video_exports WHERE export_id=?", (export_id,))
-        return export or {}
+        with self.connection() as connection, connection:
+            connection.execute(
+                "INSERT INTO video_exports(export_id,project_id) VALUES (?,?)",
+                (export_id, project_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM video_exports WHERE export_id=?", (export_id,)
+            ).fetchone()
+            export = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                project_id,
+                "export.changed",
+                self._export_event_payload(export),
+            )
+        return export
+
+    def update_export(self, export_id: str, **values: Any) -> dict[str, Any]:
+        """Update one export and publish its compact state atomically."""
+
+        if not values:
+            return self.get_export(export_id)
+        assignments = ",".join(f"{key}=?" for key in values)
+        with self.connection() as connection, connection:
+            existing = connection.execute(
+                "SELECT * FROM video_exports WHERE export_id=?", (export_id,)
+            ).fetchone()
+            if existing is None:
+                raise VideoResourceNotFoundError("Export not found")
+            connection.execute(
+                f"UPDATE video_exports SET {assignments} WHERE export_id=?",
+                [*values.values(), export_id],
+            )
+            row = connection.execute(
+                "SELECT * FROM video_exports WHERE export_id=?", (export_id,)
+            ).fetchone()
+            export = self._decode(row) or {}
+            self._emit_workspace_event(
+                connection,
+                str(export["project_id"]),
+                "export.changed",
+                self._export_event_payload(export),
+            )
+        return export
 
     def get_export(self, export_id: str) -> dict[str, Any]:
         export = self.one("SELECT * FROM video_exports WHERE export_id=?", (export_id,))

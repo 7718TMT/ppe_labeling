@@ -80,3 +80,177 @@ def test_invalid_class_bounds_and_track_exclusion(tmp_path: Path) -> None:
         service.save_segment(video["video_id"], 2, 0, 10, "others", 0)
     excluded = service.set_track_inclusion(video["video_id"], 1, False, "wrong_track")
     assert excluded["include_in_export"] == 0 and excluded["exclude_reason"] == "wrong_track"
+
+
+def test_track_edit_tolerates_a_missing_or_corrupt_pose_cache(tmp_path: Path) -> None:
+    """A manual correction still commits when an old pose file is unreadable."""
+
+    repository, storage, service, video = setup_video(tmp_path)
+    project_id = str(repository.get_video(video["video_id"])["project_id"])
+    repository.update_video(video["video_id"], pose_cache_version="corrupt-pose")
+    pose_path = storage.artifact_path(
+        project_id,
+        "pose",
+        video["video_id"],
+        "corrupt-pose",
+    )
+    storage.write_bytes(pose_path, b"not-a-gzip-pose-artifact")
+
+    merged = service.merge_tracks(video["video_id"], 1, 2)
+
+    assert merged["track_id"] == 1
+    assert [track["track_id"] for track in repository.list_tracks(video["video_id"])] == [
+        1
+    ]
+    derivative = repository.active_job_for_video(video["video_id"])
+    assert derivative and derivative["stage"] == "annotation_derivatives"
+
+
+def test_track_merge_switches_to_an_immutable_staged_pose_version(
+    tmp_path: Path,
+) -> None:
+    """A successful merge changes the pose pointer without overwriting history."""
+
+    repository, storage, service, video = setup_video(tmp_path)
+    video_id = str(video["video_id"])
+    project_id = str(repository.get_video(video_id)["project_id"])
+    source_version = "pose-source"
+    source_path = storage.artifact_path(
+        project_id,
+        "pose",
+        video_id,
+        source_version,
+    )
+    storage.write_json(
+        source_path,
+        {
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "tracks": [{"track_id": 2}],
+                }
+            ]
+        },
+    )
+    repository.update_video(video_id, pose_cache_version=source_version)
+
+    service.merge_tracks(video_id, 1, 2)
+
+    staged_version = str(repository.get_video(video_id)["pose_cache_version"])
+    assert staged_version != source_version
+    assert storage.read_json(source_path)["frames"][0]["tracks"][0]["track_id"] == 2
+    staged_path = storage.artifact_path(
+        project_id,
+        "pose",
+        video_id,
+        staged_version,
+    )
+    assert storage.read_json(staged_path)["frames"][0]["tracks"][0]["track_id"] == 1
+
+
+def test_failed_track_merge_keeps_the_previous_pose_pointer_authoritative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-commit crash leaves only an unreferenced staged pose artifact."""
+
+    repository, storage, service, video = setup_video(tmp_path)
+    video_id = str(video["video_id"])
+    project_id = str(repository.get_video(video_id)["project_id"])
+    source_version = "pose-source"
+    source_path = storage.artifact_path(
+        project_id,
+        "pose",
+        video_id,
+        source_version,
+    )
+    storage.write_json(
+        source_path,
+        {
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "tracks": [{"track_id": 2}],
+                }
+            ]
+        },
+    )
+    repository.update_video(video_id, pose_cache_version=source_version)
+
+    def fail_track_event(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("synthetic database finalization failure")
+
+    monkeypatch.setattr(repository, "_emit_tracks_changed", fail_track_event)
+    with pytest.raises(RuntimeError, match="synthetic database finalization failure"):
+        service.merge_tracks(video_id, 1, 2)
+
+    assert repository.get_video(video_id)["pose_cache_version"] == source_version
+    assert [track["track_id"] for track in repository.list_tracks(video_id)] == [1, 2]
+    assert storage.read_json(source_path)["frames"][0]["tracks"][0]["track_id"] == 2
+    staged_paths = [
+        path
+        for path in source_path.parent.glob(f"{video_id}.*.json.gz")
+        if path != source_path
+    ]
+    assert len(staged_paths) == 1
+    assert storage.read_json(staged_paths[0])["frames"][0]["tracks"][0]["track_id"] == 1
+
+
+def test_track_merge_rejects_a_staged_pose_pointer_replaced_by_another_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two interleaved pose edits cannot silently overwrite one another."""
+
+    repository, storage, service, video = setup_video(tmp_path)
+    video_id = str(video["video_id"])
+    project_id = str(repository.get_video(video_id)["project_id"])
+    source_version = "pose-source"
+    source_path = storage.artifact_path(
+        project_id,
+        "pose",
+        video_id,
+        source_version,
+    )
+    storage.write_json(
+        source_path,
+        {
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "tracks": [{"track_id": 2}],
+                }
+            ]
+        },
+    )
+    repository.update_video(video_id, pose_cache_version=source_version)
+    concurrent_version = "pose-concurrent-edit"
+    storage.write_json(
+        storage.artifact_path(
+            project_id,
+            "pose",
+            video_id,
+            concurrent_version,
+        ),
+        {
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "tracks": [{"track_id": 2}],
+                }
+            ]
+        },
+    )
+    original_merge = repository.merge_tracks_atomically
+
+    def interleave_pointer_change(*args: object, **kwargs: object) -> dict[str, object]:
+        repository.update_video(video_id, pose_cache_version=concurrent_version)
+        return original_merge(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "merge_tracks_atomically", interleave_pointer_change)
+    with pytest.raises(RevisionConflictError, match="Pose data changed"):
+        service.merge_tracks(video_id, 1, 2)
+
+    assert repository.get_video(video_id)["pose_cache_version"] == concurrent_version
+    assert [track["track_id"] for track in repository.list_tracks(video_id)] == [1, 2]
+    assert storage.read_json(source_path)["frames"][0]["tracks"][0]["track_id"] == 2

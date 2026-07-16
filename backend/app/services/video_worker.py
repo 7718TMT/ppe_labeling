@@ -11,9 +11,16 @@ from typing import Any, Callable
 
 import cv2
 
-from backend.app.domain.errors import ModelUnavailableError, VideoValidationError
+from backend.app.domain.errors import (
+    ModelUnavailableError,
+    RevisionConflictError,
+    VideoValidationError,
+)
 from backend.app.domain.video import TRACKING_CACHE_VERSION
-from backend.app.repositories.video_db import VideoRepository
+from backend.app.repositories.video_db import (
+    ANNOTATION_DERIVATIVE_STAGE,
+    VideoRepository,
+)
 from backend.app.repositories.video_storage import VideoStorageRepository
 from backend.app.services.video_feature_service import VideoFeatureService
 from backend.app.services.video_annotation_service import VideoAnnotationService
@@ -76,6 +83,8 @@ class VideoWorker:
                 self._pose_track(job, progress)
             elif stage == "features":
                 self._features(job, progress)
+            elif stage == ANNOTATION_DERIVATIVE_STAGE:
+                self._annotation_derivatives(job, progress)
             elif stage == "threshold":
                 self._threshold(job, progress)
             elif stage in self.extra_handlers:
@@ -86,13 +95,18 @@ class VideoWorker:
                     self.extra_handlers[prefix](job, progress)
                 else:
                     raise VideoValidationError(f"Unsupported worker stage: {stage}")
-            if stage in {"threshold", "model"}:
-                created = self.annotation_service.materialize_suggestions(
-                    job["video_id"],
-                    "threshold" if stage == "threshold" else "model",
-                )
-                if created:
-                    self.feature_service.generate_windows(job["video_id"])
+            if stage in {"threshold", "model"} and self._can_materialize_suggestions(job):
+                try:
+                    self.annotation_service.materialize_suggestions(
+                        job["video_id"],
+                        "threshold" if stage == "threshold" else "model",
+                        expected_revision=int(job["annotation_revision"]),
+                    )
+                except RevisionConflictError:
+                    # A concurrent manual edit won the optimistic write. It is
+                    # valid work, not a worker failure; the pending derivative
+                    # refresh will rebuild artifacts for the newer revision.
+                    pass
             self.repository.complete_job_and_enqueue_next(
                 job["job_id"],
                 self._next_stage(job),
@@ -247,10 +261,61 @@ class VideoWorker:
         self.feature_service.extract_features(job["video_id"])
         progress(0.95)
 
+    def _annotation_derivatives(
+        self,
+        job: dict[str, Any],
+        progress: Callable[[float], None],
+    ) -> None:
+        """Rebuild label-bearing windows/features without inference suggestions.
+
+        The job stores the annotation revision it was requested for. If an
+        editor changes labels while it waits or runs, any partial output is
+        explicitly invalidated; completion then queues one fresh coalesced job
+        for the newer revision.
+        """
+
+        video_id = str(job["video_id"])
+        video = self.repository.get_video(video_id)
+        target_revision = int(
+            job.get("annotation_revision")
+            if job.get("annotation_revision") is not None
+            else video["annotation_revision"]
+        )
+        if int(video["annotation_revision"]) != target_revision:
+            self.repository.invalidate_annotation_derivatives(video_id)
+            progress(0.95)
+            return
+
+        progress(0.05)
+        self.feature_service.generate_windows(video_id)
+        if int(self.repository.get_video(video_id)["annotation_revision"]) != target_revision:
+            self.repository.invalidate_annotation_derivatives(video_id)
+            progress(0.95)
+            return
+
+        progress(0.45)
+        self.feature_service.extract_features(video_id)
+        if int(self.repository.get_video(video_id)["annotation_revision"]) != target_revision:
+            self.repository.invalidate_annotation_derivatives(video_id)
+        progress(0.95)
+
     def _threshold(self, job: dict[str, Any], progress: Callable[[float], None]) -> None:
         progress(0.1)
         self.feature_service.generate_threshold_suggestions(job["video_id"])
         progress(0.95)
+
+    def _can_materialize_suggestions(self, job: dict[str, Any]) -> bool:
+        """Allow automatic labels only for the revision that requested them."""
+
+        requested_revision = job.get("annotation_revision")
+        if requested_revision is None or not job.get("video_id"):
+            # Jobs created before the revision-aware migration are safely
+            # inference-only. The user can explicitly regenerate suggestions.
+            return False
+        current_revision = int(
+            self.repository.get_video(str(job["video_id"]))["annotation_revision"]
+        )
+        return current_revision == int(requested_revision)
 
     @staticmethod
     def _next_stage(job: dict[str, Any]) -> str | None:

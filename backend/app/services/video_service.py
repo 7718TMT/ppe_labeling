@@ -602,7 +602,15 @@ class VideoService:
             model_id = str(model["external_model_id"])
 
         if overwrite_labels:
+            self.repository.supersede_queued_annotation_derivative_refresh(
+                project_id,
+                video_id,
+            )
             self._clear_labels_for_suggestion_overwrite(video_id)
+            # Clearing labels advances the annotation revision and invalidates
+            # label-derived caches. Re-read it before pinning the new pipeline
+            # so the worker compares against the correct suggestion intent.
+            video = self._project_video(project_id, video_id)
 
         stage = self._first_pipeline_stage(video, target_mode)
         job = self.repository.enqueue_pipeline_job(
@@ -612,8 +620,35 @@ class VideoService:
             target_mode,
             model_id,
             priority,
+            annotation_revision=int(video["annotation_revision"]),
         )
         return [job]
+
+    def refresh_annotation_derivatives(
+        self,
+        project_id: str,
+        video_id: str,
+    ) -> dict[str, Any]:
+        """Queue only label-derived windows and features after an edit.
+
+        This path deliberately does not call ``queue_pipeline``. A manual
+        label change must refresh export/training derivatives without invoking
+        Threshold/model inference or materializing suggestions again.
+        """
+
+        video = self._project_video(project_id, video_id)
+        if not video.get("pose_cache_version"):
+            raise VideoValidationError(
+                "Annotation derivatives are available after pose tracking is ready."
+            )
+        if not self.repository.list_tracks(video_id):
+            raise VideoValidationError(
+                "Annotation derivatives require at least one worker track."
+            )
+        return self.repository.request_annotation_derivative_refresh(
+            project_id,
+            video_id,
+        )
 
     def _clear_labels_for_suggestion_overwrite(self, video_id: str) -> None:
         """Remove current labels after the annotator explicitly confirmed replacement."""
@@ -622,7 +657,12 @@ class VideoService:
         revision = int(video["annotation_revision"])
         segments = self.repository.list_segments(video_id)
         for segment in segments:
-            revision = self.repository.delete_segment(video_id, segment["segment_id"], revision)
+            revision = self.repository.delete_segment(
+                video_id,
+                segment["segment_id"],
+                revision,
+                schedule_derivatives=False,
+            )
         if segments:
             self.repository.update_video(
                 video_id,

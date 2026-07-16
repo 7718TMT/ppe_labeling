@@ -55,14 +55,10 @@ import {
   deleteVideoSegment,
   deleteVideoTrack,
   extendVideoSegment,
-  getProcessingOptions,
-  getFeatures,
+  flushVideoWorkspaceStateOnExit,
   getPoseOverlay,
-  getVideoJobs,
-  getVideoProject,
   getVideoSegments,
   getVideoTracks,
-  getVideos,
   importVideos,
   mergeMultipleVideoTracks,
   mergeVideoSegments,
@@ -86,10 +82,10 @@ import { SuggestionModeButton, type ProcessMode } from '../features/video/Proces
 import { ProcessingQueue } from '../features/video/ProcessingQueue';
 import { ShortcutGuideOverlay } from '../features/video/ShortcutGuideOverlay';
 import { VideoBrowser } from '../features/video/VideoBrowser';
+import { useVideoWorkspaceSync } from '../features/video/hooks/useVideoWorkspaceSync';
 import { VideoTimeline } from '../features/video/VideoTimeline';
 import { TrimTimeline } from '../features/video/TrimTimeline';
 import type {
-  FeatureWindow,
   GeneratedWindow,
   HumanVideoLabel,
   PoseTrackFrame,
@@ -97,9 +93,13 @@ import type {
   ProcessingOptions,
   SuggestionSource,
   VideoItem,
+  VideoExportRecord,
   VideoProject,
   VideoSegment,
   VideoTrack,
+  VideoWorkspaceEvent,
+  VideoWorkspaceSnapshot,
+  VideoWorkspaceState,
 } from '../types';
 
 /** Right-sidebar tabs. Suggestions tab removed (#4). */
@@ -107,6 +107,31 @@ type RightTab = 'annotate' | 'details';
 type SelectionScope = 'video' | 'worker' | 'segment';
 
 const ACTIVE_JOB_STATUSES = new Set(['queued', 'running', 'paused']);
+/** A five-second overlay batch balances playback smoothness and request count. */
+const OVERLAY_CHUNK_FRAMES = 120;
+const OVERLAY_RETRY_BASE_MS = 1_000;
+const OVERLAY_RETRY_MAX_MS = 30_000;
+
+interface OverlayCache {
+  videoId?: string;
+  frames: Map<number, PoseTrackFrame>;
+  loaded: Set<number>;
+  pending: Set<string>;
+  retryAt: Map<string, number>;
+  failureCount: Map<string, number>;
+}
+
+/** Build a per-video overlay cache with bounded retry state. */
+function createOverlayCache(videoId?: string): OverlayCache {
+  return {
+    videoId,
+    frames: new Map(),
+    loaded: new Set(),
+    pending: new Set(),
+    retryAt: new Map(),
+    failureCount: new Map(),
+  };
+}
 
 /** Human-friendly label colors, reused for fill-gaps indicator. */
 const LABEL_COLORS: Record<HumanVideoLabel, string> = {
@@ -123,6 +148,19 @@ function upsertJobRows(current: ProcessingJob[], incoming: ProcessingJob[]): Pro
 
 function readableError(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+/** Narrow an opaque workspace-event payload before applying it to UI state. */
+function asEventRecord(payload: unknown): Record<string, unknown> | undefined {
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : undefined;
+}
+
+interface WorkspaceRecoveryWrite {
+  projectId: string;
+  payload: VideoWorkspaceState;
+  fingerprint: string;
 }
 
 /** Format a frame location as a compact playback timestamp. */
@@ -196,25 +234,29 @@ export function VideoWorkspace() {
   const player = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef<string>();
+  const videosRef = useRef<VideoItem[]>([]);
   const frameRef = useRef(0);
+  const revisionRef = useRef(0);
   const activeLoadRef = useRef(0);
+  const activeDetailLoadRef = useRef(0);
+  const activeDetailAbortRef = useRef<AbortController>();
   const projectRef = useRef<VideoProject | null>(null);
   const processingTransitionRef = useRef<{ videoId?: string; active: boolean }>({ active: false });
   const pendingMediaSeekRef = useRef<{ videoId: string; seconds: number }>();
   const workspaceSaveChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const workspaceLastSavedFingerprintRef = useRef<string>();
+  const workspaceLatestWriteRef = useRef<WorkspaceRecoveryWrite>();
+  const workspaceSaveTimerRef = useRef<number>();
+  const workspaceStateRef = useRef<VideoWorkspaceState>();
   const savingRequestCountRef = useRef(0);
   const deletingSegmentIdRef = useRef<string>();
-  const featureAutoTimerRef = useRef<number>();
-  const overlayCacheRef = useRef<{
-    videoId?: string;
-    frames: Map<number, PoseTrackFrame>;
-    loaded: Set<number>;
-    pending: Set<string>;
-  }>({ frames: new Map(), loaded: new Set(), pending: new Set() });
+  const activeDetailRefreshTimerRef = useRef<number>();
+  const overlayCacheRef = useRef<OverlayCache>(createOverlayCache());
 
   const [project, setProject] = useState<VideoProject | null>(null);
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+  const [exports, setExports] = useState<VideoExportRecord[]>([]);
   const [active, setActive] = useState<VideoItem | null>(null);
   const [tracks, setTracks] = useState<VideoTrack[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<number>();
@@ -234,7 +276,6 @@ export function VideoWorkspace() {
   });
   /** Fill-gaps class picker per track; key=track_id, value=label to fill (#3). */
   const [fillClass, setFillClass] = useState<HumanVideoLabel>('others');
-  const [features, setFeatures] = useState<FeatureWindow[]>([]);
   const [overlay, setOverlay] = useState<PoseTrackFrame>();
   const [overlayCacheRevision, setOverlayCacheRevision] = useState(0);
   const [frame, setFrame] = useState(0);
@@ -272,8 +313,10 @@ export function VideoWorkspace() {
   const [historyUnavailable, setHistoryUnavailable] = useState<'undo' | 'redo' | null>(null);
 
   projectRef.current = project;
+  videosRef.current = videos;
   activeIdRef.current = active?.video_id;
   frameRef.current = frame;
+  revisionRef.current = revision;
 
   useEffect(() => () => { activeIdRef.current = undefined; }, []);
 
@@ -318,31 +361,194 @@ export function VideoWorkspace() {
     setHistoryUnavailable(null);
   }, [revision]);
 
-  const refreshShell = useCallback(async () => {
-    const [projectData, videoRows, jobRows, options] = await Promise.all([
-      getVideoProject(projectId),
-      getVideos(projectId),
-      getVideoJobs(projectId),
-      getProcessingOptions(projectId).catch(() => ({
-        threshold_available: true,
-        model_available: false,
-        model_message: 'Model suggestions are currently unavailable.',
-      })),
-    ]);
-    setProject(projectData);
+  /** Reload only the active video's mutable annotation details after an event. */
+  const refreshActiveDetails = useCallback(async (videoId: string) => {
+    const generation = activeDetailLoadRef.current + 1;
+    activeDetailLoadRef.current = generation;
+    activeDetailAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeDetailAbortRef.current = controller;
+    try {
+      const [trackRows, segmentData] = await Promise.all([
+        getVideoTracks(projectId, videoId, controller.signal),
+        getVideoSegments(projectId, videoId, controller.signal),
+      ]);
+      if (
+        controller.signal.aborted
+        || generation !== activeDetailLoadRef.current
+        || activeIdRef.current !== videoId
+      ) return;
+      setTracks(trackRows);
+      setSelectedTrack((current) => {
+        if (current !== undefined && trackRows.some((track) => track.track_id === current)) return current;
+        return trackRows.slice().sort(
+          (left, right) => (right.end_frame - right.start_frame) - (left.end_frame - left.start_frame),
+        )[0]?.track_id;
+      });
+      setSegments(segmentData.segments);
+      setRevision(segmentData.revision);
+      setSelectedSegment((current) => current
+        ? segmentData.segments.find((item) => item.segment_id === current.segment_id)
+        : undefined);
+    } catch (reason) {
+      if (
+        !controller.signal.aborted
+        && generation === activeDetailLoadRef.current
+        && activeIdRef.current === videoId
+      ) {
+        setError(`Could not refresh annotation changes. ${readableError(reason)}`);
+      }
+    }
+  }, [projectId]);
+
+  /** Coalesce a burst of annotation events into one active-video detail read. */
+  const queueActiveDetailsRefresh = useCallback((videoId: string) => {
+    if (activeIdRef.current !== videoId || activeDetailRefreshTimerRef.current) return;
+    activeDetailRefreshTimerRef.current = window.setTimeout(() => {
+      activeDetailRefreshTimerRef.current = undefined;
+      void refreshActiveDetails(videoId);
+    }, 40);
+  }, [refreshActiveDetails]);
+
+  useEffect(() => () => {
+    if (activeDetailRefreshTimerRef.current) {
+      window.clearTimeout(activeDetailRefreshTimerRef.current);
+    }
+    activeDetailAbortRef.current?.abort();
+  }, []);
+
+  /** Apply the one compact snapshot used to initialize or recover the workspace. */
+  const applyWorkspaceSnapshot = useCallback((snapshot: VideoWorkspaceSnapshot) => {
+    const videoRows = snapshot.videos;
+    const options = snapshot.processing_options;
+    videosRef.current = videoRows;
+    workspaceStateRef.current = snapshot.project.workspace_state ?? undefined;
+    setProject(snapshot.project);
     setVideos(videoRows);
-    setJobs(jobRows);
+    setJobs(snapshot.jobs);
+    setExports(snapshot.exports ?? []);
     setProcessingOptions(options);
+    setSelectedVideoIds((current) => new Set(
+      [...current].filter((videoId) => videoRows.some((item) => item.video_id === videoId)),
+    ));
     setActive((current) => {
       if (current) return videoRows.find((item) => item.video_id === current.video_id) ?? videoRows[0] ?? null;
-      return videoRows.find((item) => item.video_id === projectData.workspace_state?.video_id) ?? videoRows[0] ?? null;
+      return videoRows.find((item) => item.video_id === snapshot.project.workspace_state?.video_id)
+        ?? videoRows[0]
+        ?? null;
     });
     setSource((current) => {
       if (current !== 'Threshold') return current;
-      const remembered = projectData.workspace_state?.suggestion_source ?? 'Threshold';
+      const remembered = snapshot.project.workspace_state?.suggestion_source ?? 'Threshold';
       return remembered === 'AI' && !options.model_available ? 'Off' : remembered;
     });
-  }, [projectId]);
+  }, []);
+
+  /** Apply a small outbox event without re-reading the full workspace shell. */
+  const applyWorkspaceEvent = useCallback((event: VideoWorkspaceEvent) => {
+    const payload = asEventRecord(event.payload);
+    if (!payload) return;
+
+    if (event.event_type === 'job.changed') {
+      const job = payload.job as ProcessingJob | undefined;
+      if (job?.job_id) setJobs((current) => upsertJobRows(current, [job]));
+      return;
+    }
+
+    if (event.event_type === 'video.changed') {
+      const videoId = typeof payload.video_id === 'string' ? payload.video_id : event.video_id;
+      if (!videoId) return;
+      if (payload.deleted === true) {
+        const remaining = videosRef.current.filter((item) => item.video_id !== videoId);
+        videosRef.current = remaining;
+        setVideos(remaining);
+        setJobs((current) => current.filter((job) => job.video_id !== videoId));
+        setProcessingBatchVideoIds((current) => new Set(
+          [...current].filter((candidate) => candidate !== videoId),
+        ));
+        setSelectedVideoIds((current) => {
+          const next = new Set(current);
+          next.delete(videoId);
+          return next;
+        });
+        setActive((current) => current?.video_id === videoId ? remaining[0] ?? null : current);
+        return;
+      }
+      const video = payload.video as VideoItem | undefined;
+      if (!video?.video_id) return;
+      const currentVideos = videosRef.current;
+      const nextVideos = currentVideos.some((item) => item.video_id === video.video_id)
+        ? currentVideos.map((item) => item.video_id === video.video_id ? video : item)
+        : [...currentVideos, video];
+      videosRef.current = nextVideos;
+      setVideos(nextVideos);
+      setActive((current) => {
+        if (current?.video_id === video.video_id) return video;
+        return current ?? nextVideos[0] ?? null;
+      });
+      return;
+    }
+
+    if (event.event_type === 'annotation.changed' || event.event_type === 'tracks.changed') {
+      const videoId = typeof payload.video_id === 'string' ? payload.video_id : event.video_id;
+      if (!videoId) return;
+      const nextRevision = typeof payload.annotation_revision === 'number'
+        ? payload.annotation_revision
+        : undefined;
+      const annotationStatus = typeof payload.annotation_status === 'string'
+        ? payload.annotation_status
+        : undefined;
+      const approved = typeof payload.is_approved === 'boolean'
+        ? Number(payload.is_approved)
+        : undefined;
+      const applySummary = (item: VideoItem): VideoItem => item.video_id !== videoId ? item : {
+        ...item,
+        ...(nextRevision === undefined ? {} : { annotation_revision: nextRevision }),
+        ...(annotationStatus === undefined ? {} : { annotation_status: annotationStatus }),
+        ...(approved === undefined ? {} : { is_approved: approved }),
+      };
+      setVideos((current) => {
+        const next = current.map(applySummary);
+        videosRef.current = next;
+        return next;
+      });
+      setActive((current) => current ? applySummary(current) : current);
+      const needsDetailRefresh = event.event_type === 'tracks.changed'
+        || payload.reason === 'tracks_replaced'
+        || nextRevision === undefined
+        || nextRevision > revisionRef.current;
+      if (activeIdRef.current === videoId && needsDetailRefresh) {
+        queueActiveDetailsRefresh(videoId);
+      }
+      return;
+    }
+
+    if (event.event_type === 'export.changed') {
+      const exportRecord = payload.export as VideoExportRecord | undefined;
+      if (!exportRecord?.export_id) return;
+      setExports((current) => {
+        const existing = current.find((item) => item.export_id === exportRecord.export_id);
+        if (existing) {
+          return current.map((item) => item.export_id === exportRecord.export_id
+            ? { ...item, ...exportRecord }
+            : item);
+        }
+        return [exportRecord, ...current];
+      });
+    }
+  }, [queueActiveDetailsRefresh]);
+
+  const applyWorkspaceEvents = useCallback((events: VideoWorkspaceEvent[]) => {
+    events.forEach(applyWorkspaceEvent);
+  }, [applyWorkspaceEvent]);
+
+  const workspaceSync = useVideoWorkspaceSync({
+    projectId,
+    onSnapshot: applyWorkspaceSnapshot,
+    onEvent: applyWorkspaceEvent,
+    onEvents: applyWorkspaceEvents,
+  });
+  const refreshShell = workspaceSync.refresh;
 
   function beginProcessingBatch(videoIds: string[]) {
     const activeVideoIds = new Set(
@@ -368,45 +574,22 @@ export function VideoWorkspace() {
     });
   }, [jobs]);
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-    const poll = () => {
-      Promise.all([getVideoJobs(projectId), getVideos(projectId)])
-        .then(([jobRows, videoRows]) => {
-          if (cancelled) return;
-          setJobs(jobRows);
-          setVideos(videoRows);
-          setActive((current) => {
-            if (!current) return videoRows[0] ?? null;
-            return videoRows.find((item) => item.video_id === current.video_id) ?? videoRows[0] ?? null;
-          });
-          const hasActiveJobs = jobRows.some((job) => ACTIVE_JOB_STATUSES.has(job.status));
-          timer = window.setTimeout(poll, hasActiveJobs ? 3000 : 30000);
-        })
-        .catch(() => { if (!cancelled) timer = window.setTimeout(poll, 30000); });
-    };
-    refreshShell()
-      .catch((reason) => !cancelled && setError(readableError(reason)))
-      .finally(() => { if (!cancelled) timer = window.setTimeout(poll, 3000); });
-    return () => {
-      cancelled = true;
-      if (timer) window.clearTimeout(timer);
-    };
-  }, [projectId, refreshShell]);
-
   const loadActive = useCallback(async (video: VideoItem) => {
     const generation = activeLoadRef.current + 1;
     activeLoadRef.current = generation;
+    const detailGeneration = activeDetailLoadRef.current + 1;
+    activeDetailLoadRef.current = detailGeneration;
+    activeDetailAbortRef.current?.abort();
+    const detailController = new AbortController();
+    activeDetailAbortRef.current = detailController;
     setError('');
     setMessage('');
     setPlaying(false);
     setOverlay(undefined);
-    overlayCacheRef.current = { videoId: video.video_id, frames: new Map(), loaded: new Set(), pending: new Set() };
+    overlayCacheRef.current = createOverlayCache(video.video_id);
     setOverlayCacheRevision((c) => c + 1);
     setTracks([]);
     setSegments([]);
-    setFeatures([]);
     setSelectedTrack(undefined);
     setMergeTrackIds(new Set());
     setSelectedSegment(undefined);
@@ -420,18 +603,20 @@ export function VideoWorkspace() {
     setLoop(false);
     try {
       const [trackRows, segmentData] = await Promise.all([
-        getVideoTracks(projectId, video.video_id),
-        getVideoSegments(projectId, video.video_id),
+        getVideoTracks(projectId, video.video_id, detailController.signal),
+        getVideoSegments(projectId, video.video_id, detailController.signal),
       ]);
-      if (generation !== activeLoadRef.current || activeIdRef.current !== video.video_id) return;
+      if (
+        detailController.signal.aborted
+        ||
+        generation !== activeLoadRef.current
+        || detailGeneration !== activeDetailLoadRef.current
+        || activeIdRef.current !== video.video_id
+      ) return;
       setTracks(trackRows);
       setSegments(segmentData.segments);
       setRevision(segmentData.revision);
-      void getFeatures(projectId, video.video_id).then((rows) => {
-        if (generation !== activeLoadRef.current || activeIdRef.current !== video.video_id) return;
-        setFeatures(rows);
-      });
-      const workspace = projectRef.current?.workspace_state;
+      const workspace = workspaceStateRef.current ?? projectRef.current?.workspace_state;
       const rememberedTrack = workspace?.video_id === video.video_id ? workspace.track_id : undefined;
       const longestTrack = trackRows.slice().sort(
         (a, b) => (b.end_frame - b.start_frame) - (a.end_frame - a.start_frame),
@@ -450,7 +635,12 @@ export function VideoWorkspace() {
         }
       });
     } catch (reason) {
-      if (generation === activeLoadRef.current && activeIdRef.current === video.video_id) setError(readableError(reason));
+      if (
+        !detailController.signal.aborted
+        && generation === activeLoadRef.current
+        && detailGeneration === activeDetailLoadRef.current
+        && activeIdRef.current === video.video_id
+      ) setError(readableError(reason));
     }
   }, [projectId]);
 
@@ -462,26 +652,26 @@ export function VideoWorkspace() {
       pendingMediaSeekRef.current = undefined;
       setTracks([]);
       setSegments([]);
-      setFeatures([]);
       setOverlay(undefined);
       setPlaying(false);
     }
   }, [active?.video_id, loadActive]);
 
   useEffect(() => {
-    if (!active) { setOverlay(undefined); return; }
+    if (!active || !showBoxes) { setOverlay(undefined); return; }
     const videoId = active.video_id;
     const requestedFrame = frame;
     let cache = overlayCacheRef.current;
     if (cache.videoId !== videoId) {
-      cache = { videoId, frames: new Map(), loaded: new Set(), pending: new Set() };
+      cache = createOverlayCache(videoId);
       overlayCacheRef.current = cache;
     }
     if (cache.loaded.has(requestedFrame)) { setOverlay(cache.frames.get(requestedFrame)); return; }
     setOverlay(undefined);
-    const chunkStart = Math.floor(requestedFrame / 48) * 48;
-    const chunkEnd = Math.min(active.canonical_frame_count - 1, chunkStart + 47);
+    const chunkStart = Math.floor(requestedFrame / OVERLAY_CHUNK_FRAMES) * OVERLAY_CHUNK_FRAMES;
+    const chunkEnd = Math.min(active.canonical_frame_count - 1, chunkStart + OVERLAY_CHUNK_FRAMES - 1);
     const chunkKey = `${chunkStart}:${chunkEnd}`;
+    if ((cache.retryAt.get(chunkKey) ?? 0) > Date.now()) return;
     if (cache.pending.has(chunkKey)) return;
     cache.pending.add(chunkKey);
     getPoseOverlay(projectId, videoId, chunkStart, chunkEnd).then((rows) => {
@@ -490,37 +680,113 @@ export function VideoWorkspace() {
       rows.forEach((item) => currentCache.frames.set(item.frame_index, item));
       for (let index = chunkStart; index <= chunkEnd; index += 1) currentCache.loaded.add(index);
       currentCache.pending.delete(chunkKey);
+      currentCache.retryAt.delete(chunkKey);
+      currentCache.failureCount.delete(chunkKey);
       if (activeIdRef.current === videoId) setOverlay(currentCache.frames.get(frameRef.current));
     }).catch(() => {
       const currentCache = overlayCacheRef.current;
       if (currentCache !== cache) return;
-      if (currentCache.videoId === videoId) currentCache.pending.delete(chunkKey);
+      if (currentCache.videoId === videoId) {
+        currentCache.pending.delete(chunkKey);
+        const failureCount = (currentCache.failureCount.get(chunkKey) ?? 0) + 1;
+        currentCache.failureCount.set(chunkKey, failureCount);
+        const retryDelay = Math.min(
+          OVERLAY_RETRY_MAX_MS,
+          OVERLAY_RETRY_BASE_MS * 2 ** Math.min(failureCount - 1, 5),
+        );
+        currentCache.retryAt.set(chunkKey, Date.now() + retryDelay);
+      }
       if (activeIdRef.current === videoId && frameRef.current === requestedFrame) setOverlay(undefined);
     });
-  }, [active?.video_id, active?.canonical_frame_count, frame, overlayCacheRevision, projectId]);
+  }, [active?.video_id, active?.canonical_frame_count, frame, overlayCacheRevision, projectId, showBoxes]);
+
+  /** Persist the newest recovery position without allowing older writes to win. */
+  const flushWorkspaceRecoveryState = useCallback(() => {
+    const pending = workspaceLatestWriteRef.current;
+    if (!pending || workspaceLastSavedFingerprintRef.current === pending.fingerprint) return;
+    if (workspaceSaveTimerRef.current) {
+      window.clearTimeout(workspaceSaveTimerRef.current);
+      workspaceSaveTimerRef.current = undefined;
+    }
+    workspaceSaveChainRef.current = workspaceSaveChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (workspaceLastSavedFingerprintRef.current === pending.fingerprint) return;
+        await saveVideoWorkspaceState(pending.projectId, pending.payload);
+        workspaceLastSavedFingerprintRef.current = pending.fingerprint;
+        // A newer interaction may already have updated this ref optimistically.
+        if (workspaceLatestWriteRef.current?.fingerprint !== pending.fingerprint) return;
+        workspaceStateRef.current = pending.payload;
+        setProject((current) => current
+          ? { ...current, workspace_state: pending.payload }
+          : current);
+      })
+      .catch(() => {
+        if (activeIdRef.current === pending.payload.video_id) {
+          setError('Workspace recovery state could not be saved.');
+        }
+      });
+  }, []);
+
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flushWorkspaceRecoveryState();
+    };
+    const flushOnPageHide = () => {
+      const pending = workspaceLatestWriteRef.current;
+      if (!pending || workspaceLastSavedFingerprintRef.current === pending.fingerprint) return;
+      flushVideoWorkspaceStateOnExit(pending.projectId, pending.payload);
+    };
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    window.addEventListener('pagehide', flushOnPageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+      window.removeEventListener('pagehide', flushOnPageHide);
+      flushWorkspaceRecoveryState();
+    };
+  }, [flushWorkspaceRecoveryState]);
+
+  // While playing, checkpoint recovery only every five seconds. Pausing,
+  // changing workers, or changing the suggestion mode still saves the exact
+  // current frame, so the reduced write rate does not weaken recovery UX.
+  const workspaceFrameCheckpoint = active && playing
+    ? Math.floor(frame / Math.max(1, Math.round(active.canonical_fps * 5)))
+    : frame;
 
   useEffect(() => {
     if (!active) return undefined;
-    const videoId = active.video_id;
-    const payload = { video_id: videoId, track_id: selectedTrack, frame_index: frame, suggestion_source: source };
+    const payload: VideoWorkspaceState = {
+      video_id: active.video_id,
+      track_id: selectedTrack,
+      frame_index: frameRef.current,
+      suggestion_source: source,
+    };
+    const fingerprint = JSON.stringify({ projectId, ...payload });
+    workspaceStateRef.current = payload;
+    workspaceLatestWriteRef.current = { projectId, payload, fingerprint };
+    if (workspaceLastSavedFingerprintRef.current === fingerprint) return undefined;
     const timer = window.setTimeout(() => {
-      workspaceSaveChainRef.current = workspaceSaveChainRef.current
-        .catch(() => undefined)
-        .then(() => saveVideoWorkspaceState(projectId, payload))
-        .catch(() => { if (activeIdRef.current === videoId) setError('Workspace recovery state could not be saved.'); });
+      if (workspaceSaveTimerRef.current === timer) {
+        workspaceSaveTimerRef.current = undefined;
+      }
+      flushWorkspaceRecoveryState();
     }, 500);
-    return () => window.clearTimeout(timer);
-  }, [active?.video_id, selectedTrack, frame, source, projectId]);
-
-  /** #15 — Auto-trigger feature extraction after 5 s of no segment changes. */
-  const scheduleFeatureExtraction = useCallback(() => {
-    if (featureAutoTimerRef.current) window.clearTimeout(featureAutoTimerRef.current);
-    const videoId = active?.video_id;
-    if (!videoId || !active) return;
-    featureAutoTimerRef.current = window.setTimeout(() => {
-      processVideo(projectId, videoId, 'Threshold').catch(() => undefined);
-    }, 5000);
-  }, [active?.video_id, projectId]);
+    workspaceSaveTimerRef.current = timer;
+    return () => {
+      if (workspaceSaveTimerRef.current === timer) {
+        window.clearTimeout(timer);
+        workspaceSaveTimerRef.current = undefined;
+      }
+    };
+  }, [
+    active?.video_id,
+    flushWorkspaceRecoveryState,
+    playing,
+    projectId,
+    selectedTrack,
+    source,
+    workspaceFrameCheckpoint,
+  ]);
 
   // ── Video playback helpers ──────────────────────────────────────────────────
 
@@ -625,9 +891,13 @@ export function VideoWorkspace() {
         copyFilename,
         source === 'AI' ? 'model' : 'threshold',
       );
-      setVideos((current) => saveMode === 'copy'
-        ? [...current, result.video]
-        : current.map((item) => item.video_id === result.video.video_id ? result.video : item));
+      setVideos((current) => {
+        const next = saveMode === 'copy'
+          ? [...current, result.video]
+          : current.map((item) => item.video_id === result.video.video_id ? result.video : item);
+        videosRef.current = next;
+        return next;
+      });
       setActive(result.video);
       setTrimMode(false);
       setTrimPreviewing(false);
@@ -700,7 +970,6 @@ export function VideoWorkspace() {
         setCreatingSegment(false);
         setAutosaveFailedDraft(undefined);
         if (!autosave) setMessage('Segment saved.');
-        scheduleFeatureExtraction(); // #15
       }
     } catch (reason) {
       if (activeIdRef.current === videoId) {
@@ -734,7 +1003,6 @@ export function VideoWorkspace() {
       const result = await deleteVideoSegment(projectId, videoId, deletingSegment.segment_id, revision);
       if (activeIdRef.current === videoId) {
         setRevision(result.revision);
-        scheduleFeatureExtraction(); // #15
       }
     } catch (reason) {
       if (activeIdRef.current === videoId) {
@@ -773,7 +1041,6 @@ export function VideoWorkspace() {
       if (activeIdRef.current === videoId) {
         setRevision(nextRevision);
         setMessage(`${deleted.length} segment${deleted.length === 1 ? '' : 's'} deleted.`);
-        scheduleFeatureExtraction();
       }
     } catch (reason) {
       if (activeIdRef.current === videoId) {
@@ -823,7 +1090,6 @@ export function VideoWorkspace() {
       setEnd(result.segment.end_frame);
       setLabel(result.segment.label);
       setMessage(`${selected.length} adjacent ${result.segment.label} segments merged.`);
-      scheduleFeatureExtraction();
     } catch (reason) {
       if (activeIdRef.current === videoId) {
         setError(`Could not merge the selected segments. ${readableError(reason)}`);
@@ -850,7 +1116,6 @@ export function VideoWorkspace() {
         setMessage('No surrounding gap to expand into.');
       } else {
         setMessage('Segment expanded into surrounding gaps.');
-        scheduleFeatureExtraction();
       }
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(readableError(reason));
@@ -867,7 +1132,7 @@ export function VideoWorkspace() {
       setRevision(result.revision);
       setSegments(rows.segments);
         setSelectedSegment(undefined);
-        setCreatingSegment(false);
+      setCreatingSegment(false);
       setHistoryUnavailable(null);
       setMessage(action === 'undo' ? 'Undone.' : 'Redone.');
     } catch (reason) {
@@ -912,7 +1177,6 @@ export function VideoWorkspace() {
       }
       setRevision(currentRevision);
       setMessage(`Filled ${gaps.length} gap(s) with "${fillClass}".`);
-      scheduleFeatureExtraction(); // #15
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(`Fill gaps failed. ${readableError(reason)}`);
     }
@@ -934,27 +1198,29 @@ export function VideoWorkspace() {
     }
   }
 
-  /**
-   * #9 — Approve the current video. On success, triggers auto feature extraction (#15).
-   * If already approved, calls unapprove instead.
-   */
+  /** Approve the current video, or revoke its approval when already approved. */
   async function handleApproveToggle() {
     if (!active) return;
     const videoId = active.video_id;
     try {
       if (active.is_approved) {
         const updated = await unapproveVideo(projectId, videoId);
-        setVideos((current) => current.map((item) => item.video_id === videoId ? { ...item, ...updated } : item));
+        setVideos((current) => {
+          const next = current.map((item) => item.video_id === videoId ? { ...item, ...updated } : item);
+          videosRef.current = next;
+          return next;
+        });
         setActive((current) => current?.video_id === videoId ? { ...current, ...updated } : current);
         setMessage('Approval revoked.');
       } else {
         const updated = await approveVideo(projectId, videoId);
-        setVideos((current) => current.map((item) => item.video_id === videoId ? { ...item, ...updated } : item));
+        setVideos((current) => {
+          const next = current.map((item) => item.video_id === videoId ? { ...item, ...updated } : item);
+          videosRef.current = next;
+          return next;
+        });
         setActive((current) => current?.video_id === videoId ? { ...current, ...updated } : current);
         setMessage('Video approved.');
-        // Auto-trigger feature extraction immediately on approval (#15)
-        if (featureAutoTimerRef.current) window.clearTimeout(featureAutoTimerRef.current);
-        processVideo(projectId, videoId, 'Threshold').catch(() => undefined);
       }
     } catch (reason) {
       if (activeIdRef.current === videoId) setError(readableError(reason));
@@ -1084,6 +1350,7 @@ export function VideoWorkspace() {
       await Promise.all(targets.map((video) => deleteImportedVideo(projectId, video.video_id)));
       const remaining = videos.filter((item) => !removed.has(item.video_id));
       const next = remaining[Math.min(activeIndex, Math.max(0, remaining.length - 1))] ?? null;
+      videosRef.current = remaining;
       setVideos(remaining);
       setJobs((current) => current.filter((job) => !job.video_id || !removed.has(job.video_id)));
       if (deletingActive) setActive(next);
@@ -1107,7 +1374,9 @@ export function VideoWorkspace() {
       const rows = await importVideos(projectId, files, mode);
       setVideos((current) => {
         const existing = new Set(current.map((item) => item.video_id));
-        return [...current, ...rows.filter((item) => !existing.has(item.video_id))];
+        const next = [...current, ...rows.filter((item) => !existing.has(item.video_id))];
+        videosRef.current = next;
+        return next;
       });
       if (!active && rows[0]) setActive(rows[0]);
       beginProcessingBatch(rows.map((video) => video.video_id));
@@ -1124,6 +1393,7 @@ export function VideoWorkspace() {
     }
     try {
       const rows = await renameVideos(projectId, prefix);
+      videosRef.current = rows;
       setVideos(rows);
       setActive((current) => current
         ? rows.find((video) => video.video_id === current.video_id) ?? null
@@ -1233,7 +1503,6 @@ export function VideoWorkspace() {
         setEnd(result.segment.end_frame);
       }
       setMessage('Segment boundary updated.');
-      scheduleFeatureExtraction(); // #15
     } catch {
       if (activeIdRef.current !== videoId) return;
       setSegments((current) => current.map((item) => (
@@ -1266,31 +1535,12 @@ export function VideoWorkspace() {
     processingTransitionRef.current = { videoId, active: activeProcessing };
     if (!videoId || activeProcessing || previous.videoId !== videoId || !previous.active) return;
 
-    overlayCacheRef.current = { videoId, frames: new Map(), loaded: new Set(), pending: new Set() };
+    overlayCacheRef.current = createOverlayCache(videoId);
     setOverlay(undefined);
     setOverlayCacheRevision((c) => c + 1);
 
-    Promise.all([
-      getVideoTracks(projectId, videoId),
-      getVideoSegments(projectId, videoId),
-      getFeatures(projectId, videoId),
-    ]).then(([trackRows, segmentData, featureRows]) => {
-      if (activeIdRef.current !== videoId) return;
-      setTracks(trackRows);
-      setSelectedTrack((current) => {
-        if (current !== undefined && trackRows.some((track) => track.track_id === current)) return current;
-        return trackRows.slice().sort((a, b) => (b.end_frame - b.start_frame) - (a.end_frame - a.start_frame))[0]?.track_id;
-      });
-      setSegments(segmentData.segments);
-      setRevision(segmentData.revision);
-      setSelectedSegment((current) => current
-        ? segmentData.segments.find((s) => s.segment_id === current.segment_id)
-        : undefined);
-      setFeatures(featureRows);
-    }).catch(() => {
-      if (activeIdRef.current === videoId) setError('Processing finished, but its new results could not be loaded.');
-    });
-  }, [active?.video_id, activeProcessing, projectId]);
+    void refreshActiveDetails(videoId);
+  }, [active?.video_id, activeProcessing, refreshActiveDetails]);
 
   // ── Autosave ────────────────────────────────────────────────────────────────
 
@@ -1958,7 +2208,7 @@ export function VideoWorkspace() {
         <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-4" onMouseDown={() => setExportOpen(false)}>
           <section role="dialog" aria-modal="true" aria-labelledby="export-dialog-title" onMouseDown={(e) => e.stopPropagation()} className="decorative-dialog w-full max-w-md bg-surface-container-high border border-outline-variant rounded-lg p-5">
             <h2 id="export-dialog-title" className="font-headline-sm mb-3">Export Dataset</h2>
-            <ExportPanel projectId={projectId} />
+            <ExportPanel projectId={projectId} exports={exports} />
             <button type="button" onClick={() => setExportOpen(false)} className="mt-4 h-8 px-3 border border-outline-variant rounded font-label text-label-sm">Close</button>
           </section>
         </div>

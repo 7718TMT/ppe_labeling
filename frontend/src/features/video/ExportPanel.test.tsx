@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createVideoExport,
   downloadVideoExport,
-  getVideoExports,
   validateVideoExport,
 } from '../../api/client';
 import { ExportPanel } from './ExportPanel';
@@ -12,7 +11,6 @@ import { ExportPanel } from './ExportPanel';
 vi.mock('../../api/client', () => ({
   createVideoExport: vi.fn(),
   downloadVideoExport: vi.fn(),
-  getVideoExports: vi.fn(),
   validateVideoExport: vi.fn(),
 }));
 
@@ -28,12 +26,13 @@ describe('ExportPanel', () => {
       export: { export_id: 'export-1', status: 'queued', created_at: '2026-07-14' },
       validation: { errors: [], warnings: [] },
     });
-    vi.mocked(getVideoExports).mockResolvedValue([{
-      export_id: 'export-1', status: 'completed', created_at: '2026-07-14', finished_at: '2026-07-14',
-    }]);
-    render(<ExportPanel projectId="project-1" />);
+    const view = render(<ExportPanel projectId="project-1" exports={[]} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create export' }));
+    await screen.findByText('Preparing your export. The download will start when it is ready.');
+    view.rerender(<ExportPanel projectId="project-1" exports={[{
+      export_id: 'export-1', status: 'completed', created_at: '2026-07-14', finished_at: '2026-07-14',
+    }]} />);
     await waitFor(() => expect(downloadVideoExport).toHaveBeenCalledWith('project-1', 'export-1'));
     expect(screen.getByRole('button', { name: 'Download ZIP' })).toBeInTheDocument();
   });
@@ -43,7 +42,7 @@ describe('ExportPanel', () => {
       queued: false,
       validation: { errors: ['No included videos are approved'], warnings: [] },
     });
-    render(<ExportPanel projectId="project-1" />);
+    render(<ExportPanel projectId="project-1" exports={[]} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create export' }));
     expect(await screen.findByText('Resolve validation errors first.')).toBeInTheDocument();
