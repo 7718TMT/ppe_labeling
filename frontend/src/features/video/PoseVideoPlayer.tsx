@@ -17,7 +17,7 @@ import {
 } from 'react';
 import { Pause, Play } from 'lucide-react';
 
-import type { HumanVideoLabel, PoseTrackFrame, VideoItem, VideoSegment } from '../../types';
+import type { FeatureWindow, HumanVideoLabel, PoseTrackFrame, VideoItem, VideoSegment } from '../../types';
 import { videoMediaUrl } from '../../api/client';
 
 /** COCO-17 skeleton edges. */
@@ -47,6 +47,7 @@ interface Props {
   currentSegments?: VideoSegment[];
   /** Current canonical frame index, used to look up active segment class. */
   currentFrame?: number;
+  features?: FeatureWindow[];
   onSelectTrack: (id: number) => void;
   onTimeUpdate: () => void;
   onMediaError?: () => void;
@@ -88,6 +89,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       showBoxes,
       currentSegments = [],
       currentFrame = 0,
+      features = [],
       onSelectTrack,
       onTimeUpdate,
       onMediaError,
@@ -223,6 +225,17 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
             const isActive = track.track_id === selectedTrack;
             // Look up the class label at the current frame for bbox annotation (#14)
             const classLabel = segmentLabelAt(currentSegments, track.track_id, currentFrame);
+            const activeFeature = features.find(
+              (item) => item.track_id === track.track_id && item.start_frame <= currentFrame && item.end_frame >= currentFrame
+            );
+            const runningScore = activeFeature?.transformed?.running_score;
+            const fallInhibitionScore = activeFeature?.transformed?.fall_inhibition_score;
+            const activeSeg = currentSegments.find(
+              (s) => s.track_id === track.track_id && currentFrame >= s.start_frame && currentFrame <= s.end_frame,
+            );
+            const consecutiveRunCount = activeSeg?.label === 'running'
+              ? currentFrame - activeSeg.start_frame + 1
+              : 0;
             const baseColor = classLabel ? LABEL_COLORS[classLabel] : '#64748b';
             const bboxStroke = isActive ? baseColor : `${baseColor}cc`;
             const bboxFill = baseColor;
@@ -251,7 +264,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                     <rect
                       x={track.bbox[0]}
                       y={Math.max(0, track.bbox[1] - 22)}
-                      width={track.bbox[2] - track.bbox[0]}
+                      width={Math.max(track.bbox[2] - track.bbox[0], runningScore !== undefined || fallInhibitionScore !== undefined ? (consecutiveRunCount > 0 ? 220 : 160) : 80)}
                       height={20}
                       fill={bboxFill}
                     />
@@ -263,7 +276,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       fill="#fff"
                       fontWeight="bold"
                     >
-                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}`}
+                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}${runningScore !== undefined ? ` · R:${runningScore.toFixed(2)}` : ''}${fallInhibitionScore !== undefined ? ` · FI:${fallInhibitionScore.toFixed(2)}` : ''}${consecutiveRunCount > 0 ? ` · RC:${consecutiveRunCount}` : ''}`}
                     </text>
                   </>
                 )}

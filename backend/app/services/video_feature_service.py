@@ -199,7 +199,8 @@ class VideoFeatureService:
                     item["transformed"]["final_lying_score_norm"] >= profile["fall"]["lying_entry"] for item in records[max(0, index - 1):index + 1]
                 )
                 
-                run_lookback = profile["running"]["entry_consecutive"]
+                # Temporarily disabled 2 consecutive windows requirement for testing (force run_lookback = 1)
+                run_lookback = 1
                 previous_run = records[max(0, index - run_lookback + 1):index + 1]
                 running_condition = len(previous_run) >= run_lookback and all(
                     item["transformed"]["running_score"] >= profile["running"]["entry_threshold"]

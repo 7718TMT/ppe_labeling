@@ -74,6 +74,7 @@ import {
   unapproveVideo,
   videoHistoryAction,
   videoMediaUrl,
+  getFeatures,
 } from '../api/client';
 import { ExportPanel } from '../features/video/ExportPanel';
 import { PoseHelpDialog } from '../features/video/PoseHelpDialog';
@@ -86,6 +87,7 @@ import { useVideoWorkspaceSync } from '../features/video/hooks/useVideoWorkspace
 import { VideoTimeline } from '../features/video/VideoTimeline';
 import { TrimTimeline } from '../features/video/TrimTimeline';
 import type {
+  FeatureWindow,
   GeneratedWindow,
   HumanVideoLabel,
   PoseTrackFrame,
@@ -289,6 +291,7 @@ export function VideoWorkspace() {
   const [fillClass, setFillClass] = useState<HumanVideoLabel>('others');
   const [overlay, setOverlay] = useState<PoseTrackFrame>();
   const [overlayCacheRevision, setOverlayCacheRevision] = useState(0);
+  const [features, setFeatures] = useState<FeatureWindow[]>([]);
   const [frame, setFrame] = useState(0);
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(0);
@@ -409,9 +412,10 @@ export function VideoWorkspace() {
     const controller = new AbortController();
     activeDetailAbortRef.current = controller;
     try {
-      const [trackRows, segmentData] = await Promise.all([
+      const [trackRows, segmentData, featureData] = await Promise.all([
         getVideoTracks(projectId, videoId, controller.signal),
         getVideoSegments(projectId, videoId, controller.signal),
+        getFeatures(projectId, videoId).catch(() => [] as FeatureWindow[]),
       ]);
       if (
         controller.signal.aborted
@@ -426,6 +430,7 @@ export function VideoWorkspace() {
         )[0]?.track_id;
       });
       setSegments(segmentData.segments);
+      setFeatures(featureData);
       setRevision(segmentData.revision);
       setSelectedSegment((current) => current
         ? segmentData.segments.find((item) => item.segment_id === current.segment_id)
@@ -630,6 +635,7 @@ export function VideoWorkspace() {
     setOverlayCacheRevision((c) => c + 1);
     setTracks([]);
     setSegments([]);
+    setFeatures([]);
     setSelectedTrack(undefined);
     setMergeTrackIds(new Set());
     setSelectedSegment(undefined);
@@ -642,9 +648,10 @@ export function VideoWorkspace() {
     setLabel('others');
     setLoop(false);
     try {
-      const [trackRows, segmentData] = await Promise.all([
+      const [trackRows, segmentData, featureData] = await Promise.all([
         getVideoTracks(projectId, video.video_id, detailController.signal),
         getVideoSegments(projectId, video.video_id, detailController.signal),
+        getFeatures(projectId, video.video_id).catch(() => [] as FeatureWindow[]),
       ]);
       if (
         detailController.signal.aborted
@@ -655,6 +662,7 @@ export function VideoWorkspace() {
       ) return;
       setTracks(trackRows);
       setSegments(segmentData.segments);
+      setFeatures(featureData);
       setRevision(segmentData.revision);
       const workspace = workspaceStateRef.current ?? projectRef.current?.workspace_state;
       const rememberedTrack = workspace?.video_id === video.video_id ? workspace.track_id : undefined;
@@ -1795,6 +1803,7 @@ export function VideoWorkspace() {
                   showBoxes={showBoxes}
                   currentSegments={segments}
                   currentFrame={frame}
+                  features={features}
                   playing={playing}
                   onSelectTrack={chooseTrack}
                   onTimeUpdate={synchronizePlayer}

@@ -82,7 +82,7 @@ DEFAULT_THRESHOLD_PROFILE: dict[str, Any] = {
     },
     "running": {
         "weights": {"combined": 0.35, "ground": 0.20, "body": 0.20, "sustained": 0.25, "fall": 0.40},
-        "entry_threshold": 0.70,
+        "entry_threshold": 0.60,
         "exit_threshold": 0.40,
         "entry_consecutive": 2,
         "exit_consecutive": 3,

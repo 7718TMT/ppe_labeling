@@ -673,7 +673,7 @@ describe('VideoWorkspace', () => {
       });
     });
     expect(await screen.findByText('Worker 1')).toBeInTheDocument();
-    expect(api.getFeatures).not.toHaveBeenCalled();
+    expect(api.getFeatures).toHaveBeenCalled();
   });
 
   it('keeps an in-flight processing request scoped to its original video', async () => {

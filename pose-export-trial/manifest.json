@@ -1,0 +1,54 @@
+{
+  "annotation_schema_version": "v1",
+  "application_version": "0.2.0",
+  "canonical_fps": 24,
+  "class_map": {
+    "falling": 2,
+    "others": 0,
+    "running": 1
+  },
+  "export_timestamp": "2026-07-16T11:30:19.482029+00:00",
+  "feature_schema_version": "v1",
+  "files": {
+    "annotations.jsonl": {
+      "bytes": 802,
+      "sha256": "1db9bd53bb0c2ac3f84eea0c468845375636b8e37b16d38311036274fee0e30f"
+    },
+    "keypoint_windows.npz": {
+      "bytes": 222380,
+      "sha256": "5bb5eabfbbf407e7856412557c0a361d42cb0749228891adfe495c177cd58e14"
+    }
+  },
+  "pose": {
+    "detection_confidence": 0.25,
+    "keypoint_confidence": 0.1,
+    "model_name": "yolo26m-pose",
+    "model_version": "unresolved"
+  },
+  "threshold_profile_id": "e63489498d904cf3bc8a20497d2f215e",
+  "tracking": {
+    "tracker": "botsort",
+    "tracker_config_version": "botsort-dedicated-reid-v3"
+  },
+  "video_hashes": {
+    "104b7ac262fe4784955a4d42c55a7df9": "675ba6e64cd980d2d8d81285345a7d2770e07d1ad6005d82037f54e0376ea0e7",
+    "a923f64384084cb1b2a28ed5132f9f0e": "f3a586a8d8d8d56a3b9d6340c74a9c407fc4101d72ff8998f24aab3dee65f77e",
+    "ebf88dcdc1db4dcd83a1099b2a8f1811": "738a13c333a5f1db1c9e55343f5ebf8deea05293c0e7246aef1a263e10f547b8"
+  },
+  "window": {
+    "final_period_frames": 24,
+    "length_frames": 60,
+    "stride_frames": 12
+  },
+  "window_labeling": {
+    "falling_final_period_ratio": 0.5,
+    "falling_min_overlap_frames": 8,
+    "others_min_ratio": 0.7,
+    "priority": [
+      "falling",
+      "running",
+      "others"
+    ],
+    "running_min_ratio": 0.5
+  }
+}

@@ -7,7 +7,7 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PoseTrackFrame, VideoItem } from '../../types';
+import type { FeatureWindow, PoseTrackFrame, VideoItem } from '../../types';
 import { PoseVideoPlayer } from './PoseVideoPlayer';
 
 const videoA: VideoItem = {
@@ -46,6 +46,20 @@ const overlay: PoseTrackFrame = {
     person_confidence: 0.95,
   }],
 };
+
+const dummyFeatures: FeatureWindow[] = [{
+  window_id: 'win-1',
+  track_id: 7,
+  start_frame: 0,
+  end_frame: 60,
+  raw: {},
+  transformed: {
+    running_score: 0.854,
+    fall_inhibition_score: 0.152,
+  },
+  provenance: {},
+  quality: { status: 'good', valid_frame_ratio: 1.0 },
+}];
 
 type FrameCallback = (now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) => void;
 
@@ -313,5 +327,52 @@ describe('PoseVideoPlayer', () => {
     fireEvent.error(player);
     expect(onMediaError).toHaveBeenCalledOnce();
     expect(screen.getByText('W7')).toBeInTheDocument();
+  });
+
+  it('renders the running score and fall inhibition score if features are provided', () => {
+    render(
+      <PoseVideoPlayer
+        projectId="factory floor"
+        video={videoA}
+        overlay={overlay}
+        selectedTrack={7}
+        selectedOnly={false}
+        showBoxes
+        features={dummyFeatures}
+        currentFrame={10}
+        onSelectTrack={vi.fn()}
+        onTimeUpdate={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('W7 · R:0.85 · FI:0.15')).toBeInTheDocument();
+  });
+
+  it('renders the consecutive running frame count if in a running segment', () => {
+    const segments = [{
+      segment_id: 'seg-1',
+      track_id: 7,
+      start_frame: 5,
+      end_frame: 20,
+      label: 'running' as const,
+      quality_status: 'good',
+      include_in_export: 1,
+      source_type: 'manual',
+    }];
+    render(
+      <PoseVideoPlayer
+        projectId="factory floor"
+        video={videoA}
+        overlay={overlay}
+        selectedTrack={7}
+        selectedOnly={false}
+        showBoxes
+        features={dummyFeatures}
+        currentSegments={segments}
+        currentFrame={10}
+        onSelectTrack={vi.fn()}
+        onTimeUpdate={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('W7 · running · R:0.85 · FI:0.15 · RC:6')).toBeInTheDocument();
   });
 });
