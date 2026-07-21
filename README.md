@@ -242,6 +242,20 @@ labels/
 
 If an image has no label yet, export creates an empty matching `.txt` file.
 
+## Data Preprocessing Pipeline
+
+To clean, normalize, and preprocess raw pose-video datasets for training behavior classification models (e.g., XGBoost, LightGBM, Random Forest):
+
+1. **Prepare Raw Data**: Place your raw labeled datasets (containing sub-directories like `fall`, `no-fall`, and `run` with their respective `keypoint_windows.npz` files) into the `pose-export-trial/` directory in the repository root.
+2. **Extract Features and Split**: Run the feature extraction script to clean raw coordinate joint offsets, normalize/clamp vertical hip-ankle ratios, group windows into contiguous trajectories (to prevent data leakage), and partition the dataset into train, validation, and test splits:
+   ```powershell
+   uv run python extract_engineered_features.py
+   ```
+   This will output `train_split.npz`, `val_split.npz`, and `test_split.npz` in the repository root.
+3. **Resample and Clean**: Run the cells in the Jupyter Notebook **[behavior_preprocess.ipynb](behavior_preprocess.ipynb)** to load the training set (`train_split.npz`), perform random undersampling on the majority class (`others`) and random oversampling on the minority classes (`running` and `falling`) directly to `df` to resolve class imbalance, and apply square-root transformations to skewed speed/acceleration columns.
+4. **Ingest for Training**: The notebook exports **`train_cleaned.npz`** in the repository root (containing keys `X` and `y` representing the balanced, cleaned training data) which can be used to train models directly.
+5. **Detailed Documentation**: For a full description of the preprocessing formulas, mathematical bounds, and pipeline details, refer to **[docs/preprocessing_guide.md](docs/preprocessing_guide.md)**.
+
 ## API Overview
 
 Task-scoped endpoints:
