@@ -36,7 +36,7 @@ describe('Dashboard module navigation', () => {
     vi.restoreAllMocks();
   });
 
-  it('offers PPE, Sign, and Pose from one product entry point', () => {
+  it('offers PPE, Sign, and Behavior from one product entry point', () => {
     render(
       <MemoryRouter>
         <Dashboard />
@@ -45,7 +45,7 @@ describe('Dashboard module navigation', () => {
 
     expect(screen.getByRole('link', { name: 'Open PPE labeling' })).toHaveAttribute('href', '/task/ppe');
     expect(screen.getByRole('link', { name: 'Open Sign labeling' })).toHaveAttribute('href', '/task/safety_signs');
-    expect(screen.getByRole('link', { name: 'Open Pose labeling' })).toHaveAttribute('href', '/video');
+    expect(screen.getByRole('link', { name: 'Open Behavior labeling' })).toHaveAttribute('href', '/video');
   });
 
   it('shows image progress without changing module navigation', async () => {
@@ -79,7 +79,7 @@ describe('Dashboard module navigation', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('You can still open any labeling module.');
     expect(screen.getByRole('link', { name: 'Open PPE labeling' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open Sign labeling' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Pose labeling' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Behavior labeling' })).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith('Failed to load dashboard progress', expect.any(Error));
   });
 });

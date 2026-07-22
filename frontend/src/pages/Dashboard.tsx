@@ -28,7 +28,7 @@ const MODULES = [
   },
   {
     id: 'pose',
-    title: 'Pose',
+    title: 'Behavior',
     kind: 'Video labeling',
     description: 'Review worker tracks and label falling, running, or other behavior.',
     path: '/video',
@@ -89,7 +89,7 @@ export function Dashboard() {
           Smart Factory Annotation Tool
         </div>
         <span className="font-label text-label-sm text-on-surface-variant">
-          PPE · Sign · Pose
+          PPE · Sign · Behavior
         </span>
       </header>
 

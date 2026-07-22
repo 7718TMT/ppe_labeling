@@ -55,6 +55,8 @@ interface Props {
   onSeek?: (frame: number) => void;
   playing?: boolean;
   onPlayPause?: () => void;
+  /** Selected playback rate, reapplied whenever the browser loads new media. */
+  playbackRate?: number;
 }
 
 type PendingFrame = {
@@ -96,6 +98,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       onSeek,
       playing,
       onPlayPause,
+      playbackRate = 1,
     },
     forwardedRef,
   ) {
@@ -104,10 +107,12 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
     const pendingFrameRef = useRef<PendingFrame>();
     const onTimeUpdateRef = useRef(onTimeUpdate);
     const onMediaErrorRef = useRef(onMediaError);
+    const playbackRateRef = useRef(playbackRate);
     const [isFullscreen, setIsFullscreen] = useState(false);
 
     onTimeUpdateRef.current = onTimeUpdate;
     onMediaErrorRef.current = onMediaError;
+    playbackRateRef.current = playbackRate;
 
     const setVideoElement = useCallback((element: HTMLVideoElement | null) => {
       videoElementRef.current = element;
@@ -140,6 +145,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
 
       const isCurrentMedia = () => mediaGenerationRef.current === generation;
       const notifyFrame = () => { if (isCurrentMedia()) onTimeUpdateRef.current(); };
+      const restorePlaybackRate = () => { element.playbackRate = playbackRateRef.current; };
 
       const scheduleFrameSync = () => {
         if (!isCurrentMedia() || element.paused || element.ended || pendingFrameRef.current) return;
@@ -161,6 +167,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       const reportMediaError = () => { cancelFrameSync(); if (isCurrentMedia()) onMediaErrorRef.current?.(); };
 
       element.addEventListener('loadedmetadata', notifyFrame);
+      element.addEventListener('loadedmetadata', restorePlaybackRate);
       element.addEventListener('seeked', notifyFrame);
       element.addEventListener('timeupdate', notifyFrame);
       element.addEventListener('play', startFrameSync);
@@ -173,12 +180,14 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
       element.removeAttribute('src');
       element.src = source;
       element.currentTime = 0;
+      restorePlaybackRate();
       element.load();
 
       return () => {
         if (isCurrentMedia()) mediaGenerationRef.current += 1;
         cancelFrameSync();
         element.removeEventListener('loadedmetadata', notifyFrame);
+        element.removeEventListener('loadedmetadata', restorePlaybackRate);
         element.removeEventListener('seeked', notifyFrame);
         element.removeEventListener('timeupdate', notifyFrame);
         element.removeEventListener('play', startFrameSync);
@@ -190,6 +199,10 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
         element.load();
       };
     }, [source]);
+
+    useEffect(() => {
+      if (videoElementRef.current) videoElementRef.current.playbackRate = playbackRate;
+    }, [playbackRate]);
 
     // Track fullscreen state changes
     useEffect(() => {

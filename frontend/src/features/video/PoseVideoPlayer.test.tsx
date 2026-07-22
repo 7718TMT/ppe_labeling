@@ -119,6 +119,28 @@ describe('PoseVideoPlayer', () => {
     return { ...result, onTimeUpdate };
   }
 
+  it('restores the selected playback rate after switching video sources', () => {
+    const { rerender } = renderPlayer();
+    const player = document.querySelector('video') as HTMLVideoElement;
+
+    rerender(
+      <PoseVideoPlayer
+        projectId="factory floor"
+        video={videoB}
+        overlay={overlay}
+        selectedTrack={7}
+        selectedOnly={false}
+        showBoxes
+        playbackRate={0.5}
+        onSelectTrack={vi.fn()}
+        onTimeUpdate={vi.fn()}
+      />,
+    );
+    fireEvent.loadedMetadata(player);
+
+    expect(player.playbackRate).toBe(0.5);
+  });
+
   it('keeps playing and reporting media frames after pose data ends', () => {
     const { onTimeUpdate, rerender } = renderPlayer();
     const player = document.querySelector('video') as HTMLVideoElement;

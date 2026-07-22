@@ -298,6 +298,7 @@ export function VideoWorkspace() {
   const [label, setLabel] = useState<HumanVideoLabel>('others');
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [trimMode, setTrimMode] = useState(false);
   const [trimRange, setTrimRange] = useState<{ start: number; end: number }>();
   const [trimPreviewing, setTrimPreviewing] = useState(false);
@@ -1713,7 +1714,7 @@ export function VideoWorkspace() {
           <button type="button" aria-label="Toggle video browser" onClick={() => setLeftOpen(!leftOpen)} className="toolbar-icon"><PanelLeft size={18} /></button>
           <Link to="/" className="font-headline-sm font-bold text-primary">Home</Link>
           <span className="text-on-surface-variant">/</span>
-          <Link to="/video" className="text-on-surface hover:text-primary">Pose</Link>
+          <Link to="/video" className="text-on-surface hover:text-primary">Behavior</Link>
           <span className="hidden md:inline text-on-surface-variant">/</span>
           <span className="hidden md:inline truncate max-w-48">{project?.name ?? 'Loading…'}</span>
           {active && <><span className="hidden xl:inline text-on-surface-variant">/</span><span className="hidden xl:inline truncate max-w-48">{active.filename}</span></>}
@@ -1810,6 +1811,7 @@ export function VideoWorkspace() {
                   onSeek={seek}
                   onPlayPause={() => void togglePlay()}
                   onMediaError={() => setError('This video format is unsupported or the media file is damaged. Annotations and pose data are still available.')}
+                  playbackRate={playbackRate}
                 />
               </div>
 
@@ -1822,7 +1824,7 @@ export function VideoWorkspace() {
                 <button type="button" title="Forward 10 frames" onClick={() => seek(frame + 10)} className="toolbar-icon"><SkipForward size={17} /></button>
                 <input aria-label="Current frame" type="number" min={0} max={active.canonical_frame_count - 1} value={frame} onChange={(e) => seek(Number(e.target.value))} className="w-24 h-8 bg-surface-container-lowest border border-outline-variant rounded px-2 font-label text-label-sm" />
                 <span className="font-label text-label-sm text-on-surface-variant">/ {active.canonical_frame_count - 1}</span>
-                <select aria-label="Playback speed" defaultValue="1" onChange={(e) => { if (player.current) player.current.playbackRate = Number(e.target.value); }} className="h-8 bg-surface-container-lowest border border-outline-variant rounded px-2">
+                <select aria-label="Playback speed" value={playbackRate} onChange={(e) => setPlaybackRate(Number(e.target.value))} className="h-8 bg-surface-container-lowest border border-outline-variant rounded px-2">
                   <option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option>
                 </select>
                 <button type="button" aria-label="Loop" title={selectedSegment ? 'Loop selected segment' : 'Loop full video'} onClick={() => setLoop(!loop)} className={`toolbar-icon ${loop ? 'border-primary text-primary' : 'border-outline-variant'}`}>

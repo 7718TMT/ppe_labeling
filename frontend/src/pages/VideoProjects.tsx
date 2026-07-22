@@ -26,11 +26,11 @@ export function VideoProjects() {
     <div className="min-h-screen bg-background text-on-background">
       <header className="h-toolbar-height bg-surface-container border-b border-outline-variant flex items-center px-gutter gap-3">
         <Link to="/" className="font-headline-sm font-bold text-primary">Home</Link>
-        <span className="text-on-surface-variant">/</span><span>Pose Video Labeling</span>
+        <span className="text-on-surface-variant">/</span><span>Behavior Video Labeling</span>
       </header>
       <main className="max-w-6xl mx-auto p-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
-          <div><p className="font-label text-label-caps uppercase text-primary mb-2">Labeling-only workspace</p><h1 className="text-headline-lg font-headline font-semibold">Pose Video Projects</h1><p className="text-on-surface-variant mt-2">Frame-accurate worker behavior annotation.</p></div>
+          <div><p className="font-label text-label-caps uppercase text-primary mb-2">Labeling-only workspace</p><h1 className="text-headline-lg font-headline font-semibold">Behavior Video Projects</h1><p className="text-on-surface-variant mt-2">Frame-accurate worker behavior annotation.</p></div>
           <div className="flex gap-2">
             <label className="sr-only" htmlFor="project-name">Project name</label>
             <input id="project-name" value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void create(); }} placeholder="New project name" className="h-9 w-64 bg-surface-container-lowest border border-outline-variant rounded px-3 focus:border-primary outline-none" />
