@@ -129,6 +129,7 @@ class VideoExportService:
         keypoint_scores: list[np.ndarray] = []
         bboxes: list[np.ndarray] = []
         labels: list[int] = []
+        video_ids: list[str] = []
         video_hashes: dict[str, str] = {}
         for video_index, video in enumerate(videos):
             video_id = video["video_id"]
@@ -149,6 +150,7 @@ class VideoExportService:
                     keypoint_scores.append(np.asarray([frame["keypoint_scores"] if frame else [0.0] * 17 for frame in frames], dtype=np.float32))
                     bboxes.append(np.asarray([frame["bbox"] if frame else [0.0] * 4 for frame in frames], dtype=np.float32))
                     labels.append(HUMAN_LABELS.index(window["label"]))
+                    video_ids.append(video_id)
             progress((video_index + 1) / max(1, len(videos)) * 0.75)
         self._write_jsonl(directory / "annotations.jsonl", annotations)
         np.savez_compressed(
@@ -157,6 +159,7 @@ class VideoExportService:
             keypoint_scores=np.stack(keypoint_scores) if keypoint_scores else np.empty((0, 60, 17), dtype=np.float32),
             bboxes=np.stack(bboxes) if bboxes else np.empty((0, 60, 4), dtype=np.float32),
             labels=np.asarray(labels, dtype=np.int64),
+            video_ids=np.asarray(video_ids),
         )
         progress(0.90)
         manifest = {

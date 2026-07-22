@@ -13,20 +13,21 @@ import sys
 from pathlib import Path
 import numpy as np
 
-# Ensure project root is in python path
-project_root = Path(__file__).resolve().parent
+# Ensure main repository root is in python path
+behaviors_datasets_dir = Path(__file__).resolve().parent
+project_root = behaviors_datasets_dir.parent
 sys.path.append(str(project_root))
 
 from backend.app.services.video_features import extract_window_features, feature_columns
 
 
 def main():
-    export_dir = project_root / "pose-export-trial"
+    export_dir = behaviors_datasets_dir / "raw_data"
     
-    # 3 distinct output files
-    train_file = project_root / "train_split.npz"
-    val_file = project_root / "val_split.npz"
-    test_file = project_root / "test_split.npz"
+    # 3 distinct output files saved to features_extracted_data directory
+    train_file = behaviors_datasets_dir / "features_extracted_data" / "train_split.npz"
+    val_file = behaviors_datasets_dir / "features_extracted_data" / "val_split.npz"
+    test_file = behaviors_datasets_dir / "features_extracted_data" / "test_split.npz"
 
     subdirs = ["fall", "no-fall", "run"]
     
@@ -53,7 +54,7 @@ def main():
             continue
             
         print(f"Loading sub-dataset: {folder_name}...")
-        npz_data = dict(np.load(npz_path))
+        npz_data = dict(np.load(npz_path, allow_pickle=True))
         
         kps = npz_data["keypoints"]  # (N, 60, 17, 2)
         bbs = npz_data["bboxes"]     # (N, 60, 4)
@@ -68,7 +69,7 @@ def main():
         scores_list.append(scs)
         labels_list.append(lbls)
         
-        # 3. Database-Independent Track Clustering (Per Sub-dataset)
+        # 3. Track Clustering & Video ID Extraction (Per Sub-dataset)
         # Group windows into contiguous tracks strictly within this sub-dataset boundary
         local_groups = []
         current_group = [global_window_offset]
@@ -89,7 +90,7 @@ def main():
         
         print(f"  - Segmented sub-dataset into {len(local_groups)} trajectories.")
         
-        # Assign a synthetic video ID to each window based on its trajectory group
+        # Assign synthetic video IDs to windows based on their trajectory groups
         local_video_ids = [None] * n_win
         for local_group_idx, g_indices in enumerate(local_groups):
             # Each trajectory group represents a unique track (person) from a unique video segment
@@ -97,9 +98,16 @@ def main():
             for idx in g_indices:
                 local_idx = idx - global_window_offset
                 local_video_ids[local_idx] = video_name
+                
+        # If the NPZ file contains real video IDs, override synthetic IDs (except for unknowns)
+        if "video_ids" in npz_data:
+            real_vids = npz_data["video_ids"]
+            for i in range(n_win):
+                vid = str(real_vids[i])
+                if vid and vid != "unknown_video" and vid != "None":
+                    local_video_ids[i] = vid
+                    
         window_video_ids.extend(local_video_ids)
-        
-        groups.extend(local_groups)
         global_window_offset += n_win
 
     if not labels_list:
@@ -114,6 +122,12 @@ def main():
     video_ids_array = np.array(window_video_ids, dtype=object)
 
     num_windows = len(labels)
+    
+    # Group window indices by resolved video ID to ensure leakage-free video-level splitting
+    video_to_indices = {}
+    for idx, vid in enumerate(window_video_ids):
+        video_to_indices.setdefault(vid, []).append(idx)
+    groups = list(video_to_indices.values())
     
     # Exclude 'track_gap_count' and 'valid_frame_ratio' from features list
     exclude_features = {"track_gap_count", "valid_frame_ratio"}
@@ -199,27 +213,76 @@ def main():
             print(f"{s['window_index']:<8} | {s['label']:<5} | {s['track_gap_count']:<9.1f} | {len(s['null_columns']):<15} | {null_cols_str}")
     print("=" * 60)
 
-    # 4. Leakage-Free Splitting
-    # Shuffle track groups with a fixed seed for reproducibility
+    # 4. Stratified Leakage-Free Splitting
+    # For the dataset splitting process, the outputs (train, val, test) should have 
+    # the same distribution of class samples as the overall dataset (approx 70/15/15 split).
+    # We do a greedy stratified group assignment based on relative deficit normalization.
+    
+    # Calculate the class distribution of each trajectory group
+    group_class_counts = []
+    for g in groups:
+        counts_dict = {0: 0, 1: 0, 2: 0}
+        for idx in g:
+            lbl = int(labels[idx])
+            counts_dict[lbl] = counts_dict.get(lbl, 0) + 1
+        group_class_counts.append(counts_dict)
+        
+    # Get total count per class
+    unique_classes, total_counts = np.unique(labels, return_counts=True)
+    class_totals = {int(c): int(count) for c, count in zip(unique_classes, total_counts)}
+    
+    # Target ratios and counts per split per class
+    ratios = {"train": 0.70, "val": 0.15, "test": 0.15}
+    targets = {
+        split: {c: ratios[split] * class_totals.get(c, 0) for c in class_totals}
+        for split in ratios
+    }
+    
+    # Current accumulated counts per split per class
+    current_counts = {
+        split: {c: 0 for c in class_totals}
+        for split in ratios
+    }
+    
+    # Shuffle the group order with a fixed seed for reproducibility
     np.random.seed(42)
-    np.random.shuffle(groups)
-
-    train_target = int(num_windows * 0.70)
-    val_target = int(num_windows * 0.15)
-
+    group_indices = np.arange(len(groups))
+    np.random.shuffle(group_indices)
+    
     train_idx = []
     val_idx = []
     test_idx = []
-
-    current_count = 0
-    for g in groups:
-        if current_count < train_target:
-            train_idx.extend(g)
-        elif current_count < (train_target + val_target):
-            val_idx.extend(g)
-        else:
-            test_idx.extend(g)
-        current_count += len(g)
+    split_indices = {"train": train_idx, "val": val_idx, "test": test_idx}
+    
+    for g_idx in group_indices:
+        g = groups[g_idx]
+        counts = group_class_counts[g_idx]
+        
+        best_split = None
+        best_score = -float("inf")
+        
+        # Decide split assignment by maximizing relative deficit dot product
+        for split in ["train", "val", "test"]:
+            score = 0.0
+            for c in class_totals:
+                count_in_group = counts.get(c, 0)
+                if count_in_group > 0:
+                    deficit = targets[split][c] - current_counts[split][c]
+                    # Normalize deficit by global class totals to keep classes of different scales balanced
+                    normalized_deficit = deficit / class_totals[c]
+                    score += count_in_group * normalized_deficit
+            
+            if score > best_score:
+                best_score = score
+                best_split = split
+                
+        if best_split is None:
+            best_split = "train"
+            
+        # Assign group to the chosen split
+        split_indices[best_split].extend(g)
+        for c in class_totals:
+            current_counts[best_split][c] += counts.get(c, 0)
 
     # 5. Print Validation Samples
     print("\n" + "=" * 60)
