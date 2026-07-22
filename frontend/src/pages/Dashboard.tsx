@@ -29,9 +29,9 @@ const MODULES = [
   {
     id: 'pose',
     title: 'Behavior',
-    kind: 'Video labeling',
-    description: 'Review worker tracks and label falling, running, or other behavior.',
-    path: '/video',
+    kind: 'Video analysis',
+    description: 'Label worker behavior or inspect predictions from the trained model.',
+    path: '/behavior',
     icon: Video,
   },
 ] as const;
@@ -156,7 +156,7 @@ export function Dashboard() {
                     <div className="mt-auto pt-8">
                       {module.id === 'pose' ? (
                         <div className="flex items-center justify-between border-t border-outline-variant pt-4 font-label text-label-sm">
-                          <span className="text-on-surface-variant">Open video projects</span>
+                          <span className="text-on-surface-variant">Choose labeling or inference</span>
                           <ChevronRight className="text-primary transition-transform group-hover:translate-x-1" size={18} />
                         </div>
                       ) : loading ? (

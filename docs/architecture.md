@@ -244,3 +244,41 @@ Detailed pipeline stages remain backend state. The annotator UI maps videos to
 Unprocessed, Processing, Ready, or Failed and keeps annotation progress
 separate. Developer model packages and threshold configuration remain backend
 contracts; the end-user processing surface exposes only Threshold or Model.
+
+## Read-only behavior inference capability
+
+The Behavior home route separates **Labeling** from **Inference**. Labeling
+continues to use the existing project-based annotation workspace. Inference uses
+one internal `Behavior inference` project that is excluded from the labeling
+project list, so imported test videos and fixed-model outputs never appear as
+editable annotation projects.
+
+Inference deliberately reuses the durable video pipeline and storage contracts:
+
+```text
+upload -> canonicalize -> YOLO-Pose + BoT-SORT -> 60/12 windows
+       -> feature-v1 extraction -> behavior.joblib -> 3-window smoothing
+       -> same-class temporal merge -> read-only visual results
+```
+
+The fixed XGBoost artifact is configured by `BEHAVIOR_MODEL_PATH` and defaults
+to `weights/behavior.joblib`. `INFERENCE_DEVICE` is resolved to CPU or CUDA and
+applied to the loaded XGBoost booster. Before prediction, the adapter reproduces
+`behaviors_datasets/behavior_preprocess.ipynb`: it removes
+`track_gap_count`/`valid_frame_ratio`, preserves the remaining feature order,
+and applies the notebook's square-root and nested-log transforms. Raw window
+probabilities remain persisted and visible; only event generation uses a
+centered three-window probability mean followed by same-label merging.
+
+The inference API is isolated under `/api/v1/behavior-inference`. It returns a
+compact workspace, accepts video uploads, and exposes tracks, raw windows, and
+smoothed events for visualization. The player reuses the existing range-served
+media and 120-frame pose-overlay cache. Video cards reuse the existing cached
+thumbnail endpoint. Its read-only timeline shares the bounded browser-side
+frame-preview decoder used by trim mode and adds synchronized worker behavior
+lanes without annotation interactions. Falling/running events retain their
+merged ranges, while every uncovered range inside a worker lifespan is rendered
+as an explicit `others` segment. The inference worker retains model predictions
+and events but explicitly skips annotation materialization, and the React route
+exposes no track, segment, label, model, threshold, training, export, or dataset
+controls.

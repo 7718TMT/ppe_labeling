@@ -55,6 +55,7 @@ export interface VideoItem {
   width: number;
   height: number;
   processing_status: string;
+  pose_cache_version?: string | null;
   annotation_status: string;
   quality_status: string;
   annotation_revision: number;
@@ -204,6 +205,44 @@ export interface ExternalModel {
   compatibility_status: string;
   compatibility_errors: string[];
   is_active: number;
+}
+
+export interface BehaviorPredictionWindow {
+  prediction_id: string;
+  track_id: number;
+  start_frame: number;
+  end_frame: number;
+  predicted_label: HumanVideoLabel;
+  confidence: number;
+  others_probability: number;
+  running_probability: number;
+  falling_probability: number;
+  quality_status: string;
+  quality_score: number;
+}
+
+export interface BehaviorEvent {
+  suggestion_id: string;
+  track_id: number;
+  start_frame: number;
+  end_frame: number;
+  suggested_label: 'running' | 'falling';
+  confidence: number;
+}
+
+export interface BehaviorInferenceResults {
+  video: VideoItem;
+  tracks: VideoTrack[];
+  track_summaries: Array<VideoTrack & { falling_events: number; running_events: number }>;
+  windows: BehaviorPredictionWindow[];
+  events: BehaviorEvent[];
+}
+
+export interface BehaviorInferenceWorkspace {
+  project: VideoProject;
+  videos: VideoItem[];
+  jobs: ProcessingJob[];
+  model: { name: string; version: string };
 }
 
 export interface ThresholdProfile {

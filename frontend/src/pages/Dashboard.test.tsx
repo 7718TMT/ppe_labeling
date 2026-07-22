@@ -45,7 +45,7 @@ describe('Dashboard module navigation', () => {
 
     expect(screen.getByRole('link', { name: 'Open PPE labeling' })).toHaveAttribute('href', '/task/ppe');
     expect(screen.getByRole('link', { name: 'Open Sign labeling' })).toHaveAttribute('href', '/task/safety_signs');
-    expect(screen.getByRole('link', { name: 'Open Behavior labeling' })).toHaveAttribute('href', '/video');
+    expect(screen.getByRole('link', { name: 'Open Behavior labeling' })).toHaveAttribute('href', '/behavior');
   });
 
   it('shows image progress without changing module navigation', async () => {

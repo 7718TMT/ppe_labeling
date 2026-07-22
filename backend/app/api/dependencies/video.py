@@ -8,6 +8,7 @@ from fastapi import Depends
 from backend.app.core.config import Settings, get_settings
 from backend.app.repositories.video_db import VideoRepository
 from backend.app.repositories.video_storage import VideoStorageRepository
+from backend.app.services.behavior_inference_service import BehaviorInferenceService
 from backend.app.services.video_annotation_service import VideoAnnotationService
 from backend.app.services.video_export_service import VideoExportService
 from backend.app.services.video_feature_service import VideoFeatureService
@@ -52,9 +53,24 @@ def get_video_feature_service(repository: VideoRepository = Depends(get_video_re
     return VideoFeatureService(repository, storage)
 
 
-def get_video_model_service(repository: VideoRepository = Depends(get_video_repository), storage: VideoStorageRepository = Depends(get_video_storage), features: VideoFeatureService = Depends(get_video_feature_service)) -> VideoModelService:
-    return VideoModelService(repository, storage, features)
+def get_video_model_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+    features: VideoFeatureService = Depends(get_video_feature_service),
+    settings: Settings = Depends(get_settings),
+) -> VideoModelService:
+    return VideoModelService(repository, storage, features, settings.inference_device)
 
 
 def get_video_export_service(repository: VideoRepository = Depends(get_video_repository), storage: VideoStorageRepository = Depends(get_video_storage), features: VideoFeatureService = Depends(get_video_feature_service)) -> VideoExportService:
     return VideoExportService(repository, storage, features)
+
+
+def get_behavior_inference_service(
+    repository: VideoRepository = Depends(get_video_repository),
+    storage: VideoStorageRepository = Depends(get_video_storage),
+    settings: Settings = Depends(get_settings),
+) -> BehaviorInferenceService:
+    """Provide the fixed-model, read-only behavior inference workflow."""
+
+    return BehaviorInferenceService(repository, storage, settings.behavior_model_path)

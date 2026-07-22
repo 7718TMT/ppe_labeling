@@ -26,7 +26,7 @@ export function VideoProjects() {
     <div className="min-h-screen bg-background text-on-background">
       <header className="h-toolbar-height bg-surface-container border-b border-outline-variant flex items-center px-gutter gap-3">
         <Link to="/" className="font-headline-sm font-bold text-primary">Home</Link>
-        <span className="text-on-surface-variant">/</span><span>Behavior Video Labeling</span>
+        <span className="text-on-surface-variant">/</span><Link to="/behavior" className="hover:text-primary">Behavior</Link><span className="text-on-surface-variant">/</span><span>Labeling</span>
       </header>
       <main className="max-w-6xl mx-auto p-8">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">

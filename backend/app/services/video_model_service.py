@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from backend.app.core.device import resolve_inference_device
 from backend.app.domain.errors import ModelCompatibilityError, VideoValidationError
 from backend.app.domain.video import CANONICAL_FPS, FEATURE_SCHEMA_VERSION, HUMAN_LABELS
 from backend.app.repositories.video_db import VideoRepository
@@ -21,10 +22,17 @@ from backend.app.services.video_service import VideoService
 class VideoModelService:
     """Load explicitly trusted packages and preserve versioned prediction provenance."""
 
-    def __init__(self, repository: VideoRepository, storage: VideoStorageRepository, features: VideoFeatureService) -> None:
+    def __init__(
+        self,
+        repository: VideoRepository,
+        storage: VideoStorageRepository,
+        features: VideoFeatureService,
+        inference_device: str = "auto",
+    ) -> None:
         self.repository = repository
         self.storage = storage
         self.features = features
+        self.inference_device = inference_device
 
     def import_model(
         self,
@@ -148,7 +156,10 @@ class VideoModelService:
             self.repository.update_video(video_id, processing_status="model_suggestion_ready")
             return []
         columns = model["feature_columns"]
-        matrix = np.asarray([[record["raw"][column] for column in columns] for record in records], dtype=np.float32)
+        if model["metadata"].get("preprocessing") == "behavior_preprocess_v1":
+            matrix = self._behavior_matrix(records)
+        else:
+            matrix = np.asarray([[record["raw"][column] for column in columns] for record in records], dtype=np.float32)
         probabilities = self._predict(Path(model["artifact_path"]), model["adapter_type"], matrix)
         class_map = model["class_map"]
         ordered_classes = (
@@ -158,7 +169,7 @@ class VideoModelService:
         )
         indexes = {name: ordered_classes.index(name) for name in HUMAN_LABELS}
         predictions: list[dict[str, Any]] = []
-        candidates: list[dict[str, Any]] = []
+        scored_windows: list[tuple[dict[str, Any], dict[str, float]]] = []
         inference = model["metadata"].get("inference", {})
         minimum = float(inference.get("minimum_probability", 0.65))
         for record, row in zip(records, probabilities, strict=True):
@@ -170,14 +181,67 @@ class VideoModelService:
                 "others_probability": values["others"], "running_probability": values["running"],
                 "falling_probability": values["falling"], "predicted_label": label, "confidence": confidence,
             })
-            if label in {"running", "falling"} and confidence >= minimum and record["quality"]["status"] != "low_quality":
-                candidates.append({
-                    "track_id": record["track_id"], "start_frame": record["start_frame"], "end_frame": record["end_frame"],
-                    "suggested_label": label, "confidence": confidence,
-                    "source_window_ids_json": json.dumps([record["window_id"]]),
-                    "probabilities_json": json.dumps(values),
-                    "merge_config_json": json.dumps(inference, sort_keys=True), "review_status": "pending",
-                })
+            scored_windows.append((record, values))
+
+        # Keep the persisted window predictions raw for inspection. Event
+        # generation uses a centered three-window probability mean, which
+        # suppresses isolated class flips without hiding the model output.
+        candidates: list[dict[str, Any]] = []
+        by_track: dict[int, list[tuple[dict[str, Any], dict[str, float]]]] = {}
+        for record, values in scored_windows:
+            by_track.setdefault(int(record["track_id"]), []).append((record, values))
+        for track_windows in by_track.values():
+            track_windows.sort(key=lambda item: int(item[0]["start_frame"]))
+            for position, (record, _raw_values) in enumerate(track_windows):
+                neighborhood = track_windows[
+                    max(0, position - 1):min(len(track_windows), position + 2)
+                ]
+                values = {
+                    name: sum(item[1][name] for item in neighborhood)
+                    / len(neighborhood)
+                    for name in HUMAN_LABELS
+                }
+                label = max(values, key=values.get)
+                confidence = values[label]
+                # Attribute overlapping windows by midpoint so consecutive
+                # classes form one non-overlapping per-track event timeline.
+                start_frame = int(record["start_frame"])
+                end_frame = int(record["end_frame"])
+                center = (start_frame + end_frame) / 2
+                if position > 0:
+                    previous = track_windows[position - 1][0]
+                    previous_center = (
+                        int(previous["start_frame"])
+                        + int(previous["end_frame"])
+                    ) / 2
+                    start_frame = int((previous_center + center) // 2) + 1
+                if position + 1 < len(track_windows):
+                    following = track_windows[position + 1][0]
+                    following_center = (
+                        int(following["start_frame"])
+                        + int(following["end_frame"])
+                    ) / 2
+                    end_frame = int((center + following_center) // 2)
+                if (
+                    label in {"running", "falling"}
+                    and confidence >= minimum
+                    and record["quality"]["status"] != "low_quality"
+                ):
+                    candidates.append({
+                        "track_id": record["track_id"],
+                        "start_frame": start_frame,
+                        "end_frame": end_frame,
+                        "suggested_label": label,
+                        "confidence": confidence,
+                        "source_window_ids_json": json.dumps(
+                            [record["window_id"]]
+                        ),
+                        "probabilities_json": json.dumps(values),
+                        "merge_config_json": json.dumps(
+                            inference, sort_keys=True
+                        ),
+                        "review_status": "pending",
+                    })
         suggestions = self._merge(candidates, int(inference.get("maximum_merge_gap", 12)))
         self.repository.replace_model_predictions(model_id, video_id, predictions, suggestions)
         self.repository.update_video(video_id, processing_status="model_suggestion_ready")
@@ -199,6 +263,9 @@ class VideoModelService:
     def _predict(self, path: Path, adapter: str, matrix: np.ndarray) -> np.ndarray:
         model = self._load_artifact(path, adapter)
         if adapter == "joblib":
+            booster = getattr(model, "get_booster", lambda: None)()
+            if booster is not None:
+                booster.set_param({"device": resolve_inference_device(self.inference_device)})
             result = np.asarray(model.predict_proba(matrix), dtype=np.float32)
         else:
             input_name = model.get_inputs()[0].name
@@ -206,6 +273,30 @@ class VideoModelService:
         if result.ndim != 2 or result.shape != (len(matrix), 3):
             raise ModelCompatibilityError(f"Inference returned {result.shape}; expected ({len(matrix)}, 3)")
         return result
+
+    @staticmethod
+    def _behavior_matrix(records: list[dict[str, Any]]) -> np.ndarray:
+        """Reproduce the numeric preprocessing used by behavior_preprocess.ipynb."""
+
+        excluded = {"track_gap_count", "valid_frame_ratio"}
+        square_root = {
+            "ground_speed_mean", "ground_speed_max", "combined_speed_mean",
+            "combined_speed_std", "body_acceleration_max",
+        }
+        double_log = {"skeleton_spread_ratio_max", "skeleton_spread_ratio_mean"}
+        columns = [name for name in feature_columns() if name not in excluded]
+        rows: list[list[float]] = []
+        for record in records:
+            values: list[float] = []
+            for name in columns:
+                value = float(record["raw"][name])
+                if name in square_root:
+                    value = float(np.sqrt(max(0.0, value)))
+                elif name in double_log:
+                    value = float(np.log1p(np.log1p(max(0.0, value))))
+                values.append(value)
+            rows.append(values)
+        return np.asarray(rows, dtype=np.float32)
 
     @staticmethod
     def _merge(candidates: list[dict[str, Any]], gap: int) -> list[dict[str, Any]]:

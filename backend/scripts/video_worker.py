@@ -19,7 +19,7 @@ def build_worker(worker_suffix: str = "0") -> VideoWorker:
     repository = VideoRepository(settings.database_path)
     storage = VideoStorageRepository(settings.video_storage_root)
     features = VideoFeatureService(repository, storage)
-    models = VideoModelService(repository, storage, features)
+    models = VideoModelService(repository, storage, features, settings.inference_device)
     exports = VideoExportService(repository, storage, features)
 
     def model_handler(job, progress):

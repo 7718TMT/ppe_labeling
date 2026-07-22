@@ -1,10 +1,10 @@
-# Pose Video Labeling User Guide
+# Behavior Video Labeling and Inference User Guide
 
-This guide is for annotators using the Pose module. The same application also
+This guide is for users of the Behavior video module. The same application also
 contains the PPE and Sign image-labeling modules.
 
-Pose is a labeling-only workflow. It does not train models, split datasets, or
-evaluate model performance. After processing an initially unlabeled video, the
+The **Labeling** workflow does not train models, split datasets, or evaluate
+model performance. After processing an initially unlabeled video, the
 selected Threshold or AI results are automatically added as editable ground-
 truth segments. Remaining detected-track ranges are labeled `others`, so every
 track has an initial complete label timeline. Suggestion provenance is retained
@@ -25,16 +25,53 @@ This starts the API, persistent video worker, and React frontend together. Open
 The command requires ports `8000` and `5173` to be available. Press `Ctrl+C` in
 the terminal to stop every service cleanly.
 
-## 2. Open the Pose module
+## 2. Open the Behavior module
 
 The home page has three modules:
 
 - **PPE** for PPE image annotation;
 - **Sign** for safety-sign image annotation;
-- **Pose** for tracked behavior video annotation.
+- **Behavior** for video labeling and trained-model inference.
 
-Select **Pose**, create a project if needed, and open its project card. Projects
-keep their videos, annotations, processing state, and exports separate.
+Select **Behavior**, then choose one workflow:
+
+- **Labeling** opens the existing project list. Create or open a project to
+  annotate videos exactly as before.
+- **Inference** opens a separate read-only workspace for testing the trained
+  behavior model on uploaded videos.
+
+### Read-only inference
+
+Upload one or more videos in the inference workspace. Each video passes through
+YOLO-Pose extraction, worker tracking, 60-frame windows at a 12-frame stride,
+feature generation, fixed-model prediction, temporal smoothing, and event
+merging. The video list reports stage progress while this work runs.
+Ready videos are automatically placed above videos that are still processing,
+followed by failed and unprocessed items. Use the trash button on a video card
+to delete its media, cached results, predictions, and any active queue entry.
+Each card includes a cached video thumbnail, with a neutral fallback when a
+preview cannot be generated.
+
+When ready, the player displays skeletons, worker boxes and IDs, and the current
+predicted class. Select a worker, raw prediction window, or falling/running event
+to jump to its video time. The inspector provides per-worker pose quality and
+event counts; low-quality tracks are clearly warned. Raw window confidence is
+kept separate from the smoothed falling/running event list.
+
+The read-only timeline below the player contains evenly sampled frame previews,
+a synchronized playhead, and one complete behavior lane per detected worker.
+Falling and running use their action colors; all uncovered parts of the worker's
+tracked lifespan appear as gray `others` segments rather than empty space. Click
+the preview strip to seek to a frame, or select any segment to jump to its start
+and select that worker. The timeline does not allow moving or resizing events.
+Use the fullscreen button in the playback row to expand the player, playback
+controls, and read-only timeline together. Select the same button or press
+`Esc` to leave fullscreen; the timeline remains available below the video while
+fullscreen is active.
+
+Inference is intentionally read-only: there are no controls for editing
+workers, labels, boundaries, model settings, thresholds, training, exports, or
+splits.
 
 ## 3. Import videos
 

@@ -1714,7 +1714,9 @@ export function VideoWorkspace() {
           <button type="button" aria-label="Toggle video browser" onClick={() => setLeftOpen(!leftOpen)} className="toolbar-icon"><PanelLeft size={18} /></button>
           <Link to="/" className="font-headline-sm font-bold text-primary">Home</Link>
           <span className="text-on-surface-variant">/</span>
-          <Link to="/video" className="text-on-surface hover:text-primary">Behavior</Link>
+          <Link to="/behavior" className="text-on-surface hover:text-primary">Behavior</Link>
+          <span className="text-on-surface-variant">/</span>
+          <Link to="/video" className="text-on-surface hover:text-primary">Labeling</Link>
           <span className="hidden md:inline text-on-surface-variant">/</span>
           <span className="hidden md:inline truncate max-w-48">{project?.name ?? 'Loading…'}</span>
           {active && <><span className="hidden xl:inline text-on-surface-variant">/</span><span className="hidden xl:inline truncate max-w-48">{active.filename}</span></>}

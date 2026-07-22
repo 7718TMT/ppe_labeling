@@ -1958,3 +1958,42 @@ The final labeling-only implementation is complete when:
 20. No model training, data split management, or evaluation workflow exists in the application.
 21. Work and processing recover correctly after restart.
 22. Upstream changes invalidate only affected downstream artifacts.
+
+---
+
+## 40. Read-only Behavior Inference Extension
+
+The product home page exposes Behavior as a choice between the existing
+**Labeling** projects and a new **Inference** workspace. Labeling behavior and
+annotation storage remain unchanged. Inference is a separate read-only
+capability and does not materialize predictions as editable annotations.
+
+The fixed inference sequence is:
+
+```text
+video upload -> YOLO-Pose 17 keypoints -> worker tracking
+-> 60-frame windows / 12-frame stride -> feature-v1 extraction
+-> notebook-compatible preprocessing -> XGBoost prediction
+-> centered 3-window probability smoothing -> merged action events
+```
+
+The model is loaded from `BEHAVIOR_MODEL_PATH` (default
+`weights/behavior.joblib`) and follows `INFERENCE_DEVICE` for CPU/CUDA
+selection. Preprocessing must match
+`behaviors_datasets/behavior_preprocess.ipynb`, including the 141-column order,
+excluded columns, square-root transforms, and nested-log transforms.
+
+The interface must show multiple worker skeletons, boxes, worker IDs, current
+labels, raw window confidences, smoothed falling/running events, per-worker
+summaries, processing progress, and pose-quality warnings. Selecting a worker,
+window, or event seeks the player to its start. The video list places ready
+results above processing items and provides a cached thumbnail and delete
+action for every card. A read-only timeline displays sampled video-frame
+previews, the synchronized playhead, and separate complete behavior lanes for
+each worker. Merged falling/running events remain explicit, and uncovered ranges
+within the worker lifespan are displayed as `others` instead of blank space. It
+supports seeking but no boundary edits. The player, playback controls, and
+timeline form one fullscreen surface with explicit enter and exit controls;
+the timeline remains below the video in fullscreen. No annotation editing, result export,
+model configuration, threshold, training, evaluation, or split controls are
+exposed.

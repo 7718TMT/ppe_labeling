@@ -160,6 +160,8 @@ SAFETY_SIGN_IMG_SIZE=640
 SAFETY_SIGN_IOU=0.7
 SAFETY_SIGN_CLASS_NAMES=0=M014 Wear head protection|1=M015 Wear high-visibility clothing|2=P004 No thoroughfare|3=W011 Slippery surface
 SAFETY_SIGN_AGNOSTIC_NMS=false
+
+BEHAVIOR_MODEL_PATH=weights/behavior.joblib
 ```
 
 Class maps use `ID=Name` entries separated by `|`. To add a class later, update the task's class map and replace the task model with a model trained to output the same class ID. The backend filters auto-label detections to the configured class IDs, the API rejects manual labels outside the task map, and the UI renders the dropdown from the backend task metadata.
@@ -191,7 +193,7 @@ npm install
 
 ## Run The App
 
-Start the complete PPE, Sign, and Pose product from the repository root with
+Start the complete PPE, Sign, and Behavior product from the repository root with
 one command:
 
 If a previous local run did not exit cleanly, first free the backend (`8000`)

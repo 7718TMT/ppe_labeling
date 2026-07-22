@@ -25,6 +25,23 @@ class TrustedProbabilityModel:
         return np.tile(np.asarray([[.05, .85, .10]], dtype=np.float32), (len(matrix), 1))
 
 
+class AlternatingProbabilityModel:
+    """Return one isolated raw running result between falling windows."""
+
+    classes_ = np.asarray([0, 1, 2])
+
+    def predict_proba(self, matrix):
+        assert len(matrix) == 3
+        return np.asarray(
+            [
+                [.01, .01, .98],
+                [.02, .68, .30],
+                [.01, .01, .98],
+            ],
+            dtype=np.float32,
+        )
+
+
 def setup_ready_project(tmp_path: Path):
     repository = VideoRepository(tmp_path / "state.sqlite3")
     storage = VideoStorageRepository(tmp_path / "storage")
@@ -66,6 +83,106 @@ def test_trusted_joblib_predictions_and_suggestions_preserve_model_version(tmp_p
     suggestions=service.run_inference(video["video_id"],model["external_model_id"])
     assert suggestions[0]["suggested_label"]=="running"
     assert repository.list_segments(video["video_id"])[0]["source_type"]=="manual"
+
+
+def test_behavior_preprocessing_matches_training_notebook() -> None:
+    """Keep inference feature order and transforms aligned with the notebook."""
+
+    raw = {name: -4.0 for name in feature_columns()}
+    raw.update({
+        "ground_speed_mean": 9.0,
+        "skeleton_spread_ratio_max": np.e ** (np.e - 1) - 1,
+    })
+    matrix = VideoModelService._behavior_matrix([{"raw": raw}])
+    columns = [
+        name for name in feature_columns()
+        if name not in {"track_gap_count", "valid_frame_ratio"}
+    ]
+
+    assert matrix.shape == (1, 141)
+    assert matrix[0, columns.index("ground_speed_mean")] == pytest.approx(3.0)
+    assert matrix[0, columns.index("skeleton_spread_ratio_max")] == pytest.approx(1.0)
+    assert matrix[0, columns.index("torso_angle_mean")] == pytest.approx(-4.0)
+
+
+def test_event_smoothing_suppresses_an_isolated_class_flip(tmp_path: Path) -> None:
+    """Raw windows remain inspectable while merged events use smoothing."""
+
+    repository, storage, project, video = setup_ready_project(tmp_path)
+    repository.replace_windows(
+        video["video_id"],
+        [
+            {
+                "track_id": 1,
+                "start_frame": start,
+                "end_frame": start + 59,
+                "label": "others",
+                "label_reason": "inference",
+                "quality_score": .9,
+                "quality_status": "good",
+                "include_in_export": 1,
+                "exclude_reason": None,
+                "window_config_version": WINDOW_CONFIG_VERSION,
+                "feature_status": "ready",
+                "stale": 0,
+            }
+            for start in (0, 12, 24)
+        ],
+    )
+    rows = []
+    for window in repository.list_windows(video["video_id"]):
+        rows.append({
+            "window_id": window["window_id"],
+            "video_id": video["video_id"],
+            "track_id": 1,
+            "start_frame": window["start_frame"],
+            "end_frame": window["end_frame"],
+            "label": "others",
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "raw": {name: .1 for name in feature_columns()},
+            "transformed": {},
+            "provenance": {},
+            "quality": {"status": "good", "valid_frame_ratio": 1},
+        })
+    storage.write_json(
+        storage.artifact_path(
+            project["project_id"],
+            "features",
+            video["video_id"],
+            FEATURE_SCHEMA_VERSION,
+        ),
+        {"feature_schema_version": FEATURE_SCHEMA_VERSION, "windows": rows},
+    )
+    artifact_path = tmp_path / "alternating.joblib"
+    joblib.dump(AlternatingProbabilityModel(), artifact_path)
+    service = VideoModelService(
+        repository,
+        storage,
+        VideoFeatureService(repository, storage),
+    )
+    model = service.import_model(
+        project["project_id"],
+        "alternating.joblib",
+        io.BytesIO(artifact_path.read_bytes()),
+        model_manifest(),
+        True,
+    )
+
+    events = service.run_inference(
+        video["video_id"], model["external_model_id"]
+    )
+    predictions = repository.all(
+        "SELECT predicted_label FROM model_window_predictions "
+        "ORDER BY prediction_id"
+    )
+
+    assert sorted(row["predicted_label"] for row in predictions) == [
+        "falling", "falling", "running",
+    ]
+    assert len(events) == 1
+    assert events[0]["suggested_label"] == "falling"
+    assert events[0]["start_frame"] == 0
+    assert events[0]["end_frame"] == 83
 
 
 def test_atomic_export_contains_training_samples_and_manifest(tmp_path: Path) -> None:

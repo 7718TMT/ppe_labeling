@@ -71,7 +71,10 @@ class VideoService:
         return self.repository.get_project(project["project_id"])
 
     def list_projects(self) -> list[dict[str, Any]]:
-        return self.repository.list_projects()
+        return [
+            project for project in self.repository.list_projects()
+            if project["name"] != "Behavior inference"
+        ]
 
     def get_project(self, project_id: str) -> dict[str, Any]:
         result = self.repository.get_project(project_id)

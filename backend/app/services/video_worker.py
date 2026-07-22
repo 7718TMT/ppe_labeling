@@ -312,9 +312,13 @@ class VideoWorker:
             # Jobs created before the revision-aware migration are safely
             # inference-only. The user can explicitly regenerate suggestions.
             return False
-        current_revision = int(
-            self.repository.get_video(str(job["video_id"]))["annotation_revision"]
-        )
+        video = self.repository.get_video(str(job["video_id"]))
+        project = self.repository.get_project(str(video["project_id"]))
+        if project["name"] == "Behavior inference":
+            # The dedicated inference workspace persists predictions and events,
+            # but must never create editable annotation ground truth.
+            return False
+        current_revision = int(video["annotation_revision"])
         return current_revision == int(requested_revision)
 
     @staticmethod

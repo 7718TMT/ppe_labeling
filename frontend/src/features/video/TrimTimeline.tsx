@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 
+import { useFramePreviews } from './hooks/useFramePreviews';
+
 interface TrimRange {
   start: number;
   end: number;
@@ -27,59 +29,12 @@ const PREVIEW_COUNT = 12;
  */
 export function TrimTimeline({ frameCount, currentFrame, mediaUrl, range, minimumRange = 2, onFrame, onRangeCommit }: Props) {
   const [draft, setDraft] = useState(range);
-  const [previews, setPreviews] = useState<Record<number, string>>({});
+  const { previews } = useFramePreviews(frameCount, mediaUrl, PREVIEW_COUNT);
   const [hoverFrame, setHoverFrame] = useState<number>();
   const stripRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState>();
 
   useEffect(() => setDraft(range), [range]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const video = document.createElement('video');
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    const samples = Array.from(
-      new Set(Array.from({ length: PREVIEW_COUNT }, (_, index) => Math.round(
-        (index / (PREVIEW_COUNT - 1)) * Math.max(0, frameCount - 1),
-      ))),
-    );
-    let sampleIndex = 0;
-
-    const nextPreview = () => {
-      if (cancelled || sampleIndex >= samples.length) return;
-      const target = samples[sampleIndex];
-      const ratio = target / Math.max(1, frameCount - 1);
-      video.currentTime = ratio * video.duration;
-    };
-    const capturePreview = () => {
-      if (cancelled || !context || video.videoWidth === 0 || video.videoHeight === 0) return;
-      const target = samples[sampleIndex];
-      canvas.width = 160;
-      canvas.height = 90;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      try {
-        setPreviews((current) => ({ ...current, [target]: canvas.toDataURL('image/jpeg', 0.72) }));
-      } catch {
-        // Canvas previews are optional when a browser disallows frame extraction.
-      }
-      sampleIndex += 1;
-      nextPreview();
-    };
-    const start = () => { sampleIndex = 0; setPreviews({}); nextPreview(); };
-    video.muted = true;
-    video.preload = 'auto';
-    video.src = mediaUrl;
-    video.addEventListener('loadedmetadata', start);
-    video.addEventListener('seeked', capturePreview);
-    return () => {
-      cancelled = true;
-      video.removeEventListener('loadedmetadata', start);
-      video.removeEventListener('seeked', capturePreview);
-      video.removeAttribute('src');
-      video.load();
-    };
-  }, [frameCount, mediaUrl]);
 
   const frameAt = (clientX: number) => {
     const rect = stripRef.current?.getBoundingClientRect();

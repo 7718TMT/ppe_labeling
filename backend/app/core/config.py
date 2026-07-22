@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     database_path: Path = Path("data/labeling_db.sqlite3")
     video_storage_root: Path = Path("data/video_labeling")
     pose_model_path: Path = Path("weights/pose.pt")
+    behavior_model_path: Path = Path("weights/behavior.joblib")
     video_worker_concurrency: int = 1
 
     ppe_model_path: Path = Path("weights/ppe.pt")

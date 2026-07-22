@@ -2,7 +2,7 @@ import axios from 'axios';
 
 import type { BBox, ImageData, TaskInfo } from '../types';
 import type {
-  AnnotationDerivativeRefresh, ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
+  AnnotationDerivativeRefresh, BehaviorInferenceResults, BehaviorInferenceWorkspace, ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
   ProcessingOptions,
   SuggestionSource, ThresholdProfile, VideoItem, VideoProject, VideoSegment,
   VideoExportRecord, VideoTrack, VideoWorkspaceChanges, VideoWorkspaceSnapshot, VideoWorkspaceState,
@@ -103,6 +103,20 @@ function triggerBrowserDownload(url: string, filename: string): void {
 
 export async function getVideoProjects(): Promise<VideoProject[]> {
   return (await api.get<VideoProject[]>('/video-projects')).data;
+}
+
+export async function getBehaviorInferenceWorkspace(): Promise<BehaviorInferenceWorkspace> {
+  return (await api.get<BehaviorInferenceWorkspace>('/behavior-inference')).data;
+}
+
+export async function importBehaviorInferenceVideos(files: File[]): Promise<VideoItem[]> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  return (await api.post<VideoItem[]>('/behavior-inference/videos', formData)).data;
+}
+
+export async function getBehaviorInferenceResults(videoId: string): Promise<BehaviorInferenceResults> {
+  return (await api.get<BehaviorInferenceResults>(`/behavior-inference/videos/${encodeURIComponent(videoId)}/results`)).data;
 }
 
 export async function createVideoProject(name: string): Promise<VideoProject> {
