@@ -243,15 +243,6 @@ labels/
 ```
 
 If an image has no label yet, export creates an empty matching `.txt` file.
-
-## Data Preprocessing Pipeline
-
-To clean, normalize, and preprocess raw pose-video datasets for training behavior classification models (e.g., XGBoost, LightGBM, Random Forest), please refer to the detailed preprocessing guide located in the behaviors datasets directory:
-
-👉 **[behaviors_datasets/README.md](behaviors_datasets/README.md)**
-
-It documents how to set up raw data under `behaviors_datasets/raw_data/`, run the feature extraction script to produce features split files, and use the Jupyter notebook to export resampled, cleaned outputs.
-
 ## API Overview
 
 Task-scoped endpoints:
