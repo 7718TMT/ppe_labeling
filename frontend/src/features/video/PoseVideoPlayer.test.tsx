@@ -351,7 +351,7 @@ describe('PoseVideoPlayer', () => {
     expect(screen.getByText('W7')).toBeInTheDocument();
   });
 
-  it('renders the running score and fall inhibition score if features are provided', () => {
+  it('does not render the running score and fall inhibition score if features are provided', () => {
     render(
       <PoseVideoPlayer
         projectId="factory floor"
@@ -366,7 +366,9 @@ describe('PoseVideoPlayer', () => {
         onTimeUpdate={vi.fn()}
       />,
     );
-    expect(screen.getByText('W7 · R:0.85 · FI:0.15')).toBeInTheDocument();
+    expect(screen.getByText('W7')).toBeInTheDocument();
+    expect(screen.queryByText(/R:/)).toBeNull();
+    expect(screen.queryByText(/FI:/)).toBeNull();
   });
 
   it('renders the consecutive running frame count if in a running segment', () => {
@@ -395,6 +397,6 @@ describe('PoseVideoPlayer', () => {
         onTimeUpdate={vi.fn()}
       />,
     );
-    expect(screen.getByText('W7 · running · R:0.85 · FI:0.15 · RC:6')).toBeInTheDocument();
+    expect(screen.getByText('W7 · running · RC:6')).toBeInTheDocument();
   });
 });

@@ -238,11 +238,6 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
             const isActive = track.track_id === selectedTrack;
             // Look up the class label at the current frame for bbox annotation (#14)
             const classLabel = segmentLabelAt(currentSegments, track.track_id, currentFrame);
-            const activeFeature = features.find(
-              (item) => item.track_id === track.track_id && item.start_frame <= currentFrame && item.end_frame >= currentFrame
-            );
-            const runningScore = activeFeature?.transformed?.running_score;
-            const fallInhibitionScore = activeFeature?.transformed?.fall_inhibition_score;
             const activeSeg = currentSegments.find(
               (s) => s.track_id === track.track_id && currentFrame >= s.start_frame && currentFrame <= s.end_frame,
             );
@@ -277,7 +272,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                     <rect
                       x={track.bbox[0]}
                       y={Math.max(0, track.bbox[1] - 22)}
-                      width={Math.max(track.bbox[2] - track.bbox[0], runningScore !== undefined || fallInhibitionScore !== undefined ? (consecutiveRunCount > 0 ? 220 : 160) : 80)}
+                      width={Math.max(track.bbox[2] - track.bbox[0], consecutiveRunCount > 0 ? 140 : (classLabel ? 100 : 60))}
                       height={20}
                       fill={bboxFill}
                     />
@@ -289,7 +284,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       fill="#fff"
                       fontWeight="bold"
                     >
-                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}${runningScore !== undefined ? ` · R:${runningScore.toFixed(2)}` : ''}${fallInhibitionScore !== undefined ? ` · FI:${fallInhibitionScore.toFixed(2)}` : ''}${consecutiveRunCount > 0 ? ` · RC:${consecutiveRunCount}` : ''}`}
+                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}${consecutiveRunCount > 0 ? ` · RC:${consecutiveRunCount}` : ''}`}
                     </text>
                   </>
                 )}
