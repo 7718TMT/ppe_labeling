@@ -13,6 +13,10 @@ export default defineConfig(({ mode }) => {
         '/api/v1': backendUrl,
         '/media': backendUrl
       }
+    },
+    test: {
+      environment: 'jsdom',
+      setupFiles: './src/test/setup.ts'
     }
   }
 })

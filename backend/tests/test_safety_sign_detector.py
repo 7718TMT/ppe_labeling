@@ -4,7 +4,7 @@ import sys
 
 import numpy as np
 
-from backend.app.ml.safety_sign_detector import SafetySignDetector
+from backend.app.inference.safety_sign_detector import SafetySignDetector
 
 
 class _FakeTensor:

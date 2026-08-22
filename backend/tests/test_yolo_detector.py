@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from backend.app.ml.yolo_detector import PpeDetector
+from backend.app.inference.ppe_detector import PpeDetector
 
 
 class _FakeTensor:

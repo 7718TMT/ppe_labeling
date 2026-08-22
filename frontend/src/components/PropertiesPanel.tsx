@@ -1,5 +1,6 @@
-import { CheckCircle2, Loader2, RotateCcw, Trash2, Wand2 } from 'lucide-react';
+import { CheckCircle2, Loader2, RotateCcw, Trash2, Wand2, X } from 'lucide-react';
 
+import { getClassAccent } from '../constants';
 import type { BBox } from '../types';
 
 interface PropertiesPanelProps {
@@ -10,28 +11,14 @@ interface PropertiesPanelProps {
   selectedIndices: number[];
   drawingClass: number | null;
   selectedImage: string | null;
+  isApproved: boolean;
   onToggleAddMode: (classId: number) => void;
   onSelectedClassChange: (classId: number) => void;
   onDelete: () => void;
   onReset: () => void;
   onAutoLabelCurrent: () => void;
-  onApprove: () => void;
+  onApprovalChange: (isApproved: boolean) => void;
   processingAction: string | null;
-}
-
-const CLASS_ACCENT_COLORS: Record<number, { border: string; text: string; bg: string }> = {
-  0: { border: '#10b981', text: '#10b981', bg: 'rgba(6, 78, 59, 0.2)' },
-  1: { border: '#eab308', text: '#eab308', bg: 'rgba(113, 63, 18, 0.2)' },
-  2: { border: '#3b82f6', text: '#3b82f6', bg: 'rgba(30, 58, 138, 0.2)' },
-  3: { border: '#ef4444', text: '#ef4444', bg: 'rgba(127, 29, 29, 0.2)' },
-  4: { border: '#a855f7', text: '#a855f7', bg: 'rgba(88, 28, 135, 0.2)' },
-  5: { border: '#f97316', text: '#f97316', bg: 'rgba(124, 45, 18, 0.2)' },
-  6: { border: '#06b6d4', text: '#06b6d4', bg: 'rgba(22, 78, 99, 0.2)' },
-  7: { border: '#ec4899', text: '#ec4899', bg: 'rgba(131, 24, 67, 0.2)' },
-};
-
-function getClassAccent(classId: number) {
-  return CLASS_ACCENT_COLORS[classId] ?? CLASS_ACCENT_COLORS[classId % 8];
 }
 
 export function PropertiesPanel({
@@ -42,13 +29,14 @@ export function PropertiesPanel({
   selectedIndices,
   drawingClass,
   selectedImage,
+  isApproved,
   processingAction,
   onToggleAddMode,
   onSelectedClassChange,
   onDelete,
   onReset,
   onAutoLabelCurrent,
-  onApprove,
+  onApprovalChange,
 }: PropertiesPanelProps) {
   const selectedCount = selectedIndices.length;
   const selectedClassIds = [...new Set(selectedIndices.map((index) => labels[index]?.class_id).filter((classId) => classId !== undefined))];
@@ -62,7 +50,7 @@ export function PropertiesPanel({
         <div className="space-y-2">
           {addClassIds.map((id) => {
             const isActive = drawingClass === id;
-            const accent = getClassAccent(id);
+            const accent = getClassAccent(id, 0.2);
             return (
               <button
                 key={id}
@@ -168,12 +156,25 @@ export function PropertiesPanel({
       {/* Bottom Action */}
       <div className="p-4 border-t border-outline-variant bg-surface-container-highest">
         <button
-          onClick={onApprove}
+          onClick={() => onApprovalChange(!isApproved)}
           disabled={processingAction !== null || !selectedImage}
-          className="w-full py-2 bg-primary-container text-on-primary-container font-label-sm text-label-sm rounded hover:bg-primary-fixed transition-colors active:scale-95 duration-100 font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+          className={`w-full py-2 font-label-sm text-label-sm rounded transition-colors active:scale-95 duration-100 font-bold flex items-center justify-center gap-2 disabled:opacity-50 ${
+            isApproved
+              ? 'border hover:opacity-80'
+              : 'bg-primary-container text-on-primary-container hover:bg-primary-fixed'
+          }`}
+          style={
+            isApproved
+              ? {
+                  borderColor: getClassAccent(3, 0.2).border,
+                  color: getClassAccent(3, 0.2).text,
+                  backgroundColor: getClassAccent(3, 0.2).bg,
+                }
+              : undefined
+          }
         >
-          {processingAction === 'approve' ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-          Approve Current Image
+          {processingAction === 'approve' ? <Loader2 className="animate-spin" size={16} /> : isApproved ? <X size={16} /> : <CheckCircle2 size={16} />}
+          {isApproved ? 'Unapprove Current Image' : 'Approve Current Image'}
         </button>
       </div>
     </aside>

@@ -1,120 +1,145 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Upload, Loader2 } from 'lucide-react';
+import { Loader2, Upload } from 'lucide-react';
 
-import {
-  autoLabelAll,
-  autoLabelImage,
-  deleteImage,
-  exportAll,
-  exportImage,
-  generateVisualizations,
-  getImages,
-  getLabels,
-  getTasks,
-  imageUrl,
-  renameSequential,
-  saveLabels,
-  uploadImages,
-  setApproval,
-} from '../api/client';
 import { AnnotationCanvas } from '../components/AnnotationCanvas';
 import { FilmstripPanel } from '../components/FilmstripPanel';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { TopNavBar } from '../components/TopNavBar';
-import { DEFAULT_TASK_ID, FALLBACK_CLASS_NAMES } from '../constants';
-import type { BBox, ImageData, InteractionMode, SelectionRect, TaskInfo } from '../types';
+import { imageUrl } from '../api/client';
+import { DEFAULT_TASK_ID } from '../constants';
+import { useAnnotationEditor } from '../features/annotation/hooks/useAnnotationEditor';
+import { useWorkspaceActions } from '../features/annotation/hooks/useWorkspaceActions';
+import { useWorkspaceData } from '../features/annotation/hooks/useWorkspaceData';
+import { boxFromCanvasAttributes, clampCanvasPosition } from '../features/annotation/utils/canvasGeometry';
+import type { InteractionMode, SelectionRect } from '../types';
 
+/** Composes task data, label editing, dataset actions, and the Konva canvas. */
 export const Workspace = () => {
   const { taskId } = useParams<{ taskId: string }>();
   const selectedTaskId = taskId || DEFAULT_TASK_ID;
-  const [tasks, setTasks] = useState<TaskInfo[]>([]);
-  
+  const {
+    tasks,
+    images,
+    selectedImage,
+    setSelectedImage,
+    refreshImages,
+    selectedImageApproved,
+    classNames,
+    assignClassIds,
+    addClassIds,
+  } = useWorkspaceData({ selectedTaskId });
+  const {
+    labels,
+    setLabels,
+    loading,
+    isSaving,
+    setIsDirty,
+    selectedIndices,
+    setSelectedIndices,
+    drawingClass,
+    setDrawingClass,
+    loadLabels,
+    flushPendingLabels,
+    clearForNoImage,
+    clearAfterRename,
+    prepareForLoadedImage,
+    pushToHistory,
+    undo,
+    toggleAddMode,
+    deleteSelected,
+    changeSelectedClass,
+  } = useAnnotationEditor({ selectedTaskId, selectedImage, refreshImages });
+
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
-  const [images, setImages] = useState<ImageData[]>([]);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [labels, setLabels] = useState<BBox[]>([]);
-  const [history, setHistory] = useState<BBox[][]>([]);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
-  const [loading, setLoading] = useState(false);
-  const [processingAction, setProcessingAction] = useState<string | null>(null);
-  const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [imageObj, setImageObj] = useState<HTMLImageElement | null>(null);
   const [scale, setScale] = useState(1);
   const [initialScale, setInitialScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isSaving, setIsSaving] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('select');
   const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
-  const [drawingClass, setDrawingClass] = useState<number | null>(null);
   const [overlayVisible, setOverlayVisible] = useState(true);
-  const [isDirty, setIsDirty] = useState(false);
 
   const isSpacePressedRef = useRef(false);
   const stageRef = useRef<any>(null);
   const transformerRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const classNames: Record<number, string> = Object.fromEntries(
-    Object.entries(selectedTask?.class_names ?? FALLBACK_CLASS_NAMES[selectedTaskId] ?? {}).map(([id, name]) => [Number(id), name]),
-  );
-  const temporaryClassId = selectedTask?.temporary_class_id ?? null;
-  const assignClassIds = Object.keys(classNames)
-    .map(Number)
-    .filter((classId) => classId !== temporaryClassId)
-    .sort((a, b) => a - b);
-  const addClassIds = temporaryClassId !== null && temporaryClassId !== undefined
-      ? [temporaryClassId]
-      : assignClassIds;
-  const selectedClassIds = [...new Set(selectedIndices.map((index) => labels[index]?.class_id).filter((classId) => classId !== undefined))];
-  const selectedClassId = selectedClassIds.length === 1 ? selectedClassIds[0] : null;
-  const selectedAssignableClassId = selectedClassId !== null && assignClassIds.includes(selectedClassId) ? selectedClassId : null;
+  const clearWorkspaceAfterRename = useCallback(() => {
+    setSelectedImage(null);
+    clearAfterRename();
+    setImageObj(null);
+  }, [clearAfterRename, setSelectedImage]);
 
-  useEffect(() => {
-    void refreshTasks();
-    updateContainerSize();
-    window.addEventListener('resize', updateContainerSize);
-    return () => window.removeEventListener('resize', updateContainerSize);
+  const clearWorkspaceAfterDelete = useCallback(() => {
+    setSelectedImage(null);
+    clearForNoImage();
+    setImageObj(null);
+  }, [clearForNoImage, setSelectedImage]);
+
+  const {
+    processingAction,
+    handleSelectImage,
+    goToNext,
+    goToPrev,
+    handleProcess,
+    handleUploadImages,
+    handleAutoLabelCurrent,
+    handleExportAll,
+    handleRenameSequential,
+    handleApprovalChange,
+    handleReset,
+    handleDeleteImage,
+  } = useWorkspaceActions({
+    selectedTaskId,
+    selectedImage,
+    images,
+    setSelectedImage,
+    refreshImages,
+    flushPendingLabels,
+    loadLabels,
+    clearAfterRename: clearWorkspaceAfterRename,
+    clearAfterDelete: clearWorkspaceAfterDelete,
+  });
+
+  const updateContainerSize = useCallback(() => {
+    if (!containerRef.current) return;
+    setContainerSize({
+      width: containerRef.current.clientWidth,
+      height: containerRef.current.clientHeight,
+    });
   }, []);
 
   useEffect(() => {
-    void refreshImages(selectedTaskId);
-    setSelectedImage(null);
-    setLabels([]);
-    setHistory([]);
-    setSelectedIndices([]);
-    setDrawingClass(null);
-    setIsDirty(false);
-  }, [selectedTaskId]);
-
-  useEffect(() => {
-    if (!selectedImage || !isDirty) return;
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-
-    saveTimeoutRef.current = setTimeout(() => {
-      void autoSaveLabels();
-    }, 1000);
-
-    return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    };
-  }, [labels, isDirty, selectedImage, selectedTaskId]);
+    updateContainerSize();
+    window.addEventListener('resize', updateContainerSize);
+    return () => window.removeEventListener('resize', updateContainerSize);
+  }, [updateContainerSize]);
 
   useEffect(() => {
     if (selectedIndices.length > 0 && transformerRef.current) {
-      const nodes = selectedIndices.map((index) => stageRef.current?.findOne(`.box-${index}`)).filter(Boolean);
+      const nodes = selectedIndices
+        .map((index) => stageRef.current?.findOne(`.box-${index}`))
+        .filter(Boolean);
       const transformer = transformerRef.current;
       transformer.nodes(nodes);
 
       const hitSize = 20 / scale;
-      ['top-left', 'top-center', 'top-right', 'middle-right', 'bottom-right', 'bottom-center', 'bottom-left', 'middle-left'].forEach((name) => {
+      [
+        'top-left',
+        'top-center',
+        'top-right',
+        'middle-right',
+        'bottom-right',
+        'bottom-center',
+        'bottom-left',
+        'middle-left',
+      ].forEach((name) => {
         const anchor = transformer.findOne(`.${name}`);
         if (anchor) {
           anchor.hitFunc((context: any, shape: any) => {
@@ -139,13 +164,12 @@ export const Workspace = () => {
     } else if (transformerRef.current) {
       transformerRef.current.nodes([]);
     }
-  }, [selectedIndices, labels, scale]);
+  }, [labels, scale, selectedIndices]);
 
   useEffect(() => {
     if (!selectedImage) {
-      setLabels([]);
+      clearForNoImage();
       setImageObj(null);
-      setIsDirty(false);
       return;
     }
 
@@ -167,11 +191,21 @@ export const Workspace = () => {
         x: (containerSize.width - image.width * fitScale) / 2,
         y: (containerSize.height - image.height * fitScale) / 2,
       });
-      setHistory([]);
-      setSelectedIndices([]);
-      setDrawingClass(null);
+      prepareForLoadedImage();
     };
-  }, [selectedImage, selectedTaskId, containerSize.width, containerSize.height]);
+  }, [
+    clearForNoImage,
+    containerSize.height,
+    containerSize.width,
+    loadLabels,
+    prepareForLoadedImage,
+    selectedImage,
+    selectedTaskId,
+  ]);
+
+  const clampPosition = useCallback((x: number, y: number, currentScale: number) => (
+    clampCanvasPosition({ x, y }, currentScale, initialScale, containerSize, imageSize)
+  ), [containerSize, imageSize, initialScale]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -190,7 +224,7 @@ export const Workspace = () => {
         undo();
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         if (document.activeElement?.tagName === 'INPUT') return;
-        handleDelete();
+        deleteSelected();
       } else if (event.key === 'Escape') {
         setDrawingClass(null);
         setSelectionRect(null);
@@ -204,10 +238,10 @@ export const Workspace = () => {
         setPosition((current) => clampPosition(current.x, current.y - 50, scale));
       } else if (event.key.toLowerCase() === 'd') {
         if (document.activeElement?.tagName === 'INPUT') return;
-        goToNext();
+        void goToNext();
       } else if (event.key.toLowerCase() === 'a') {
         if (document.activeElement?.tagName === 'INPUT') return;
-        goToPrev();
+        void goToPrev();
       } else if (event.key.toLowerCase() === 'h') {
         if (document.activeElement?.tagName === 'INPUT') return;
         setInteractionMode('pan');
@@ -230,312 +264,7 @@ export const Workspace = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedIndices, labels, history, isSpacePressed, scale]);
-
-  const clampPosition = (x: number, y: number, currentScale: number) => {
-    const stageWidth = containerSize.width;
-    const stageHeight = containerSize.height;
-    const imageWidth = imageSize.width * currentScale;
-    const imageHeight = imageSize.height * currentScale;
-
-    let nextX = x;
-    let nextY = y;
-
-    if (imageWidth <= stageWidth) {
-      nextX = Math.abs(currentScale - initialScale) < 0.001 ? (stageWidth - imageWidth) / 2 : Math.max(0, Math.min(stageWidth - imageWidth, x));
-    } else {
-      nextX = Math.max(stageWidth - imageWidth, Math.min(0, x));
-    }
-
-    if (imageHeight <= stageHeight) {
-      nextY = Math.abs(currentScale - initialScale) < 0.001 ? (stageHeight - imageHeight) / 2 : Math.max(0, Math.min(stageHeight - imageHeight, y));
-    } else {
-      nextY = Math.max(stageHeight - imageHeight, Math.min(0, y));
-    }
-
-    return { x: nextX, y: nextY };
-  };
-
-  const updateContainerSize = () => {
-    if (!containerRef.current) return;
-    setContainerSize({
-      width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight,
-    });
-  };
-
-  const refreshTasks = async () => {
-    try {
-      const taskList = await getTasks();
-      setTasks(taskList);
-      
-    } catch (error) {
-      console.error('Error fetching tasks:', error);
-    }
-  };
-
-  const refreshImages = async (taskId = selectedTaskId) => {
-    try {
-      const imageList = await getImages(taskId);
-      setImages(imageList);
-      setSelectedImage((current) => (current && imageList.some((image) => image.name === current) ? current : imageList[0]?.name ?? null));
-    } catch (error) {
-      console.error('Error fetching images:', error);
-    }
-  };
-
-  const loadLabels = async (filename: string) => {
-    setLoading(true);
-    try {
-      setLabels(await getLabels(selectedTaskId, filename));
-      setHistory([]);
-      setIsDirty(false);
-    } catch (error) {
-      console.error('Error fetching labels:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const persistLabels = async (nextLabels = labels, options: { refresh?: boolean } = {}) => {
-    if (!selectedImage) return;
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    setIsSaving(true);
-    try {
-      await saveLabels(selectedTaskId, selectedImage, nextLabels);
-      setIsDirty(false);
-      if (options.refresh ?? true) {
-        await refreshImages(selectedTaskId);
-      }
-    } catch (error) {
-      console.error('Error saving labels:', error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const flushPendingLabels = async () => {
-    if (!selectedImage || !isDirty) return;
-    await persistLabels(labels, { refresh: false });
-  };
-
-  const autoSaveLabels = async () => {
-    await persistLabels(labels);
-  };
-
-  const handleProcess = async () => {
-    setProcessingAction('autoLabelAll');
-    
-    try {
-      await flushPendingLabels();
-      await autoLabelAll(selectedTaskId);
-      await refreshImages(selectedTaskId);
-      if (selectedImage) await loadLabels(selectedImage);
-      alert('Processing completed!');
-    } catch (error) {
-      console.error('Processing failed:', error);
-      alert('Processing failed. Check console for details.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleUploadImages = async (files: File[]) => {
-    setProcessingAction('upload');
-    
-    try {
-      await flushPendingLabels();
-      await uploadImages(selectedTaskId, files);
-      await refreshImages(selectedTaskId);
-    } catch (error) {
-      console.error('Upload failed:', error);
-      alert('Upload failed. Check console for details.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleAutoLabelCurrent = async () => {
-    setProcessingAction('autoLabelCurrent');
-    if (!selectedImage) return;
-    
-    try {
-      await autoLabelImage(selectedTaskId, selectedImage);
-      await loadLabels(selectedImage);
-      await refreshImages(selectedTaskId);
-    } catch (error) {
-      console.error('Auto-label failed:', error);
-      alert('Auto-label failed. Check console for details.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleExportCurrent = async () => {
-    if (!selectedImage) return;
-    
-    try {
-      await flushPendingLabels();
-      await exportImage(selectedTaskId, selectedImage);
-      await refreshImages(selectedTaskId);
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Export failed. Check console for details.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleExportAll = async () => {
-    setProcessingAction('exportAll');
-    
-    try {
-      await flushPendingLabels();
-      exportAll(selectedTaskId);
-    } catch (error) {
-      console.error('Export failed:', error);
-      alert('Export failed. Check console for details.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleRenameSequential = async () => {
-    if (!confirm('Rename all images and matching labels in this task to image_00000, image_00001, and so on?')) return;
-    setProcessingAction('renameSequential');
-    if (!confirm('Rename all images and matching labels in this task to image_00000, image_00001, and so on?')) return;
-    
-    try {
-      await flushPendingLabels();
-      await renameSequential(selectedTaskId);
-      setSelectedImage(null);
-      setLabels([]);
-      setImageObj(null);
-      setHistory([]);
-      setSelectedIndices([]);
-      await refreshImages(selectedTaskId);
-    } catch (error) {
-      console.error('Rename failed:', error);
-      alert('Rename failed. Check console for details.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleVisualize = async () => {
-    
-    try {
-      await flushPendingLabels();
-      await generateVisualizations(selectedTaskId);
-      await refreshImages(selectedTaskId);
-      alert('Visualization completed! Check data/labeled_images.');
-    } catch (error) {
-      console.error('Visualization failed:', error);
-      alert('Visualization failed.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-
-  const handleApprove = async () => {
-    if (!selectedImage) return;
-    setProcessingAction('approve');
-    if (!selectedImage) return;
-    
-    try {
-      await setApproval(selectedTaskId, selectedImage, true);
-      await refreshImages(selectedTaskId);
-      goToNext();
-    } catch (error) {
-      console.error('Approve failed:', error);
-      alert('Approve failed. Check console.');
-    } finally {
-      setProcessingAction(null);
-    }
-  };
-
-  const handleReset = async () => {
-    if (!selectedImage) return;
-    if (!confirm('Are you sure? This will remove manual changes for this image and re-run AI detection.')) return;
-
-    setIsResetting(true);
-    try {
-      await autoLabelImage(selectedTaskId, selectedImage);
-      await loadLabels(selectedImage);
-      await refreshImages(selectedTaskId);
-    } catch (error) {
-      console.error('Reset failed:', error);
-      alert('Reset failed. Check console.');
-    } finally {
-      setIsResetting(false);
-    }
-  };
-
-  const handleDeleteImage = async (event: React.MouseEvent, filename: string) => {
-    event.stopPropagation();
-    if (!confirm(`Are you sure you want to delete ${filename}? This cannot be undone.`)) return;
-
-    try {
-      await deleteImage(selectedTaskId, filename);
-      if (selectedImage === filename) {
-        setSelectedImage(null);
-        setLabels([]);
-        setImageObj(null);
-        setIsDirty(false);
-      }
-      await refreshImages(selectedTaskId);
-    } catch (error) {
-      console.error('Error deleting image:', error);
-      alert('Failed to delete image.');
-    }
-  };
-
-  const pushToHistory = (newLabels: BBox[]) => {
-    setHistory((current) => [...current, labels]);
-    setLabels(newLabels);
-    setIsDirty(true);
-  };
-
-  const undo = () => {
-    if (history.length === 0) return;
-    const previous = history[history.length - 1];
-    setHistory((current) => current.slice(0, -1));
-    setLabels(previous);
-    setSelectedIndices([]);
-    setIsDirty(true);
-  };
-
-  const toggleAddMode = (classId: number) => {
-    setDrawingClass((current) => (current === classId ? null : classId));
-    setSelectedIndices([]);
-  };
-
-  const handleSelectImage = async (filename: string) => {
-    await flushPendingLabels();
-    setSelectedImage(filename);
-  };
-
-  const goToNext = async () => {
-    if (!selectedImage || images.length === 0) return;
-    const currentIndex = images.findIndex((image) => image.name === selectedImage);
-    if (currentIndex < images.length - 1) {
-      await flushPendingLabels();
-      setSelectedImage(images[currentIndex + 1].name);
-    }
-  };
-
-  const goToPrev = async () => {
-    if (!selectedImage || images.length === 0) return;
-    const currentIndex = images.findIndex((image) => image.name === selectedImage);
-    if (currentIndex > 0) {
-      await flushPendingLabels();
-      setSelectedImage(images[currentIndex - 1].name);
-    }
-  };
+  }, [clampPosition, deleteSelected, goToNext, goToPrev, scale, undo]);
 
   const handleWheel = (event: any) => {
     event.evt.preventDefault();
@@ -550,15 +279,26 @@ export const Workspace = () => {
     };
 
     const speed = 1.1;
-    const newScale = Math.max(initialScale, Math.min(15, event.evt.deltaY > 0 ? oldScale / speed : oldScale * speed));
-    const newPosition = clampPosition(pointer.x - mousePointTo.x * newScale, pointer.y - mousePointTo.y * newScale, newScale);
+    const newScale = Math.max(
+      initialScale,
+      Math.min(15, event.evt.deltaY > 0 ? oldScale / speed : oldScale * speed),
+    );
+    const newPosition = clampPosition(
+      pointer.x - mousePointTo.x * newScale,
+      pointer.y - mousePointTo.y * newScale,
+      newScale,
+    );
 
     setScale(newScale);
     setPosition(newPosition);
   };
 
   const handleMouseDown = (event: any) => {
-    if (event.evt.button === 2 || event.evt.button === 1 || (event.evt.button === 0 && (isSpacePressedRef.current || interactionMode === 'pan'))) {
+    if (
+      event.evt.button === 2
+      || event.evt.button === 1
+      || (event.evt.button === 0 && (isSpacePressedRef.current || interactionMode === 'pan'))
+    ) {
       event.evt.preventDefault();
       setIsPanning(true);
       return;
@@ -585,7 +325,9 @@ export const Workspace = () => {
 
   const handleMouseMove = (event: any) => {
     if (isPanning) {
-      setPosition((current) => clampPosition(current.x + event.evt.movementX, current.y + event.evt.movementY, scale));
+      setPosition((current) => (
+        clampPosition(current.x + event.evt.movementX, current.y + event.evt.movementY, scale)
+      ));
       return;
     }
     if (!selectionRect) return;
@@ -651,52 +393,28 @@ export const Workspace = () => {
 
   const handleBoxChange = (index: number, newAttrs: any) => {
     const nextLabels = [...labels];
-    nextLabels[index] = boxFromAttrs(nextLabels[index], newAttrs);
+    nextLabels[index] = boxFromCanvasAttributes(nextLabels[index], newAttrs, imageSize);
     pushToHistory(nextLabels);
   };
 
   const handleMultiBoxChange = (changes: { index: number; newAttrs: any }[]) => {
     const nextLabels = [...labels];
     changes.forEach(({ index, newAttrs }) => {
-      nextLabels[index] = boxFromAttrs(nextLabels[index], newAttrs);
+      nextLabels[index] = boxFromCanvasAttributes(nextLabels[index], newAttrs, imageSize);
     });
     pushToHistory(nextLabels);
   };
 
-  const boxFromAttrs = (current: BBox, newAttrs: any): BBox => {
-    const xCenter = (newAttrs.x + newAttrs.width / 2) / imageSize.width;
-    const yCenter = (newAttrs.y + newAttrs.height / 2) / imageSize.height;
-    const width = newAttrs.width / imageSize.width;
-    const height = newAttrs.height / imageSize.height;
-
-    return {
-      ...current,
-      x_center: Math.max(0, Math.min(1, xCenter)),
-      y_center: Math.max(0, Math.min(1, yCenter)),
-      w: Math.max(0.001, Math.min(1, width)),
-      h: Math.max(0.001, Math.min(1, height)),
-    };
-  };
-
-  const handleDelete = () => {
-    if (selectedIndices.length === 0) return;
-    pushToHistory(labels.filter((_, index) => !selectedIndices.includes(index)));
-    setSelectedIndices([]);
-  };
-
   const handleSelectBox = (index: number, additive: boolean) => {
     if (additive) {
-      setSelectedIndices((current) => (current.includes(index) ? current.filter((selectedIndex) => selectedIndex !== index) : [...current, index]));
+      setSelectedIndices((current) => (
+        current.includes(index)
+          ? current.filter((selectedIndex) => selectedIndex !== index)
+          : [...current, index]
+      ));
     } else {
       setSelectedIndices([index]);
     }
-  };
-
-  const handleSelectedClassChange = (classId: number) => {
-    if (selectedIndices.length === 0) return;
-    const nextLabels = labels.map((box, index) => (selectedIndices.includes(index) ? { ...box, class_id: classId } : box));
-    pushToHistory(nextLabels);
-    void persistLabels(nextLabels);
   };
 
   const handleBoxDragEnd = (index: number, event: any) => {
@@ -772,7 +490,6 @@ export const Workspace = () => {
         images={images}
         leftSidebarOpen={leftSidebarOpen}
         rightSidebarOpen={rightSidebarOpen}
-        onTaskChange={() => {}} 
         onOverlayVisibleChange={setOverlayVisible}
         onInteractionModeChange={setInteractionMode}
         onUndo={undo}
@@ -805,7 +522,7 @@ export const Workspace = () => {
               <p className="text-body-md text-on-surface-variant mb-6">
                 Get started by uploading images for this task. You can upload multiple files at once.
               </p>
-              
+
               <label className={`bg-primary-container text-on-primary-container font-label-lg font-bold px-6 py-3 rounded-xl hover:bg-primary-fixed transition-colors cursor-pointer active:scale-95 duration-100 flex items-center gap-2 ${processingAction === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
                 {processingAction === 'upload' ? <Loader2 className="animate-spin" size={20} /> : <Upload size={20} />}
                 {processingAction === 'upload' ? 'Uploading...' : 'Select Images'}
@@ -816,7 +533,7 @@ export const Workspace = () => {
                   className="hidden"
                   onChange={(event) => {
                     const files = Array.from(event.target.files ?? []);
-                    if (files.length > 0) handleUploadImages(files);
+                    if (files.length > 0) void handleUploadImages(files);
                     event.target.value = '';
                   }}
                   disabled={processingAction !== null}
@@ -862,13 +579,14 @@ export const Workspace = () => {
             selectedIndices={selectedIndices}
             drawingClass={drawingClass}
             selectedImage={selectedImage}
+            isApproved={selectedImageApproved}
             processingAction={processingAction}
             onToggleAddMode={toggleAddMode}
-            onDelete={handleDelete}
-            onSelectedClassChange={handleSelectedClassChange}
+            onDelete={deleteSelected}
+            onSelectedClassChange={changeSelectedClass}
             onReset={handleReset}
             onAutoLabelCurrent={handleAutoLabelCurrent}
-            onApprove={handleApprove}
+            onApprovalChange={handleApprovalChange}
           />
         )}
       </main>

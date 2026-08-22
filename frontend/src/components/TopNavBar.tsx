@@ -14,7 +14,6 @@ interface TopNavBarProps {
   images: ImageData[];
   leftSidebarOpen: boolean;
   rightSidebarOpen: boolean;
-  onTaskChange: (taskId: string) => void;
   onOverlayVisibleChange: (visible: boolean) => void;
   onInteractionModeChange: (mode: InteractionMode) => void;
   onUndo: () => void;

@@ -1,8 +1,5 @@
-from pathlib import Path
-
-from fastapi import HTTPException
-
-from backend.app.services import storage
+from backend.app.domain.errors import ImageNotFoundError, UnreadableImageError
+from backend.app.repositories.dataset import DatasetRepository
 
 
 CLASS_COLORS = [
@@ -20,20 +17,17 @@ CLASS_COLORS = [
 class VisualizationService:
     def __init__(
         self,
-        image_dir: Path,
-        label_dir: Path,
-        visualization_dir: Path,
+        dataset: DatasetRepository,
         class_names: dict[int, str],
     ) -> None:
-        self.image_dir = image_dir
-        self.label_dir = label_dir
-        self.visualization_dir = visualization_dir
+        self.dataset = dataset
         self.class_names = class_names
 
     def generate_all(self) -> int:
+        self.dataset.ensure_unique_image_stems()
         generated = 0
-        for image_path in storage.image_paths(self.image_dir):
-            label_path = storage.label_path_for(self.label_dir, image_path.name)
+        for image_path in self.dataset.image_paths():
+            label_path = self.dataset.label_path_for(image_path.name)
             if not label_path.exists():
                 continue
             self.generate_one(image_path.name)
@@ -43,17 +37,17 @@ class VisualizationService:
     def generate_one(self, filename: str) -> None:
         import cv2
 
-        storage.validate_image_filename(filename)
-        image_path = self.image_dir / filename
+        image_path = self.dataset.image_path_for(filename)
         if not image_path.exists():
-            raise HTTPException(status_code=404, detail="Image not found")
+            raise ImageNotFoundError("Image not found")
+        self.dataset.ensure_unique_image_stem(filename)
 
         image = cv2.imread(str(image_path))
         if image is None:
-            raise HTTPException(status_code=422, detail=f"Unreadable image: {filename}")
+            raise UnreadableImageError(f"Unreadable image: {filename}")
 
         height, width, _ = image.shape
-        for box in storage.read_labels(self.label_dir, filename):
+        for box in self.dataset.read_labels(filename):
             x1 = int((box.x_center - box.w / 2) * width)
             y1 = int((box.y_center - box.h / 2) * height)
             x2 = int((box.x_center + box.w / 2) * width)
@@ -73,7 +67,7 @@ class VisualizationService:
                 2,
             )
 
-        output_path = storage.visualization_path_for(self.visualization_dir, filename)
+        output_path = self.dataset.visualization_path_for(filename)
         cv2.imwrite(str(output_path), image)
 
 

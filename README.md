@@ -1,8 +1,13 @@
 # Smart Factory Annotation Tool
 
-This repository contains a local image annotation tool for smart factory safety monitoring datasets. It combines a FastAPI backend, a React/Vite frontend, task-specific auto-labeling, and manual review/editing of YOLO-format bounding boxes.
+This repository contains a local image and pose-video annotation tool for smart factory safety monitoring datasets. It combines a FastAPI backend, a React/Vite frontend, task-specific image auto-labeling, and a separate human-in-the-loop three-class video workflow.
 
 The app is organized around annotation tasks. Each task has its own images, labels, visualization output, model settings, and class mapping so datasets do not overlap.
+
+Architecture and operational details are maintained in [docs/architecture.md](docs/architecture.md) and [docs/operations.md](docs/operations.md).
+
+The end-user pose-video workflow is documented in
+[docs/video-labeling-user-guide.md](docs/video-labeling-user-guide.md).
 
 ## Supported Tasks
 
@@ -58,15 +63,31 @@ Expected local weights:
 weights/sign.pt
 ```
 
+### Pose Video Labeling
+
+Video annotation uses exactly `others`, `running`, and `falling`. It supports
+independent persistent processing, pose tracks, frame segments, engineered
+features, threshold or trusted external-model suggestions, deterministic 60/12
+windows, approval, and reproducible export. Suggestions never become human
+ground truth without an explicit accept or modify action.
+
+Expected local pose weights:
+
+```text
+weights/pose.pt
+```
+
 ## Project Structure
 
 ```text
 backend/                          FastAPI backend
-  app/api/                        API and media routes
-  app/core/                       Settings and task profiles
-  app/ml/                         Auto-labeling model integrations
-  app/models/                     Request/response schemas
-  app/services/                   Label, image, visualization, and orchestration logic
+  app/api/                        Controllers, HTTP schemas, dependencies, and router registration
+  app/core/                       Settings, task profiles, and device selection
+  app/domain/                     Internal models, errors, and geometry utilities
+  app/inference/                  Detector protocol and model integrations
+  app/repositories/               Filesystem dataset and SQLite approval persistence
+  app/services/                   Annotation, label, visualization, and reconciliation workflows
+  scripts/                        Operational maintenance commands
   tests/                          Backend tests
 frontend/                         React + Vite annotation UI
   src/api/                        Frontend API client
@@ -120,9 +141,9 @@ Copy-Item .env.example .env
 Important settings:
 
 ```text
-ACTIVE_TASK=safety_signs
 CORS_ORIGINS=http://localhost:5173
 INFERENCE_DEVICE=auto
+DATABASE_PATH=data/labeling_db.sqlite3
 
 PPE_MODEL_PATH=weights/ppe.pt
 PPE_IMAGE_DIR=data/ppe/images
@@ -139,6 +160,8 @@ SAFETY_SIGN_IMG_SIZE=640
 SAFETY_SIGN_IOU=0.7
 SAFETY_SIGN_CLASS_NAMES=0=M014 Wear head protection|1=M015 Wear high-visibility clothing|2=P004 No thoroughfare|3=W011 Slippery surface
 SAFETY_SIGN_AGNOSTIC_NMS=false
+
+BEHAVIOR_MODEL_PATH=weights/behavior.joblib
 ```
 
 Class maps use `ID=Name` entries separated by `|`. To add a class later, update the task's class map and replace the task model with a model trained to output the same class ID. The backend filters auto-label detections to the configured class IDs, the API rejects manual labels outside the task map, and the UI renders the dropdown from the backend task metadata.
@@ -148,6 +171,12 @@ Inference device options:
 - `INFERENCE_DEVICE=auto`: use `cuda:0` when PyTorch can access CUDA, otherwise CPU.
 - `INFERENCE_DEVICE=cpu`: force CPU inference.
 - `INFERENCE_DEVICE=cuda`, `cuda:0`, or `0`: request a specific NVIDIA CUDA device.
+
+Approval state is stored in SQLite at `DATABASE_PATH`. Images, YOLO labels, and generated visualizations remain filesystem artifacts because they are the dataset and its derived output.
+
+If upgrading an existing installation that still has task-local
+`labels/approved.json`, run the explicit dry-run and apply migration described
+in [docs/operations.md](docs/operations.md#release-migration-from-legacy-approvedjson) before relying on SQLite approval state.
 
 ## Frontend Setup
 
@@ -164,20 +193,30 @@ npm install
 
 ## Run The App
 
-Start the backend from the repository root:
+Start the complete PPE, Sign, and Behavior product from the repository root with
+one command:
+
+If a previous local run did not exit cleanly, first free the backend (`8000`)
+and frontend (`5173`) ports in PowerShell. This stops only processes currently
+listening on those two ports:
 
 ```powershell
-uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+$ports = 8000, 5173
+foreach ($port in $ports) {
+  Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force }
+}
 ```
 
-Start the frontend in a second terminal:
+Then start the application:
 
 ```powershell
-cd frontend
-npm run dev
+uv run python -m backend.scripts.start_app
 ```
 
-Open:
+The launcher starts FastAPI on port 8000, the persistent video worker, and Vite
+on port 5173. Press `Ctrl+C` to stop them together. Open:
 
 ```text
 http://localhost:5173
@@ -185,7 +224,8 @@ http://localhost:5173
 
 ## Annotation Workflow
 
-You can add images from the UI with `Upload Images`, or place files directly in the selected task image folder.
+Use the homepage to open PPE, Sign, or Pose. Add datasets through the module's
+upload/import controls.
 
 Common UI actions:
 
@@ -203,7 +243,6 @@ labels/
 ```
 
 If an image has no label yet, export creates an empty matching `.txt` file.
-
 ## API Overview
 
 Task-scoped endpoints:
@@ -214,6 +253,7 @@ Task-scoped endpoints:
 - `DELETE /api/v1/tasks/{task}/images/{filename}`
 - `GET /api/v1/tasks/{task}/images/{filename}/labels`
 - `PUT /api/v1/tasks/{task}/images/{filename}/labels`
+- `PUT /api/v1/tasks/{task}/images/{filename}/approve`
 - `GET /api/v1/tasks/{task}/images/{filename}/export`
 - `POST /api/v1/tasks/{task}/images/{filename}/auto-label`
 - `POST /api/v1/tasks/{task}/auto-label`
@@ -241,6 +281,13 @@ cd frontend
 npm run build
 ```
 
+Frontend tests:
+
+```powershell
+cd frontend
+npm run test
+```
+
 Git hygiene check:
 
 ```powershell
@@ -255,6 +302,7 @@ The command should not show generated dependencies, model weights, or dataset fi
 - Model class mismatch: make sure the task model path points to a trained detector whose class IDs match the task's `*_CLASS_NAMES` map.
 - No images show up: put images in the selected task image folder.
 - Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
+- Rename or delete reported a partial operation: inspect the task filesystem first, then use `uv run python -m backend.scripts.reconcile_approvals --task <task> --apply` only to remove stale approval metadata.
 - CUDA not used: run the PyTorch verification command above. If `torch.version.cuda` is `None`, rerun `uv sync` and make sure the lockfile is current. If `torch.cuda.is_available()` is `False`, update the NVIDIA driver and confirm the GPU is visible to Windows.
 - Frontend cannot reach backend: confirm backend port `8000`, frontend port `5173`, and `CORS_ORIGINS`.
 - Python version mismatch: run `uv python install 3.12` and `uv sync`.

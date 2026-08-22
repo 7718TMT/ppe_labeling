@@ -7,3 +7,6 @@ opencv-python==4.13.0.92
 numpy==2.2.6
 pytest==9.0.3
 httpx==0.28.1
+pyarrow==21.0.0
+joblib==1.5.2
+onnxruntime==1.23.2

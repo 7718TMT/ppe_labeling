@@ -1,16 +1,22 @@
-const CLASS_ACCENT_COLORS: Record<number, { border: string; text: string; bg: string }> = {
-  0: { border: '#10b981', text: '#10b981', bg: 'rgba(6, 78, 59, 0.45)' },
-  1: { border: '#eab308', text: '#eab308', bg: 'rgba(113, 63, 18, 0.45)' },
-  2: { border: '#3b82f6', text: '#3b82f6', bg: 'rgba(30, 58, 138, 0.45)' },
-  3: { border: '#ef4444', text: '#ef4444', bg: 'rgba(127, 29, 29, 0.45)' },
-  4: { border: '#a855f7', text: '#a855f7', bg: 'rgba(88, 28, 135, 0.45)' },
-  5: { border: '#f97316', text: '#f97316', bg: 'rgba(124, 45, 18, 0.45)' },
-  6: { border: '#06b6d4', text: '#06b6d4', bg: 'rgba(22, 78, 99, 0.45)' },
-  7: { border: '#ec4899', text: '#ec4899', bg: 'rgba(131, 24, 67, 0.45)' },
+const CLASS_ACCENT_COLORS: Record<number, { border: string; text: string; backgroundRgb: string }> = {
+  0: { border: '#10b981', text: '#10b981', backgroundRgb: '6, 78, 59' },
+  1: { border: '#eab308', text: '#eab308', backgroundRgb: '113, 63, 18' },
+  2: { border: '#3b82f6', text: '#3b82f6', backgroundRgb: '30, 58, 138' },
+  3: { border: '#ef4444', text: '#ef4444', backgroundRgb: '127, 29, 29' },
+  4: { border: '#a855f7', text: '#a855f7', backgroundRgb: '88, 28, 135' },
+  5: { border: '#f97316', text: '#f97316', backgroundRgb: '124, 45, 18' },
+  6: { border: '#06b6d4', text: '#06b6d4', backgroundRgb: '22, 78, 99' },
+  7: { border: '#ec4899', text: '#ec4899', backgroundRgb: '131, 24, 67' },
 };
 
-export function getClassAccent(classId: number) {
-  return CLASS_ACCENT_COLORS[classId] ?? CLASS_ACCENT_COLORS[classId % 8];
+/** Returns a consistent class color at the requested background opacity. */
+export function getClassAccent(classId: number, backgroundOpacity = 0.45) {
+  const accent = CLASS_ACCENT_COLORS[classId] ?? CLASS_ACCENT_COLORS[classId % 8];
+  return {
+    border: accent.border,
+    text: accent.text,
+    bg: `rgba(${accent.backgroundRgb}, ${backgroundOpacity})`,
+  };
 }
 
 export function classColor(classId: number): string {

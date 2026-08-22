@@ -1,0 +1,17 @@
+# BoT-SORT profile for fast posture changes in pose-video annotation.
+#
+# Native YOLO appearance embeddings re-associate a person after the abrupt box
+# and pose change caused by a fall. The larger buffer favors ID continuity;
+# human reviewers can still correct the rare incorrect association.
+tracker_type: botsort
+track_high_thresh: 0.20
+track_low_thresh: 0.05
+new_track_thresh: 0.20
+track_buffer: 72
+match_thresh: 0.90
+fuse_score: true
+gmc_method: sparseOptFlow
+proximity_thresh: 0.20
+appearance_thresh: 0.70
+with_reid: true
+model: auto
