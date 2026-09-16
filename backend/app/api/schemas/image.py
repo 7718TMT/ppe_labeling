@@ -60,3 +60,14 @@ class TaskInfo(BaseModel):
 
 class ApprovePayload(BaseModel):
     is_approved: bool
+
+
+class InferenceMediaItem(BaseModel):
+    id: str
+    task_id: str
+    filename: str
+    media_type: str
+    source_url: str
+    result_url: str
+    detections: int
+    created_at: str

@@ -50,8 +50,11 @@ class SafetySignDetector:
         image = cv2.imread(str(image_path))
         if image is None:
             raise UnreadableImageError(f"Unreadable image: {image_path.name}")
+        return self.detect_image(image)
+
+    def detect_image(self, image) -> list[BoundingBox]:
         results = self.model(
-            image_path,
+            image,
             imgsz=self.image_size,
             conf=self.confidence,
             iou=self.iou,

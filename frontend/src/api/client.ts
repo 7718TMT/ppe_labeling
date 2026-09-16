@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-import type { BBox, ImageData, TaskInfo } from '../types';
+import type { BBox, DetectionInferenceItem, ImageData, TaskInfo } from '../types';
 import type {
   AnnotationDerivativeRefresh, BehaviorInferenceResults, BehaviorInferenceWorkspace, ExternalModel, FeatureWindow, GeneratedWindow, PoseTrackFrame, ProcessingJob,
   ProcessingOptions,
@@ -35,6 +35,24 @@ export async function getTasks(): Promise<TaskInfo[]> {
 export async function getImages(taskId: string): Promise<ImageData[]> {
   const response = await api.get<ImageData[]>(`/tasks/${encodeURIComponent(taskId)}/images`);
   return response.data;
+}
+
+export async function getDetectionInferenceItems(taskId: string): Promise<DetectionInferenceItem[]> {
+  return (await api.get<DetectionInferenceItem[]>(`/tasks/${encodeURIComponent(taskId)}/inference`)).data;
+}
+
+export async function uploadDetectionInferenceMedia(taskId: string, files: File[]): Promise<DetectionInferenceItem[]> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  return (await api.post<DetectionInferenceItem[]>(
+    `/tasks/${encodeURIComponent(taskId)}/inference`,
+    formData,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )).data;
+}
+
+export async function deleteDetectionInferenceItem(taskId: string, itemId: string): Promise<void> {
+  await api.delete(`/tasks/${encodeURIComponent(taskId)}/inference/${encodeURIComponent(itemId)}`);
 }
 
 export async function getLabels(taskId: string, filename: string): Promise<BBox[]> {

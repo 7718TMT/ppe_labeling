@@ -13,17 +13,17 @@ const MODULES = [
   {
     id: 'ppe',
     title: 'PPE',
-    kind: 'Image labeling',
+    kind: 'Detection tools',
     description: 'Label workers and personal protective equipment in factory images.',
-    path: '/task/ppe',
+    path: '/ppe',
     icon: HardHat,
   },
   {
     id: 'safety_signs',
     title: 'Sign',
-    kind: 'Image labeling',
+    kind: 'Detection tools',
     description: 'Label workplace safety signs in factory images.',
-    path: '/task/safety_signs',
+    path: '/sign',
     icon: ShieldAlert,
   },
   {
@@ -99,13 +99,13 @@ export function Dashboard() {
         <div className="mx-auto max-w-6xl p-8 md:p-12">
           <div className="mb-10 text-center md:text-left">
             <p className="mb-2 font-label text-label-caps uppercase text-primary">
-              Labeling modules
+              Detection modules
             </p>
             <h1 className="mb-3 font-headline-lg text-[2.5rem] font-bold tracking-tight text-on-surface">
-              Choose what you want to label
+              Choose a detection task
             </h1>
             <p className="max-w-2xl font-body-lg text-lg text-on-surface-variant">
-              PPE, safety signs, and worker pose videos are available from this single workspace.
+              Label data or inspect model inference for PPE, safety signs, and worker behavior.
             </p>
           </div>
 
@@ -114,7 +114,7 @@ export function Dashboard() {
               role="status"
               className="mb-5 rounded border border-outline-variant bg-surface-container-low px-4 py-3 text-body-md text-on-surface-variant"
             >
-              Dataset progress is temporarily unavailable. You can still open any labeling module.
+              Dataset progress is temporarily unavailable. You can still open any detection module.
             </div>
           )}
 
@@ -131,7 +131,7 @@ export function Dashboard() {
                 <Link
                   key={module.id}
                   to={module.path}
-                  aria-label={`Open ${module.title} labeling`}
+                  aria-label={`Open ${module.title} tools`}
                   className="group relative flex min-h-64 flex-col overflow-hidden rounded-lg border border-outline-variant bg-surface-container-low p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:bg-surface-container focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />

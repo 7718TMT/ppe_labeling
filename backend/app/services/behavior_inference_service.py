@@ -32,10 +32,12 @@ class BehaviorInferenceService:
         repository: VideoRepository,
         storage: VideoStorageRepository,
         model_path: Path,
+        manifest_path: Path | None = None,
     ) -> None:
         self.repository = repository
         self.storage = storage
         self.model_path = model_path
+        self.manifest_path = manifest_path
         self.videos = VideoService(repository, storage)
 
     def workspace(self) -> dict[str, Any]:
@@ -119,10 +121,13 @@ class BehaviorInferenceService:
         if not self.model_path.is_file():
             raise ModelUnavailableError(f"Behavior model is missing at {self.model_path}")
         digest = hashlib.sha256(self.model_path.read_bytes()).hexdigest()
+        manifest = self._manifest()
+        version = manifest.get("version", digest[:12])
         existing = next(
             (
                 item for item in self.repository.list_external_models(project_id)
-                if item["name"] == "Behavior XGBoost"
+                if item["name"] == manifest["name"]
+                and item["version"] == version
                 and item["artifact_hash"] == digest
             ),
             None,
@@ -131,38 +136,70 @@ class BehaviorInferenceService:
             return self.repository.activate_external_model(
                 project_id, existing["external_model_id"]
             )
-        columns = [
-            name for name in feature_columns()
-            if name not in {"track_gap_count", "valid_frame_ratio"}
-        ]
         model_id = uuid4().hex
-        metadata = {
-            "preprocessing": "behavior_preprocess_v1",
-            "inference": {
-                "minimum_probability": 0.5,
-                "maximum_merge_gap": 12,
-            },
-        }
         values = {
-            "name": "Behavior XGBoost",
-            "version": digest[:12],
+            "name": manifest["name"],
+            "version": version,
             "artifact_path": str(self.model_path.resolve()),
             "artifact_hash": digest,
             "adapter_type": "joblib",
-            "class_map_json": json.dumps(LABELS),
-            "feature_schema_version": FEATURE_SCHEMA_VERSION,
-            "feature_columns_json": json.dumps(columns),
+            "class_map_json": json.dumps(manifest["class_map"]),
+            "feature_schema_version": manifest["feature_schema_version"],
+            "feature_columns_json": json.dumps(manifest["feature_columns"]),
             "window_config_json": json.dumps({
-                "length": WINDOW_LENGTH_FRAMES,
-                "stride": 12,
-                "canonical_fps": CANONICAL_FPS,
+                "length": manifest["window_length"],
+                "stride": manifest["stride"],
+                "canonical_fps": manifest["canonical_fps"],
             }),
             "compatibility_status": "compatible",
             "compatibility_errors_json": "[]",
-            "metadata_json": json.dumps(metadata),
+            "metadata_json": json.dumps({
+                "preprocessing": manifest["preprocessing"],
+                "inference": manifest["inference"],
+            }),
         }
         self.repository.create_external_model(project_id, model_id, values)
         return self.repository.activate_external_model(project_id, model_id)
+
+    def _manifest(self) -> dict[str, Any]:
+        """Load the artifact contract; retain the legacy XGBoost contract by default."""
+
+        if self.manifest_path is None:
+            columns = [
+                name for name in feature_columns()
+                if name not in {"track_gap_count", "valid_frame_ratio"}
+            ]
+            return {
+                "name": "Behavior model",
+                "class_map": LABELS,
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
+                "feature_columns": columns,
+                "window_length": WINDOW_LENGTH_FRAMES,
+                "stride": 12,
+                "canonical_fps": CANONICAL_FPS,
+                "preprocessing": "behavior_preprocess_v1",
+                "inference": {"minimum_probability": 0.5, "maximum_merge_gap": 12},
+            }
+        if not self.manifest_path.is_file():
+            raise ModelUnavailableError(
+                f"Behavior model manifest is missing at {self.manifest_path}"
+            )
+        try:
+            manifest = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ModelUnavailableError("Behavior model manifest is not valid JSON") from exc
+        required = {
+            "name", "class_map", "feature_schema_version", "feature_columns",
+            "window_length", "stride", "canonical_fps",
+        }
+        missing = sorted(required - set(manifest))
+        if missing:
+            raise ModelUnavailableError(
+                "Behavior model manifest is missing: " + ", ".join(missing)
+            )
+        manifest.setdefault("preprocessing", "raw")
+        manifest.setdefault("inference", {"minimum_probability": 0.5, "maximum_merge_gap": 12})
+        return manifest
 
     def _video(self, project_id: str, video_id: str) -> dict[str, Any]:
         video = self.repository.get_video(video_id)

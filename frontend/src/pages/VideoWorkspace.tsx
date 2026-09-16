@@ -1989,7 +1989,6 @@ export function VideoWorkspace() {
                               >
                                 <div className="flex justify-between">
                                   <span className="font-medium">Worker {track.track_id}</span>
-                                  <span className="font-label text-label-sm">{Math.round(track.avg_keypoint_confidence * 100)}% pose</span>
                                 </div>
                                 <p className="text-[10px] text-on-surface-variant mt-0.5">Frames {track.start_frame}–{track.end_frame}</p>
                               </button>

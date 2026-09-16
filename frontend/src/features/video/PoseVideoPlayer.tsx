@@ -238,12 +238,6 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
             const isActive = track.track_id === selectedTrack;
             // Look up the class label at the current frame for bbox annotation (#14)
             const classLabel = segmentLabelAt(currentSegments, track.track_id, currentFrame);
-            const activeSeg = currentSegments.find(
-              (s) => s.track_id === track.track_id && currentFrame >= s.start_frame && currentFrame <= s.end_frame,
-            );
-            const consecutiveRunCount = activeSeg?.label === 'running'
-              ? currentFrame - activeSeg.start_frame + 1
-              : 0;
             const baseColor = classLabel ? LABEL_COLORS[classLabel] : '#64748b';
             const bboxStroke = isActive ? baseColor : `${baseColor}cc`;
             const bboxFill = baseColor;
@@ -272,7 +266,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                     <rect
                       x={track.bbox[0]}
                       y={Math.max(0, track.bbox[1] - 22)}
-                      width={Math.max(track.bbox[2] - track.bbox[0], consecutiveRunCount > 0 ? 140 : (classLabel ? 100 : 60))}
+                      width={Math.max(track.bbox[2] - track.bbox[0], classLabel ? 100 : 60)}
                       height={20}
                       fill={bboxFill}
                     />
@@ -284,7 +278,7 @@ export const PoseVideoPlayer = forwardRef<HTMLVideoElement, Props>(
                       fill="#fff"
                       fontWeight="bold"
                     >
-                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}${consecutiveRunCount > 0 ? ` · RC:${consecutiveRunCount}` : ''}`}
+                      {`W${track.track_id}${classLabel ? ` · ${classLabel}` : ''}`}
                     </text>
                   </>
                 )}

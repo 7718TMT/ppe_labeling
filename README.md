@@ -162,9 +162,39 @@ SAFETY_SIGN_CLASS_NAMES=0=M014 Wear head protection|1=M015 Wear high-visibility 
 SAFETY_SIGN_AGNOSTIC_NMS=false
 
 BEHAVIOR_MODEL_PATH=weights/behavior.joblib
+# Optional JSON contract for a non-legacy behavior artifact (for example Extra Trees).
+BEHAVIOR_MODEL_MANIFEST_PATH=weights/behavior.manifest.json
 ```
 
 Class maps use `ID=Name` entries separated by `|`. To add a class later, update the task's class map and replace the task model with a model trained to output the same class ID. The backend filters auto-label detections to the configured class IDs, the API rejects manual labels outside the task map, and the UI renders the dropdown from the backend task metadata.
+
+### Behavior model manifest
+
+`BEHAVIOR_MODEL_PATH` accepts any trusted local joblib classifier that exposes
+`predict_proba`, including `sklearn.ensemble.ExtraTreesClassifier`. For a new
+model, set `BEHAVIOR_MODEL_MANIFEST_PATH` to a JSON file containing its exact
+training contract. `feature_columns` must be generated from
+`backend.app.services.video_features.feature_columns()` in the same order.
+
+```json
+{
+  "name": "Behavior Extra Trees",
+  "version": "2026-08-25",
+  "class_map": {"others": 0, "running": 1, "falling": 2},
+  "feature_schema_version": "v1",
+  "feature_columns": ["...exact output of feature_columns()..."],
+  "window_length": 60,
+  "stride": 12,
+  "canonical_fps": 24,
+  "preprocessing": "raw",
+  "inference": {"minimum_probability": 0.5, "maximum_merge_gap": 12}
+}
+```
+
+Use `"raw"` if Extra Trees was trained on all extracted features unchanged.
+Use `"behavior_preprocess_v1"` only when it was trained with the legacy
+notebook transforms; that contract excludes two features and applies the
+existing XGBoost-era transforms.
 
 Inference device options:
 

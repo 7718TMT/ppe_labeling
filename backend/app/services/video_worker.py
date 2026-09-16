@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import socket
 import time
@@ -11,6 +12,7 @@ from typing import Any, Callable
 
 import cv2
 
+from backend.app.core.device import resolve_inference_device
 from backend.app.domain.errors import (
     ModelUnavailableError,
     RevisionConflictError,
@@ -35,6 +37,7 @@ DEDICATED_REID_MODEL_PATH = (
     Path(__file__).resolve().parents[3] / "weights" / "reid.pt"
 )
 DEDICATED_REID_TRACKER_VERSION = TRACKING_CACHE_VERSION
+logger = logging.getLogger(__name__)
 
 
 class JobInterrupted(Exception):
@@ -56,6 +59,7 @@ class VideoWorker:
         feature_service: VideoFeatureService,
         worker_id: str | None = None,
         extra_handlers: dict[str, Callable[[dict[str, Any], Callable[[float], None]], None]] | None = None,
+        inference_device: str = "auto",
     ) -> None:
         self.repository = repository
         self.storage = storage
@@ -64,6 +68,7 @@ class VideoWorker:
         self.annotation_service = VideoAnnotationService(repository, storage)
         self.worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}"
         self.extra_handlers = extra_handlers or {}
+        self.inference_device = resolve_inference_device(inference_device)
 
     def recover(self) -> int:
         """Return orphaned running jobs to the queue after process restart."""
@@ -74,9 +79,14 @@ class VideoWorker:
         job = self.repository.claim_job(self.worker_id)
         if job is None:
             return None
+        stage = str(job["stage"])
+        started = time.perf_counter()
+        logger.info(
+            "Starting video processing stage",
+            extra=self._stage_log_context(job, stage=stage),
+        )
         try:
             progress = lambda value: self._progress(job["job_id"], value)
-            stage = str(job["stage"])
             if stage == "canonicalize":
                 self._canonicalize(job, progress)
             elif stage == "pose_track":
@@ -111,13 +121,32 @@ class VideoWorker:
                 job["job_id"],
                 self._next_stage(job),
             )
+            logger.info(
+                "Completed video processing stage",
+                extra=self._stage_log_context(
+                    job, stage=stage, elapsed_seconds=time.perf_counter() - started
+                ),
+            )
         except JobInterrupted as exc:
             status = "paused" if exc.action == "pause" else "cancelled"
             self.repository.update_job(job["job_id"], status=status, control_requested=None, finished_at=self._now() if status == "cancelled" else None)
+            logger.info(
+                "Interrupted video processing stage",
+                extra=self._stage_log_context(
+                    job, stage=stage, elapsed_seconds=time.perf_counter() - started,
+                    outcome=status,
+                ),
+            )
         except Exception as exc:
             self.repository.update_job(job["job_id"], status="failed", error_message=str(exc), finished_at=self._now())
             if job.get("video_id"):
                 self.repository.update_video(job["video_id"], processing_status="failed", last_error=str(exc))
+            logger.exception(
+                "Video processing stage failed",
+                extra=self._stage_log_context(
+                    job, stage=stage, elapsed_seconds=time.perf_counter() - started
+                ),
+            )
         return self.repository.get_job(job["job_id"])
 
     def run_forever(self, poll_seconds: float = 0.5) -> None:
@@ -135,19 +164,26 @@ class VideoWorker:
             str(temporary), cv2.VideoWriter_fourcc(*"mp4v"), 24.0, (int(video["width"]), int(video["height"])),
         )
         mapping = self.repository.frame_mapping(video["video_id"])
+        started = time.perf_counter()
         try:
             if not capture.isOpened() or not writer.isOpened():
                 raise VideoValidationError("Unable to initialize canonical video processing")
+            # The persisted mapping is ordered by canonical frame and source
+            # frame is monotonic.  Sequential decoding avoids an H.264 seek
+            # (and often a keyframe re-decode) for every output frame.
             last_source = -1
             current_frame = None
             for index, row in enumerate(mapping):
                 source_index = int(row["original_frame"])
-                if source_index != last_source:
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, source_index)
+                if source_index < last_source:
+                    raise VideoValidationError("Canonical frame mapping is not monotonic")
+                while last_source < source_index:
                     ok, current_frame = capture.read()
                     if not ok:
                         raise VideoValidationError(f"Failed decoding source frame {source_index}")
-                    last_source = source_index
+                    last_source += 1
+                if current_frame is None:
+                    raise VideoValidationError(f"Failed decoding source frame {source_index}")
                 writer.write(current_frame)
                 if index % 24 == 0:
                     progress((index + 1) / max(1, len(mapping)))
@@ -156,6 +192,18 @@ class VideoWorker:
             writer.release()
         os.replace(temporary, target)
         self.repository.update_video(video["video_id"], processing_status="probed", last_error=None)
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "Canonical video ready",
+            extra={
+                **self._stage_log_context(job, stage="canonicalize", elapsed_seconds=elapsed),
+                "canonical_frames": len(mapping),
+                "decoded_source_frames": last_source + 1,
+                "frames_per_second": len(mapping) / elapsed if elapsed else None,
+                "width": int(video["width"]),
+                "height": int(video["height"]),
+            },
+        )
 
     def _pose_track(self, job: dict[str, Any], progress: Callable[[float], None]) -> None:
         """Run YOLO-Pose tracking with dedicated appearance re-identification.
@@ -190,8 +238,10 @@ class VideoWorker:
         tracking_version = DEDICATED_REID_TRACKER_VERSION
         results = model.track(
             source=str(canonical), stream=True, persist=True,
-            tracker=str(DEDICATED_REID_TRACKER_CONFIG), conf=0.20, verbose=False,
+            tracker=str(DEDICATED_REID_TRACKER_CONFIG), conf=0.20,
+            device=self.inference_device, verbose=False,
         )
+        started = time.perf_counter()
         frames: list[dict[str, Any]] = []
         summaries: dict[int, dict[str, Any]] = {}
         total = int(video["canonical_frame_count"])
@@ -252,6 +302,17 @@ class VideoWorker:
         self.repository.update_video(
             video["video_id"], pose_cache_version=version, tracking_cache_version=tracking_version,
             processing_status="annotation_ready", quality_status="good" if track_rows else "low_quality", last_error=None,
+        )
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "Pose tracking ready",
+            extra={
+                **self._stage_log_context(job, stage="pose_track", elapsed_seconds=elapsed),
+                "canonical_frames": total,
+                "frames_per_second": total / elapsed if elapsed else None,
+                "inference_device": self.inference_device,
+                "track_count": len(track_rows),
+            },
         )
 
     def _features(self, job: dict[str, Any], progress: Callable[[float], None]) -> None:
@@ -342,3 +403,14 @@ class VideoWorker:
 
     def _now(self) -> str:
         return str(self.repository.one("SELECT CURRENT_TIMESTAMP AS value")["value"])
+
+    def _stage_log_context(self, job: dict[str, Any], **values: Any) -> dict[str, Any]:
+        """Build structured log fields without exposing artifact contents."""
+
+        return {
+            "job_id": job["job_id"],
+            "video_id": job.get("video_id"),
+            "project_id": job["project_id"],
+            "worker_id": self.worker_id,
+            **values,
+        }

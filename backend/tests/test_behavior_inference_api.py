@@ -62,7 +62,7 @@ def test_inference_workspace_is_hidden_and_upload_queues_model_pipeline(
     with TestClient(app) as client:
         workspace = client.get("/api/v1/behavior-inference")
         assert workspace.status_code == 200
-        assert workspace.json()["model"]["name"] == "Behavior XGBoost"
+        assert workspace.json()["model"]["name"] == "Behavior model"
         assert VideoService(repository, storage).list_projects() == []
 
         response = client.post(

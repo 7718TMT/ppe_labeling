@@ -129,7 +129,15 @@ class VideoModelService:
             errors.append("class_map: expected exactly others, running, falling")
         if manifest.get("feature_schema_version") != FEATURE_SCHEMA_VERSION:
             errors.append(f"feature_schema_version: expected {FEATURE_SCHEMA_VERSION}, got {manifest.get('feature_schema_version')}")
+        preprocessing = manifest.get("preprocessing", "raw")
         expected_columns = feature_columns()
+        if preprocessing == "behavior_preprocess_v1":
+            expected_columns = [
+                name for name in expected_columns
+                if name not in {"track_gap_count", "valid_frame_ratio"}
+            ]
+        elif preprocessing != "raw":
+            errors.append(f"preprocessing: unsupported value {preprocessing!r}")
         if manifest.get("feature_columns") != expected_columns:
             errors.append("feature_columns: missing, extra, or incorrect column order")
         if int(manifest.get("window_length", -1)) != 60:
@@ -160,20 +168,16 @@ class VideoModelService:
             matrix = self._behavior_matrix(records)
         else:
             matrix = np.asarray([[record["raw"][column] for column in columns] for record in records], dtype=np.float32)
-        probabilities = self._predict(Path(model["artifact_path"]), model["adapter_type"], matrix)
         class_map = model["class_map"]
-        ordered_classes = (
-            [name for name, _index in sorted(class_map.items(), key=lambda item: int(item[1]))]
-            if isinstance(class_map, dict)
-            else list(class_map)
+        probabilities = self._predict(
+            Path(model["artifact_path"]), model["adapter_type"], matrix, class_map
         )
-        indexes = {name: ordered_classes.index(name) for name in HUMAN_LABELS}
         predictions: list[dict[str, Any]] = []
         scored_windows: list[tuple[dict[str, Any], dict[str, float]]] = []
         inference = model["metadata"].get("inference", {})
         minimum = float(inference.get("minimum_probability", 0.65))
         for record, row in zip(records, probabilities, strict=True):
-            values = {name: float(row[indexes[name]]) for name in HUMAN_LABELS}
+            values = {name: float(row[index]) for index, name in enumerate(HUMAN_LABELS)}
             label = max(values, key=values.get)
             confidence = values[label]
             predictions.append({
@@ -260,13 +264,33 @@ class VideoModelService:
 
         return ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
 
-    def _predict(self, path: Path, adapter: str, matrix: np.ndarray) -> np.ndarray:
+    def _predict(
+        self,
+        path: Path,
+        adapter: str,
+        matrix: np.ndarray,
+        class_map: dict[str, Any] | list[str],
+    ) -> np.ndarray:
         model = self._load_artifact(path, adapter)
         if adapter == "joblib":
             booster = getattr(model, "get_booster", lambda: None)()
             if booster is not None:
                 booster.set_param({"device": resolve_inference_device(self.inference_device)})
             result = np.asarray(model.predict_proba(matrix), dtype=np.float32)
+            if not isinstance(class_map, dict):
+                raise ModelCompatibilityError("Joblib model class_map must map labels to class values")
+            # sklearn estimators may order ``classes_`` differently from the
+            # semantic label mapping.  Reorder every estimator (including
+            # ExtraTreesClassifier) into the stable HUMAN_LABELS order.
+            classes = getattr(model, "classes_", None)
+            if classes is not None:
+                positions = {str(value): index for index, value in enumerate(classes)}
+                try:
+                    result = result[:, [positions[str(class_map[name])] for name in HUMAN_LABELS]]
+                except KeyError as exc:
+                    raise ModelCompatibilityError(
+                        "Model classes_ does not match the manifest class_map"
+                    ) from exc
         else:
             input_name = model.get_inputs()[0].name
             result = np.asarray(model.run(None, {input_name: matrix})[0], dtype=np.float32)

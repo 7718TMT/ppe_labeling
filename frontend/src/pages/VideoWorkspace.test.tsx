@@ -227,6 +227,13 @@ describe('VideoWorkspace', () => {
     expect(screen.getByRole('button', { name: 'running' })).toHaveClass('border-primary');
   });
 
+  it('does not show pose confidence beside a worker label', async () => {
+    renderWorkspace();
+
+    expect(await screen.findByText('Worker 1')).toBeInTheDocument();
+    expect(screen.queryByText('90% pose')).not.toBeInTheDocument();
+  });
+
   it('does not create a client-side derivative request after an edit', async () => {
     renderWorkspace();
     await screen.findByText('Worker 1');
