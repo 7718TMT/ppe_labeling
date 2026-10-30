@@ -43,8 +43,6 @@ data/image_inference/
 !weights/.gitkeep
 !weights/pose.pt
 
-docs/video-labeling-progress.md
-
 orange_range_preview.jpg
 
 # Generated media and metadata
@@ -56,4 +54,3 @@ orange_range_preview.jpg
 data/**/*.json
 
 AGENTS.md
-DESIGN.md

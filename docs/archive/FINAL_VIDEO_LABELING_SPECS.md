@@ -1,5 +1,10 @@
 # Final Specification: 3-Class Pose-Based Video Labeling Tool
 
+> Archived implementation specification. This document records historical design
+> intent and may differ from the current application. For handover, start with
+> the [checklist](../handover/CHECKLIST.md); use the current
+> [architecture](../ARCHITECTURE.md) and [export contract](../DATA_EXPORT.md).
+
 ## 1. Purpose
 
 This document is the implementation source of truth for extending the existing labeling tool into a complete **labeling-only, human-in-the-loop annotation system** for industrial CCTV behavior data.
