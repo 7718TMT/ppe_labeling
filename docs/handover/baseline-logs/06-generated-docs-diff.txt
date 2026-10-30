@@ -1,0 +1,41 @@
+Read-only comparison of committed generated documents with the current generator.
+
+docs\CONFIGURATION.md
+Identical after removing generated notice: True
+--- on disk
++++ expected
+@@ -6,7 +6,7 @@
+ > Regenerate after changing those sources; edit the generator scripts, not this file.
+ > Run `uv run python -m backend.scripts.generate_docs`.
+ >
+-> Generated 2026-10-30 at commit `4d2ea6fc58f9`.
++> Generated 2026-10-30 at commit `7a533ca63e75`.
+ > Commit identifies the checkout; output may include uncommitted source changes.
+ <!-- END GENERATED NOTICE -->
+ 
+docs\API.md
+Identical after removing generated notice: True
+--- on disk
++++ expected
+@@ -6,7 +6,7 @@
+ > Regenerate after changing those sources; edit the generator scripts, not this file.
+ > Run `uv run python -m backend.scripts.generate_docs`.
+ >
+-> Generated 2026-10-30 at commit `4d2ea6fc58f9`.
++> Generated 2026-10-30 at commit `7a533ca63e75`.
+ > Commit identifies the checkout; output may include uncommitted source changes.
+ <!-- END GENERATED NOTICE -->
+ 
+docs\DATABASE.md
+Identical after removing generated notice: True
+--- on disk
++++ expected
+@@ -6,7 +6,7 @@
+ > Regenerate after changing those sources; edit the generator scripts, not this file.
+ > Run `uv run python -m backend.scripts.generate_docs`.
+ >
+-> Generated 2026-10-30 at commit `4d2ea6fc58f9`.
++> Generated 2026-10-30 at commit `7a533ca63e75`.
+ > Commit identifies the checkout; output may include uncommitted source changes.
+ <!-- END GENERATED NOTICE -->
+ 

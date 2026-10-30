@@ -48,4 +48,3 @@ deliverables. Use this checklist to verify the receiving installation.
   artifact suppliers and the separate training-team contact.
 - [ ] Share test results and unresolved issues with the recipient. Confirm
   company repository/access arrangements separately.
-- [ ] Fill in [EMAIL_TEMPLATE](EMAIL_TEMPLATE.md) only after the listed files are ready.

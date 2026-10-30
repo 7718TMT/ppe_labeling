@@ -1,0 +1,8 @@
+Command: "C:\Program Files\nodejs\node.EXE" C:\Github\ppe_labeling\frontend\node_modules\typescript\bin\tsc --noEmit
+Working directory: C:\Github\ppe_labeling\frontend
+Started UTC: 2026-10-30T10:29:46+00:00
+Finished UTC: 2026-10-30T10:29:49+00:00
+Exit: 0
+Elapsed seconds: 2.7
+
+--- Combined stdout/stderr (verbatim) ---

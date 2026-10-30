@@ -1,0 +1,60 @@
+Captured UTC: 2026-10-30T10:29:17+00:00
+Repository: C:\Github\ppe_labeling
+Platform: Windows-11-10.0.26200-SP0
+Machine: AMD64
+Python executable: C:\Github\ppe_labeling\.venv\Scripts\python.exe
+Python: 3.12.13 (main, Mar 10 2026, 18:15:39) [MSC v.1944 64 bit (AMD64)]
+
+Git commit (exit 0):
+7a533ca63e7565be6a530c16e8686abc24157786
+2026-10-30
+[ADD] Handover checklist, documentation, document generation scripts and archive video workspace sync notes
+
+Branch (exit 0):
+inference
+
+Working tree before capture (exit 0):
+(no output)
+
+Git (exit 0):
+git version 2.51.0.windows.2
+
+uv (exit 0):
+uv 0.12.23 (46b84fd0b 2026-10-03 x86_64-pc-windows-msvc)
+
+Node (exit 0):
+v22.19.0
+
+npm (exit 0):
+10.9.3
+
+TypeScript (exit 0):
+Version 5.9.3
+
+Vite (exit 0):
+vite/5.4.21 win32-x64 node-v22.19.0
+
+Vitest (exit 0):
+vitest/4.1.10 win32-x64 node-v22.19.0
+pytest: 9.0.3
+ruff: not installed in project venv
+fastapi: 0.136.3
+pydantic-settings: 2.14.1
+ultralytics: 8.4.61
+torch: 2.12.0+cu132
+torchvision: 0.27.0+cu132
+scikit-learn: 1.7.2
+xgboost: 3.3.0
+.env present: True (contents not captured)
+Frontend scripts: {"build": "tsc && vite build", "dev": "vite", "preview": "vite preview", "test": "vitest run"}
+Lint config files: []
+pyproject [tool] keys: dict_keys(['uv', 'pytest'])
+
+GPU inventory (exit 0):
+NVIDIA GeForce RTX 5060 Ti, 610.88
+
+PyTorch device check (exit 0):
+torch: 2.12.0+cu132
+CUDA build: 13.2
+CUDA available: True
+GPU: NVIDIA GeForce RTX 5060 Ti

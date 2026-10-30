@@ -12,8 +12,7 @@ their applicable ownership and license terms.
 | Owner | De Heus LLC |
 | Origin | RMIT University capstone project, De Heus LLC as industry partner |
 | Technical contact | Ethan Phuc (Nguyen Trong Phuc), Information Technology — [ethan.phuc@deheus.com](mailto:ethan.phuc@deheus.com) |
-| Current checkout | Commit `4d2ea6fc58f9`, branch `inference`; includes uncommitted handover documentation changes |
-| Handed over at | `VERIFY:` record the final handover commit and branch |
+| Handed over at | Commit `7a533ca`, branch `inference` |
 
 ## What this document is, and is not
 
