@@ -1,0 +1,11 @@
+Command: C:\Github\ppe_labeling\.venv\Scripts\python.exe -m backend.scripts.generate_docs --check
+Working directory: C:\Github\ppe_labeling
+Started UTC: 2026-10-30T10:30:22+00:00
+Finished UTC: 2026-10-30T10:30:23+00:00
+Exit: 1
+Elapsed seconds: 1.09
+
+--- Combined stdout/stderr (verbatim) ---
+Out of date: C:\Github\ppe_labeling\docs\CONFIGURATION.md
+Out of date: C:\Github\ppe_labeling\docs\API.md
+Out of date: C:\Github\ppe_labeling\docs\DATABASE.md

@@ -73,4 +73,9 @@ def get_behavior_inference_service(
 ) -> BehaviorInferenceService:
     """Provide the fixed-model, read-only behavior inference workflow."""
 
-    return BehaviorInferenceService(repository, storage, settings.behavior_model_path)
+    return BehaviorInferenceService(
+        repository,
+        storage,
+        settings.behavior_model_path,
+        settings.behavior_model_manifest_path,
+    )

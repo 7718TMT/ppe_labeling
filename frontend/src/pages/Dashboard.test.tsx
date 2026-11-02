@@ -43,9 +43,9 @@ describe('Dashboard module navigation', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole('link', { name: 'Open PPE labeling' })).toHaveAttribute('href', '/task/ppe');
-    expect(screen.getByRole('link', { name: 'Open Sign labeling' })).toHaveAttribute('href', '/task/safety_signs');
-    expect(screen.getByRole('link', { name: 'Open Behavior labeling' })).toHaveAttribute('href', '/behavior');
+    expect(screen.getByRole('link', { name: 'Open PPE tools' })).toHaveAttribute('href', '/ppe');
+    expect(screen.getByRole('link', { name: 'Open Sign tools' })).toHaveAttribute('href', '/sign');
+    expect(screen.getByRole('link', { name: 'Open Behavior tools' })).toHaveAttribute('href', '/behavior');
   });
 
   it('shows image progress without changing module navigation', async () => {
@@ -55,8 +55,8 @@ describe('Dashboard module navigation', () => {
       </MemoryRouter>,
     );
 
-    const ppeModule = screen.getByRole('link', { name: 'Open PPE labeling' });
-    const signModule = screen.getByRole('link', { name: 'Open Sign labeling' });
+    const ppeModule = screen.getByRole('link', { name: 'Open PPE tools' });
+    const signModule = screen.getByRole('link', { name: 'Open Sign tools' });
 
     await waitFor(() => {
       expect(within(ppeModule).getByText('1 / 2 approved')).toBeInTheDocument();
@@ -76,10 +76,10 @@ describe('Dashboard module navigation', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole('status')).toHaveTextContent('You can still open any labeling module.');
-    expect(screen.getByRole('link', { name: 'Open PPE labeling' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Sign labeling' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open Behavior labeling' })).toBeInTheDocument();
+    expect(await screen.findByRole('status')).toHaveTextContent('You can still open any detection module.');
+    expect(screen.getByRole('link', { name: 'Open PPE tools' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Sign tools' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Behavior tools' })).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith('Failed to load dashboard progress', expect.any(Error));
   });
 });

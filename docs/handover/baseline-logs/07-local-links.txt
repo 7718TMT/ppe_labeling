@@ -1,0 +1,26 @@
+Command: C:\Github\ppe_labeling\.venv\Scripts\python.exe -c "
+from pathlib import Path
+import re
+root=Path.cwd()
+files=[root/'README.md',root/'OWNERSHIP.md',*(root/'docs').rglob('*.md')]
+missing=[]
+for file in files:
+    for target in re.findall(r'\]\(([^)]+)\)',file.read_text(encoding='utf-8')):
+        if '://' in target or target.startswith(('mailto:','#')):
+            continue
+        if not (file.parent/target.split('#',1)[0]).exists():
+            missing.append((file.relative_to(root).as_posix(),target))
+for file,target in missing:
+    print('Missing target:',file,'->',target)
+print('Markdown files checked:',len(files))
+print('Missing local link targets:',len(missing))
+raise SystemExit(bool(missing))
+"
+Working directory: C:\Github\ppe_labeling
+Captured UTC: 2026-10-30T10:33:22+00:00
+Exit: 1
+
+--- Combined stdout/stderr (verbatim) ---
+Missing target: docs/handover/CHECKLIST.md -> EMAIL_TEMPLATE.md
+Markdown files checked: 16
+Missing local link targets: 1

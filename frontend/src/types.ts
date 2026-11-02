@@ -21,6 +21,17 @@ export interface TaskInfo {
   temporary_class_id?: number | null;
 }
 
+export interface DetectionInferenceItem {
+  id: string;
+  task_id: string;
+  filename: string;
+  media_type: 'image' | 'video';
+  source_url: string;
+  result_url: string;
+  detections: number;
+  created_at: string;
+}
+
 export type InteractionMode = 'pan' | 'select';
 
 export interface SelectionRect {

@@ -6,6 +6,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pytest
+from sklearn.ensemble import ExtraTreesClassifier
 
 from backend.app.domain.errors import VideoValidationError
 from backend.app.domain.video import FEATURE_SCHEMA_VERSION, WINDOW_CONFIG_VERSION
@@ -61,6 +62,27 @@ def setup_ready_project(tmp_path: Path):
 
 def model_manifest():
     return {"name":"RF suggestions","version":"1.0","class_map":{"others":0,"running":1,"falling":2},"feature_schema_version":FEATURE_SCHEMA_VERSION,"feature_columns":feature_columns(),"window_length":60,"stride":12,"canonical_fps":24,"inference":{"minimum_probability":.6}}
+
+
+def test_joblib_extra_trees_prediction_uses_manifest_label_order(tmp_path: Path) -> None:
+    """Any sklearn probabilistic estimator is usable, not only XGBoost."""
+
+    classifier = ExtraTreesClassifier(n_estimators=5, random_state=0).fit(
+        np.asarray([[0.0], [1.0], [2.0]]), np.asarray([2, 0, 1])
+    )
+    artifact_path = tmp_path / "extra-trees.joblib"
+    joblib.dump(classifier, artifact_path)
+    service = object.__new__(VideoModelService)
+
+    probabilities = service._predict(
+        artifact_path,
+        "joblib",
+        np.asarray([[0.0]], dtype=np.float32),
+        {"others": 0, "running": 1, "falling": 2},
+    )
+
+    assert probabilities.shape == (1, 3)
+    assert probabilities[0, 2] == pytest.approx(1.0)
 
 
 def test_model_compatibility_reports_exact_mismatches_and_requires_trust(tmp_path: Path) -> None:

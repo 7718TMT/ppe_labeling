@@ -37,6 +37,7 @@ def build_worker(worker_suffix: str = "0") -> VideoWorker:
         features,
         worker_id=f"local-worker-{worker_suffix}",
         extra_handlers={"model": model_handler, "export:*": exports.run_job},
+        inference_device=settings.inference_device,
     )
 
 

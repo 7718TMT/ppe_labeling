@@ -13,6 +13,7 @@ from backend.app.repositories.dataset import DatasetRepository
 from backend.app.services.annotation import AnnotationService
 from backend.app.services.export import DatasetExportService
 from backend.app.services.media import MediaService
+from backend.app.services.image_inference import ImageInferenceService
 from backend.app.services.tasks import TaskService
 
 
@@ -66,3 +67,15 @@ def get_inference_annotation_service(profile: TaskProfile = Depends(get_task_pro
 
 def get_task_service(settings: Settings = Depends(get_settings)) -> TaskService:
     return TaskService(settings)
+
+
+def get_image_inference_service(
+    profile: TaskProfile = Depends(get_task_profile),
+    settings: Settings = Depends(get_settings),
+    detector: PpeDetector | SafetySignDetector = Depends(get_detector),
+) -> ImageInferenceService:
+    return ImageInferenceService(
+        profile=profile,
+        storage_root=settings.image_inference_storage_root,
+        detector=detector,
+    )

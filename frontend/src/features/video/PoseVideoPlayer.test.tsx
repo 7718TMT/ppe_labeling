@@ -371,7 +371,7 @@ describe('PoseVideoPlayer', () => {
     expect(screen.queryByText(/FI:/)).toBeNull();
   });
 
-  it('renders the consecutive running frame count if in a running segment', () => {
+  it('does not render a consecutive running count in the worker video label', () => {
     const segments = [{
       segment_id: 'seg-1',
       track_id: 7,
@@ -397,6 +397,7 @@ describe('PoseVideoPlayer', () => {
         onTimeUpdate={vi.fn()}
       />,
     );
-    expect(screen.getByText('W7 · running · RC:6')).toBeInTheDocument();
+    expect(screen.getByText('W7 · running')).toBeInTheDocument();
+    expect(screen.queryByText(/RC:/)).not.toBeInTheDocument();
   });
 });

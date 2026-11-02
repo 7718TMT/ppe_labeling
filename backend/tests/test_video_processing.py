@@ -1,8 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from threading import Barrier
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -46,6 +48,48 @@ def test_dedicated_reid_tracker_profile_uses_separate_encoder() -> None:
     assert DEDICATED_REID_MODEL_PATH.name == "reid.pt"
     assert profile["track_buffer"] == 72
     assert profile["track_low_thresh"] == 0.05
+
+
+def test_pose_tracking_passes_the_resolved_inference_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    project = VideoService(repository, storage).create_project("Pose device")
+    video = _create_video(repository, project["project_id"])
+    storage.write_bytes(
+        storage.canonical_path(project["project_id"], video["video_id"]), b"canonical"
+    )
+    pose_path = tmp_path / "pose.pt"
+    pose_path.write_bytes(b"pose")
+    received: dict[str, object] = {}
+
+    class FakeModel:
+        def track(self, **kwargs):
+            received.update(kwargs)
+            return iter(())
+
+    monkeypatch.setitem(
+        sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda _path: FakeModel())
+    )
+    worker = VideoWorker(
+        repository,
+        storage,
+        pose_path,
+        VideoFeatureService(repository, storage),
+        inference_device="cpu",
+    )
+
+    worker._pose_track(
+        {
+            "job_id": "pose-device",
+            "project_id": project["project_id"],
+            "video_id": video["video_id"],
+        },
+        lambda _progress: None,
+    )
+
+    assert received["device"] == "cpu"
 
 
 def _create_video(

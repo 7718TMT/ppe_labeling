@@ -1,309 +1,136 @@
 # Smart Factory Annotation Tool
 
-This repository contains a local image and pose-video annotation tool for smart factory safety monitoring datasets. It combines a FastAPI backend, a React/Vite frontend, task-specific image auto-labeling, and a separate human-in-the-loop three-class video workflow.
+Local annotation and inference for PPE images, safety signs and worker-behavior
+videos. Built with FastAPI, React/Vite and a persistent video worker.
 
-The app is organized around annotation tasks. Each task has its own images, labels, visualization output, model settings, and class mapping so datasets do not overlap.
+## What the system does
 
-Architecture and operational details are maintained in [docs/architecture.md](docs/architecture.md) and [docs/operations.md](docs/operations.md).
+The tool helps annotators prepare and review safety-monitoring datasets, and
+inspect predictions from supplied models.
 
-The end-user pose-video workflow is documented in
-[docs/video-labeling-user-guide.md](docs/video-labeling-user-guide.md).
+| Capability | What you can do |
+|---|---|
+| PPE image labeling | Draw, correct and review boxes for people and protective equipment; use a supplied detector to generate initial labels. |
+| Safety-sign image labeling | Annotate configured safety-sign classes manually or with AI assistance. |
+| Behavior video labeling | Import and trim videos, process worker poses/tracks, then review and edit per-worker `others`, `running` and `falling` segments. |
+| Inference | Upload images/videos to inspect PPE/Sign predictions, or videos to inspect worker behavior predictions, in separate inference workspaces. |
+| Dataset export | Export images with YOLO labels, or approved Behavior samples with segment annotations, pose windows and a reproducibility manifest. |
 
-## Supported Tasks
+Image work is saved locally; Behavior projects and processing jobs persist across
+restarts. AI-generated labels remain editable and need human review before
+approval. Image export can include unapproved images; Behavior export includes
+only approved videos selected for export.
 
-### PPE
+This is a labeling and model-inspection tool. It does not train models, create
+train/validation/test splits, measure model accuracy or provide a live-camera
+safety-monitoring dashboard. Exported samples feed a separate training workflow.
 
-The PPE task is for annotating worker safety equipment.
+For handover, start with the [checklist](docs/handover/CHECKLIST.md).
+For annotation, use the [user guide](docs/USER_GUIDE.md).
 
-Classes:
+## Install
 
-- `0`: Person
-- `1`: Helmet
-- `2`: Vest
-- `3`: Cleaning Coverall
+Requires Git, [uv](https://docs.astral.sh/uv/getting-started/installation/) and
+Node.js LTS. Run commands from the repository root. **All platforms** below means
+Windows PowerShell, Linux Bash and macOS Zsh/Bash; OS-specific blocks are labeled.
 
-Expected local data:
+**All platforms — install backend dependencies:**
 
-```text
-data/ppe/images/
-data/ppe/labels/
-data/ppe/labeled_images/
-```
-
-Expected local weights:
-
-```text
-weights/ppe.pt
-```
-
-### Safety Signs
-
-The safety-sign task is for annotating selected ISO 7010 factory safety signs. The configured sign detector should be a trained YOLO model whose class IDs match the final ISO class mapping below.
-
-Final reviewed classes:
-
-- `0`: M014 Wear head protection
-- `1`: M015 Wear high-visibility clothing
-- `2`: P004 No thoroughfare
-- `3`: W011 Slippery surface
-
-Auto-label detections are saved directly as classes `0-3`. Manual boxes added with `Add Sign` start as class `0`; use the UI dropdown to reassign them when needed.
-
-Expected local data:
-
-```text
-data/safety_signs/images/
-data/safety_signs/labels/
-data/safety_signs/labeled_images/
-```
-
-Expected local weights:
-
-```text
-weights/sign.pt
-```
-
-### Pose Video Labeling
-
-Video annotation uses exactly `others`, `running`, and `falling`. It supports
-independent persistent processing, pose tracks, frame segments, engineered
-features, threshold or trusted external-model suggestions, deterministic 60/12
-windows, approval, and reproducible export. Suggestions never become human
-ground truth without an explicit accept or modify action.
-
-Expected local pose weights:
-
-```text
-weights/pose.pt
-```
-
-## Project Structure
-
-```text
-backend/                          FastAPI backend
-  app/api/                        Controllers, HTTP schemas, dependencies, and router registration
-  app/core/                       Settings, task profiles, and device selection
-  app/domain/                     Internal models, errors, and geometry utilities
-  app/inference/                  Detector protocol and model integrations
-  app/repositories/               Filesystem dataset and SQLite approval persistence
-  app/services/                   Annotation, label, visualization, and reconciliation workflows
-  scripts/                        Operational maintenance commands
-  tests/                          Backend tests
-frontend/                         React + Vite annotation UI
-  src/api/                        Frontend API client
-  src/components/                 Canvas, toolbar, and sidebar components
-data/                             Local task data, ignored by Git except .gitkeep files
-weights/                          Local model weights, ignored by Git except .gitkeep
-pyproject.toml                    Python project and dependency definition
-uv.lock                           Locked Python dependency graph
-```
-
-Generated dependencies, datasets, labels, visualization outputs, `.env`, and model weights are intentionally ignored by Git.
-
-## Backend Setup
-
-Prerequisites:
-
-- `uv`
-- Git
-
-Install `uv` on Windows PowerShell if needed:
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-From the repository root:
-
-```powershell
+```sh
 uv python install 3.12
 uv sync
 ```
 
-This repo pins Python to `3.12`. Use `uv run ...` for backend commands; manual `.venv` activation is not required.
+Create `.env` from the example using your shell:
 
-On Windows and Linux, `uv sync` installs the PyTorch CUDA 13.2 build from the PyTorch wheel index. The app still runs on CPU when CUDA is not available.
-
-Verify PyTorch and CUDA:
-
-```powershell
-uv run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
-```
-
-For GPU inference, this should show a `+cu132` PyTorch build, CUDA `13.2`, and `True` for `torch.cuda.is_available()`.
-
-Create your local environment file:
+**Windows PowerShell:**
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Important settings:
+**Linux/macOS — Bash or Zsh:**
 
-```text
-CORS_ORIGINS=http://localhost:5173
-INFERENCE_DEVICE=auto
-DATABASE_PATH=data/labeling_db.sqlite3
-
-PPE_MODEL_PATH=weights/ppe.pt
-PPE_IMAGE_DIR=data/ppe/images
-PPE_LABEL_DIR=data/ppe/labels
-PPE_VISUALIZATION_DIR=data/ppe/labeled_images
-PPE_CLASS_NAMES=0=Person|1=Helmet|2=Vest|3=Cleaning Coverall
-
-SAFETY_SIGN_MODEL_PATH=weights/sign.pt
-SAFETY_SIGN_IMAGE_DIR=data/safety_signs/images
-SAFETY_SIGN_LABEL_DIR=data/safety_signs/labels
-SAFETY_SIGN_VISUALIZATION_DIR=data/safety_signs/labeled_images
-SAFETY_SIGN_CONF=0.15
-SAFETY_SIGN_IMG_SIZE=640
-SAFETY_SIGN_IOU=0.7
-SAFETY_SIGN_CLASS_NAMES=0=M014 Wear head protection|1=M015 Wear high-visibility clothing|2=P004 No thoroughfare|3=W011 Slippery surface
-SAFETY_SIGN_AGNOSTIC_NMS=false
-
-BEHAVIOR_MODEL_PATH=weights/behavior.joblib
+```sh
+cp .env.example .env
 ```
 
-Class maps use `ID=Name` entries separated by `|`. To add a class later, update the task's class map and replace the task model with a model trained to output the same class ID. The backend filters auto-label detections to the configured class IDs, the API rejects manual labels outside the task map, and the UI renders the dropdown from the backend task metadata.
+**All platforms — install frontend dependencies:**
 
-Inference device options:
-
-- `INFERENCE_DEVICE=auto`: use `cuda:0` when PyTorch can access CUDA, otherwise CPU.
-- `INFERENCE_DEVICE=cpu`: force CPU inference.
-- `INFERENCE_DEVICE=cuda`, `cuda:0`, or `0`: request a specific NVIDIA CUDA device.
-
-Approval state is stored in SQLite at `DATABASE_PATH`. Images, YOLO labels, and generated visualizations remain filesystem artifacts because they are the dataset and its derived output.
-
-If upgrading an existing installation that still has task-local
-`labels/approved.json`, run the explicit dry-run and apply migration described
-in [docs/operations.md](docs/operations.md#release-migration-from-legacy-approvedjson) before relying on SQLite approval state.
-
-## Frontend Setup
-
-Prerequisites:
-
-- Node.js LTS
-
-From the repository root:
-
-```powershell
+```sh
 cd frontend
 npm install
+cd ..
 ```
 
-## Run The App
+Python is pinned to 3.12. Use `uv run` for backend commands; no virtual-environment
+activation is needed. Windows/Linux select the CUDA 13.2 PyTorch index; inference
+falls back to CPU when CUDA is unavailable. The locked macOS PyTorch wheels target
+**Apple Silicon, macOS 14+**; this device selector uses CPU on macOS, not MPS.
+Intel Mac installation is not covered by the current PyTorch wheels. See
+[platform notes](docs/OPERATIONS.md#platform-notes) before installing.
 
-Start the complete PPE, Sign, and Behavior product from the repository root with
-one command:
+Check the model paths in [configuration](docs/CONFIGURATION.md) and set `.env`.
+The current repository tracks model files, but verify their availability
+and provenance in the received checkout. Manual image labeling does not require
+a detector; AI actions and Behavior processing require their respective models.
+For custom paths and defaults, see [configuration](docs/CONFIGURATION.md).
 
-If a previous local run did not exit cleanly, first free the backend (`8000`)
-and frontend (`5173`) ports in PowerShell. This stops only processes currently
-listening on those two ports:
+## Run the app
 
-```powershell
-$ports = 8000, 5173
-foreach ($port in $ports) {
-  Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
-    Select-Object -ExpandProperty OwningProcess -Unique |
-    ForEach-Object { Stop-Process -Id $_ -Force }
-}
-```
+Ports 8000 and 5173 must be free; use the OS-specific
+[port checks](docs/OPERATIONS.md#port-checks) if needed. Coordinate occupied ports
+with their owner; do not stop unrelated processes.
 
-Then start the application:
+**All platforms:**
 
-```powershell
+```sh
 uv run python -m backend.scripts.start_app
 ```
 
-The launcher starts FastAPI on port 8000, the persistent video worker, and Vite
-on port 5173. Press `Ctrl+C` to stop them together. Open:
+Open **http://localhost:5173**. The launcher runs FastAPI, the video worker and
+Vite. Keep its terminal open; press **Ctrl+C** there to stop them together.
+The API has no authentication: use a trusted local environment.
 
-```text
-http://localhost:5173
-```
+Next: follow the [user guide](docs/USER_GUIDE.md) to import, label, review and
+export data. For startup failures, see [troubleshooting](docs/OPERATIONS.md#troubleshooting).
 
-## Annotation Workflow
+## Documentation
 
-Use the homepage to open PPE, Sign, or Pose. Add datasets through the module's
-upload/import controls.
+| Need | Document |
+|---|---|
+| Label or inspect images/videos | [User guide](docs/USER_GUIDE.md) |
+| Hand data to a trainer | [Data export](docs/DATA_EXPORT.md) |
+| Configure models, diagnose faults, back up or restore | [Operations](docs/OPERATIONS.md) |
+| Understand the system | [Architecture](docs/ARCHITECTURE.md) |
+| Review UI design conventions | [Design](docs/DESIGN.md) |
+| Look up settings, endpoints or storage schema | [Configuration](docs/CONFIGURATION.md), [API](docs/API.md), [Database](docs/DATABASE.md) |
+| Review feature formulas | [Behavior features](docs/FEATURES_FOR_BEHAVIOR_DETECTION.md) |
+| Review limitations and usage rights | [Known limitations](docs/KNOWN_LIMITATIONS.md), [Ownership](OWNERSHIP.md) |
+| Receive or hand over the tool | [Checklist](docs/handover/CHECKLIST.md) |
 
-Common UI actions:
+## Development
 
-- `AI Current`: auto-label the selected image.
-- `AI All`: auto-label every image in the selected task.
-- `Export Current`: download a zip containing the selected image and its matching YOLO label file.
-- `Export All`: download a zip containing all images and matching YOLO label files for the selected task.
-- `Rename Sequential`: rename the selected task dataset to `image_00000`, `image_00001`, and so on, keeping image and label basenames aligned.
+`backend/app/` contains the API, services and repositories; `backend/scripts/`
+contains maintenance commands. `frontend/src/` contains the UI. Local data and
+`.env` are ignored by Git; model files under `weights/` are currently tracked.
+Do not commit private datasets or credentials.
 
-Exports use this structure:
+Backend checks, from the repository root (**all platforms**):
 
-```text
-images/
-labels/
-```
-
-If an image has no label yet, export creates an empty matching `.txt` file.
-## API Overview
-
-Task-scoped endpoints:
-
-- `GET /api/v1/tasks`
-- `GET /api/v1/tasks/{task}/images`
-- `POST /api/v1/tasks/{task}/images/upload`
-- `DELETE /api/v1/tasks/{task}/images/{filename}`
-- `GET /api/v1/tasks/{task}/images/{filename}/labels`
-- `PUT /api/v1/tasks/{task}/images/{filename}/labels`
-- `PUT /api/v1/tasks/{task}/images/{filename}/approve`
-- `GET /api/v1/tasks/{task}/images/{filename}/export`
-- `POST /api/v1/tasks/{task}/images/{filename}/auto-label`
-- `POST /api/v1/tasks/{task}/auto-label`
-- `GET /api/v1/tasks/{task}/export`
-- `POST /api/v1/tasks/{task}/rename-sequential`
-- `POST /api/v1/tasks/{task}/visualizations`
-
-Media routes:
-
-- `/media/{task}/images/{filename}`
-- `/media/{task}/visualizations/{filename}`
-
-## Development Checks
-
-Backend tests:
-
-```powershell
+```sh
 uv run pytest
+uv run python -m backend.scripts.generate_docs --check
 ```
 
-Frontend build:
+Frontend checks (**all platforms**, starting from the repository root):
 
-```powershell
+```sh
 cd frontend
+npm run test
 npm run build
 ```
 
-Frontend tests:
-
-```powershell
-cd frontend
-npm run test
-```
-
-Git hygiene check:
-
-```powershell
-git ls-files | Select-String "node_modules|\\.pt$|^data/ppe/images/|^data/ppe/labels/|^data/ppe/labeled_images/|^data/safety_signs/images/|^data/safety_signs/labels/|^data/safety_signs/labeled_images/"
-```
-
-The command should not show generated dependencies, model weights, or dataset files except `.gitkeep` placeholders.
-
-## Troubleshooting
-
-- Missing model file: check the task-specific model path in `.env`.
-- Model class mismatch: make sure the task model path points to a trained detector whose class IDs match the task's `*_CLASS_NAMES` map.
-- No images show up: put images in the selected task image folder.
-- Wrong task data appears: confirm the selected task in the UI and the task-specific paths in `.env`.
-- Rename or delete reported a partial operation: inspect the task filesystem first, then use `uv run python -m backend.scripts.reconcile_approvals --task <task> --apply` only to remove stale approval metadata.
-- CUDA not used: run the PyTorch verification command above. If `torch.version.cuda` is `None`, rerun `uv sync` and make sure the lockfile is current. If `torch.cuda.is_available()` is `False`, update the NVIDIA driver and confirm the GPU is visible to Windows.
-- Frontend cannot reach backend: confirm backend port `8000`, frontend port `5173`, and `CORS_ORIGINS`.
-- Python version mismatch: run `uv python install 3.12` and `uv sync`.
-- Python package errors: rerun `uv sync`.
+Regenerate reference documents with
+`uv run python -m backend.scripts.generate_docs`; edit their generator scripts,
+not the generated files. Historical notes live in `docs/archive/`.

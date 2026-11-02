@@ -52,12 +52,16 @@ class PpeDetector:
         if image is None:
             raise UnreadableImageError(f"Unreadable image: {image_path.name}")
 
+        return self.detect_image(image)
+
+    def detect_image(self, image) -> list[BoundingBox]:
+
         boxes: list[BoundingBox] = []
         humans: list[BoundingBox] = []
         helmets: list[BoundingBox] = []
         vests: list[BoundingBox] = []
         results = self.model(
-            image_path,
+            image,
             imgsz=self.image_size,
             conf=self.confidence,
             iou=self.iou,

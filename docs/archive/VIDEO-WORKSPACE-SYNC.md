@@ -1,5 +1,9 @@
 # Video workspace synchronization
 
+> Archived technical notes. Verify route and lifecycle details against the
+> current code and [API reference](../API.md). For current system context, see
+> [architecture](../ARCHITECTURE.md) and [operations](../OPERATIONS.md).
+
 The Pose workspace uses an event-driven synchronization path for project-level
 state. It replaces repeated full reads of videos and processing jobs while
 preserving the existing REST commands for imports, edits, processing, exports,
@@ -111,9 +115,9 @@ interrupted correction cannot expose new pose IDs with an old worker list.
 ## Operations and retention
 
 No external broker or new launcher command is required. Continue to start the
-application with:
+application with (Windows PowerShell / Linux Bash / macOS Zsh):
 
-```powershell
+```sh
 uv run python -m backend.scripts.start_app
 ```
 

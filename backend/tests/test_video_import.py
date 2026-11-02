@@ -10,7 +10,9 @@ from backend.app.domain.errors import DuplicateVideoError, VideoValidationError
 from backend.app.domain.video import canonical_frame_mapping
 from backend.app.repositories.video_db import VIDEO_SCHEMA_VERSION, VideoRepository
 from backend.app.repositories.video_storage import VideoStorageRepository
+from backend.app.services.video_feature_service import VideoFeatureService
 from backend.app.services.video_service import VideoService
+from backend.app.services.video_worker import VideoWorker
 
 
 def small_video_bytes(tmp_path: Path, fps: float = 12.0, frames: int = 30) -> bytes:
@@ -53,6 +55,74 @@ def test_import_probes_video_and_builds_canonical_mapping(tmp_path: Path) -> Non
         "threshold",
     )
     assert queued[0]["stage"] == "canonicalize"
+
+
+def test_canonicalize_decodes_sequentially_and_preserves_duplicate_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 12 FPS input must duplicate mapped source frames on the 24 FPS timeline."""
+
+    repository = VideoRepository(tmp_path / "state.sqlite3")
+    storage = VideoStorageRepository(tmp_path / "storage")
+    service = VideoService(repository, storage)
+    project = service.create_project("Canonical")
+    with_bytes = small_video_bytes(tmp_path, fps=12, frames=30)
+    imported = service.import_video(project["project_id"], "source.mp4", io.BytesIO(with_bytes))
+    worker = VideoWorker(
+        repository, storage, tmp_path / "pose.pt", VideoFeatureService(repository, storage)
+    )
+
+    class SequentialCapture:
+        def __init__(self) -> None:
+            self.index = 0
+
+        def isOpened(self) -> bool:
+            return True
+
+        def read(self):
+            if self.index >= 30:
+                return False, None
+            frame = np.full((2, 2, 3), self.index, dtype=np.uint8)
+            self.index += 1
+            return True, frame
+
+        def set(self, *_args) -> None:
+            raise AssertionError("canonicalization must not seek per output frame")
+
+        def release(self) -> None:
+            pass
+
+    rendered: list[int] = []
+
+    class CollectingWriter:
+        def __init__(self, path: str) -> None:
+            self.path = Path(path)
+
+        def isOpened(self) -> bool:
+            return True
+
+        def write(self, frame) -> None:
+            rendered.append(int(frame[0, 0, 0]))
+
+        def release(self) -> None:
+            self.path.write_bytes(b"canonical")
+
+    monkeypatch.setattr(cv2, "VideoCapture", lambda _path: SequentialCapture())
+    monkeypatch.setattr(cv2, "VideoWriter", lambda path, *_args: CollectingWriter(path))
+    monkeypatch.setattr(cv2, "VideoWriter_fourcc", lambda *_args: 0)
+
+    worker._canonicalize(
+        {
+            "job_id": "canonical-test",
+            "project_id": project["project_id"],
+            "video_id": imported["video_id"],
+        },
+        lambda _progress: None,
+    )
+
+    mapping = repository.frame_mapping(imported["video_id"])
+    assert len(rendered) == len(mapping) == 60
+    assert rendered == [item["original_frame"] for item in mapping]
 
 
 def test_duplicate_hash_is_rejected_and_raw_copy_is_cleaned(tmp_path: Path) -> None:
